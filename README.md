@@ -14,11 +14,11 @@ Download the EDF6VR ZIP under **Assets**, not the automatically generated source
 - Room-scale 6DoF tracking.
 - One-handed and two-handed weapon aiming.
 - Support for all four soldier classes and vehicles.
-- D-pad input through a hand-at-temple gesture.
+- Hold your hand near the right side of your head to emulate the D-pad and Start/Select buttons.
+- Hold your hand near the left side of your head, then hold the stick up to recenter the view or hold it down to enter weapon position adjustment mode.
 - In-game weapon position and rotation adjustment.
 - Desktop mirror for recording and streaming.
 - Automatically collects all remaining items when a mission is cleared. Toggle on/off with F1.
-- 
 ## Installation
 
 Extract all files from the ZIP into the EARTH DEFENSE FORCE 6 game folder, alongside `EDF6.exe`.
