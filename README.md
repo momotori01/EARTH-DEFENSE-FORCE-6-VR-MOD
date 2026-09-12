@@ -53,6 +53,6 @@ Not every weapon, equipment item, or vehicle variant has been tested. Some may b
 
 This mod was made using AI. I cannot read code myself.
 
-If you find a bug and manage to fix it, please consider sharing your fix or an updated version and sending me a link. I would love to use it too!
+If you feel like fixing any bugs, feel free to share your version wherever you like. I'd be happy to give it a try if I come across it.
 
 This is an unofficial fan-made mod. The original game is required, and no original game files are included.
