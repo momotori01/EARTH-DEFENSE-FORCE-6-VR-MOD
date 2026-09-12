@@ -28,8 +28,8 @@ Example:
 
 Run `VR_Play.bat` and answer the prompt:
 
-- **Y** — Enable VR and launch the game.
-- **N** — Disable VR and launch the game.
+- **Y** — Enable VR 
+- **N** — Disable VR
 
 Close the game before switching modes.
 
