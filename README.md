@@ -45,11 +45,11 @@ Read the included `README_EDF6VR.txt` for detailed setup instructions, controls,
 Tested with Bigscreen Beyond 2, SteamVR, and Index controllers.
 
 Quest controller bindings are included, but Quest and VDXR compatibility has not yet been verified on physical hardware.
-
-## Notes
 ## Known Issues
 
 - Fencer movement audio may occasionally crackle or stutter while moving.
+## Notes
+
 
 This mod is provided as-is. No support or continued maintenance is guaranteed.
 
