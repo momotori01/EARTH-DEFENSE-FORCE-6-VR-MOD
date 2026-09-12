@@ -24,7 +24,7 @@ Extract all files from the ZIP into the EARTH DEFENSE FORCE 6 game folder, along
 
 Example:
 
-    C:\Program Files (x86)\Steam\steamapps\common\EARTH DEFENSE FORCE 6
+   \Steam\steamapps\common\EARTH DEFENSE FORCE 6
 
 Run `VR_Play.bat` and answer the prompt:
 
