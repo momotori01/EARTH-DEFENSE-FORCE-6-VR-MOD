@@ -15,7 +15,7 @@ Download the EDF6VR ZIP under **Assets**, not the automatically generated source
 - One-handed and two-handed weapon aiming.
 - Support for all four soldier classes and vehicles.
 - Hold your hand near the right side of your head to emulate the D-pad and Start/Select buttons.
-- Hold your hand near the left side of your head, then hold the stick up to recenter the view or hold it down to enter weapon position adjustment mode.
+- Hold your hand near the left side of your head, then hold the stick up for 3 seconds to recenter the view, or hold it down for 3 seconds to enter weapon position adjustment mode.
 - In-game weapon position and rotation adjustment.
 - Desktop mirror for recording and streaming.
 - Automatically collects all remaining items when a mission is cleared. Toggle on/off with F1.
