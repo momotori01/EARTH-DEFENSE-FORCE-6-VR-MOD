@@ -1,4 +1,4 @@
-# EARTH DEFENSE FORCE 6 VR MOD
+# EARTH DEFENSE FORCE 6 VR+8Player+Graphic+α MOD
 
 VR mod for the Steam version of EARTH DEFENSE FORCE 6.
 
@@ -20,6 +20,8 @@ Download the EDF6VR ZIP under **Assets**, not the automatically generated source
 - Desktop mirror for recording and streaming.
 - Automatically collects all remaining items when a mission is cleared. Toggle on/off with F1.
 - Rangers can wield two weapons at the same time.
+- > - **8-player co-op.** Press **F2** to switch it on or off. If you host with it ON, players who don't have the 8P mod can't join your room. As a guest, the setting doesn't matter.
+> Difficulty scaling: the number of enemies grows with the extra players. Enemy stats are capped at the 5-player level.
 ## Installation
 
 Extract all files from the ZIP into the EARTH DEFENSE FORCE 6 game folder, alongside `EDF6.exe`.
