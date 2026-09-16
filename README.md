@@ -26,6 +26,12 @@ Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://gi
 2. Run `VR_Play.bat`: **Y** = VR, **N** = normal flat play. Close the game before switching.
 3. Start the game from Steam as usual.
 
+## Updating
+
+Close the game and extract the new ZIP over your install, replacing files. Your settings (weapon and hand position, resolution, panel size, ...) are kept, and settings added in the new version are filled in automatically. HD textures stay as they are.
+
+If you had chosen **N** in `VR_Play.bat`, run it again after updating.
+
 ## Setup
 
 ### Resolution
@@ -65,7 +71,7 @@ Press **F2** on the room menu to switch 8-player rooms on or off (shown at the b
 - As a guest the setting doesn't matter.
 - Up to 4 players nothing changes. From the 5th player on, the number of enemies grows with each extra player; enemy stats are capped at the 5-player level.
 
-More settings are described in `Mods/Plugins/EDF6VR.ini`, `README_EDF6VR.txt` and `README_EDF6MultiSlot.txt`.
+More settings are described in `Mods/Plugins/EDF6VR.ini` (created on first start; the defaults are in `EDF6VR/EDF6VR.defaults.ini`), `README_EDF6VR.txt` and `README_EDF6MultiSlot.txt`.
 
 ## Requirements
 
