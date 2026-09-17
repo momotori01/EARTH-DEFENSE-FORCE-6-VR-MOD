@@ -14,7 +14,7 @@ Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://gi
 - Recoil animation and per-hand firing vibration.
 - Rangers can dual wield (reach behind your left shoulder and press grip).
 - Fencers aim both weapons independently with the game's own heavy aim; hand weapons ride the controllers, shoulder weapons sit on your shoulders.
-- **8-player online co-op** (EDF6MultiSlot).
+- **8-player online co-op** (EDF6MultiSlot).This is still in the experimental phase. Errors or crashes may occur.
 - **HD textures** (2x), built from your own game files.
 - Compact HUD: radar, armour and weapons sit together at the corner of your view, or on the inside of a wrist.
 - Menus float in the room; subtitles and messages sit on a panel in front of you. Other players' nameplates float over their heads and show through walls.
