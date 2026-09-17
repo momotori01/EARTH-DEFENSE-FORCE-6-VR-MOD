@@ -10,9 +10,10 @@ Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://gi
 
 - Native stereo rendering, room-scale 6DoF tracking.
 - One-handed and two-handed weapon aiming, all four soldier classes and vehicles.
-- Hand models for Ranger, Wing Diver and Air Raider, with fingers that follow the trigger, grip and stick.
+- Hand models for all four classes, with fingers that follow the trigger, grip and stick.
 - Recoil animation and per-hand firing vibration.
 - Rangers can dual wield (reach behind your left shoulder and press grip).
+- Fencers aim both weapons independently with the game's own heavy aim; hand weapons ride the controllers, shoulder weapons sit on your shoulders.
 - **8-player online co-op** (EDF6MultiSlot).
 - **HD textures** (2x), built from your own game files.
 - Compact HUD: radar, armour and weapons sit together at the corner of your view, or on the inside of a wrist.
