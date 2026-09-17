@@ -15,7 +15,8 @@ Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://gi
 - Rangers can dual wield (reach behind your left shoulder and press grip).
 - **8-player online co-op** (EDF6MultiSlot).
 - **HD textures** (2x), built from your own game files.
-- Menus float in the room; the HUD sits on a panel in front of you.
+- Compact HUD: radar, armour and weapons sit together at the corner of your view, or on the inside of a wrist.
+- Menus float in the room; subtitles and messages sit on a panel in front of you. Other players' nameplates float over their heads and show through walls.
 - Automatically collects all remaining items when a mission is cleared (F1).
 - Desktop mirror for recording and streaming.
 
@@ -25,6 +26,7 @@ Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://gi
    (for example `\Steam\steamapps\common\EARTH DEFENSE FORCE 6`).
 2. Run `VR_Play.bat`: **Y** = VR, **N** = normal flat play. Close the game before switching.
 3. Start the game from Steam as usual.
+4. **The first VR run may be heavy.** The mod measures your headset's field of view on the first run and saves it; until then it renders a wider picture than needed. Close the game once and start it again -- from the second run on, the picture is fitted to your headset and runs lighter. (Do the same once after changing headsets.)
 
 ## Updating
 
@@ -52,6 +54,7 @@ Run `HD_Texture_2x.bat` and answer **y**. It reads your own game files and write
 | **Recenter view (height)** | Left controller beside the left side of your head, stick **UP** for 3 s |
 | **Adjust weapon position** | Left controller beside your head, stick **RIGHT** for 3 s |
 | **Adjust hand position** | Left controller beside your head, stick **LEFT** for 3 s |
+| **Move the compact HUD** | Left controller beside your head, stick **DOWN** for 3 s: view corner → right wrist → left wrist |
 | **Ranger dual wield** | Left hand behind your left shoulder / back, press grip |
 
 In adjust mode: left stick moves, triggers raise/lower, right stick turns, grips roll. **Right A** saves, **Left A/X** cancels, clicking **both sticks** resets. Hand position is saved per controller type (Index, Quest, ...).
@@ -64,6 +67,9 @@ In adjust mode: left stick moves, triggers raise/lower, right stick turns, grips
 | **F3 / Tab** | Show squad members 5–8 |
 | **F11** | VR on/off for this session |
 | **F12** | Recenter (also brings the menu back in front of you) |
+
+### Compact HUD
+Radar, armour and weapon boxes sit together, smaller, at the bottom-right of your view. Hold the left controller beside your head with the stick **DOWN** for 3 s to move them: view corner → inside of the right wrist → inside of the left wrist. Subtitles and messages stay in front of you. `[Render] UiCluster=0` in `EDF6VR.ini` restores the full-size HUD.
 
 ### 8-player co-op
 Press **F2** on the room menu to switch 8-player rooms on or off (shown at the bottom left).
