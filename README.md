@@ -19,9 +19,9 @@ Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://gi
 - Fencers aim both weapons independently with the game's own heavy aim; hand weapons ride the controllers, shoulder weapons sit on your shoulders.
 - **8-player online co-op** (EDF6MultiSlot). It only applies when you host:
   unless you switch it on and make an eight-player room, ordinary online play
-  is untouched. You can also copy the armour of the lowest player of your own
-  class in the room, so playing alongside a beginner does not leave you far
-  behind in health.
+  is untouched. You can also match your armour to the lowest player of your
+  own class in the room -- the lowest in the room if nobody else is on it --
+  so playing alongside a beginner does not leave you far behind in health.
 - **HD textures** (2x), built from your own game files.
 - Compact HUD: radar, armour and weapons sit together at the corner of your view, or on the inside of a wrist.
 - Menus float in the room; subtitles and messages sit on a panel in front of you. Other players' nameplates float over their heads and show through walls.
@@ -71,8 +71,9 @@ In adjust mode: left stick moves, triggers raise/lower, right stick turns, grips
 | Key | |
 |---|---|
 | **F1** | Collect all items on mission clear, on/off |
-| **F2** | 8-player rooms on/off (room menu) |
-| **F3 / Tab** | Show squad members 5–8 |
+| **F2** / left stick click | 8-player rooms on/off (menu screen, outside a room) |
+| **F3 / Tab** / right stick click | Show squad members 5–8 (in a room) |
+| **F4** / left stick click | Match your armour to the room, on/off (in a room) |
 | **F11** | VR on/off for this session |
 | **F12** | Recenter (also brings the menu back in front of you) |
 
@@ -80,10 +81,20 @@ In adjust mode: left stick moves, triggers raise/lower, right stick turns, grips
 Radar, armour and weapon boxes sit together, smaller, at the bottom-right of your view. Hold the left controller beside your head with the stick **DOWN** for 3 s to move them: view corner → inside of the right wrist → inside of the left wrist. Subtitles and messages stay in front of you. `[Render] UiCluster=0` in `EDF6VR.ini` restores the full-size HUD.
 
 ### 8-player co-op
-Press **F2** on the room menu to switch 8-player rooms on or off (shown at the bottom left).
-- Hosting with it **ON**: only players who have the 8P mod can join your room.
-- As a guest the setting doesn't matter.
-- Up to 4 players nothing changes. From the 5th player on, the number of enemies grows with each extra player; enemy stats are capped at the 5-player level.
+Press **F2**, or click the left stick, on the menu screen **outside a room** to switch 8-player rooms on or off (shown at the bottom left). A room keeps the setting it was made with.
+- It only applies when you host. Hosting with it **ON**, only players who have the 8P mod can join your room; with it **OFF** you make an ordinary room and play with anyone.
+- As a guest the setting doesn't matter: you can find and join both kinds of room.
+- Up to 4 players nothing changes. From the 5th on there are more enemies (x1.2, x1.4, x1.6, x1.8 for 5 to 8 players), and their durability, damage and speed stay exactly as they are with four.
+- Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later.
+
+### Matching armour
+In a room, press **F4** or click the left stick to turn armour matching on or off (shown at the bottom left). It is for playing alongside a beginner, or on a class you rarely use, without being far behind in health.
+- Your armour is raised to the lowest of the others in the room: the lowest of your own class if anyone else is on it, otherwise the lowest in the room. It only ever raises, never lowers.
+- Anyone within 300 of you is skipped and the next one up is taken, so two beginners cannot hold each other down. In a room of 3000 / 2000 / 300 / 200, both the 300 and the 200 copy 2000.
+- Each class has a ceiling: Ranger 4000, Wing Diver 2500, Air Raider 3000, Fencer 4000. At the ceiling the display reads `copy armor :2500(Max)`.
+- Nothing is written to your save. Turning it off, or leaving the room, puts it back. The member list always shows everyone's real armour -- the raise applies inside the mission -- so check the number at the bottom left to see it working.
+- The 300 and the ceilings can be changed under `[CopyArmor]` in `EDF6MultiSlot.ini`.
+- **F4** is also this mod's frame-dump key, but only while `[Diagnostics] DevKeys=1` in `EDF6VR.ini`, which ships off. If you turn that on, change one of them.
 
 More settings are described in `Mods/Plugins/EDF6VR.ini` (created on first start; the defaults are in `EDF6VR/EDF6VR.defaults.ini`), `README_EDF6VR.txt` and `README_EDF6MultiSlot.txt`.
 
