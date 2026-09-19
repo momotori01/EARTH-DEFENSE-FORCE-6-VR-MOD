@@ -13,8 +13,15 @@ Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://gi
 - Hand models for all four classes, with fingers that follow the trigger, grip and stick.
 - Recoil animation and per-hand firing vibration.
 - Rangers can dual wield (reach behind your left shoulder and press grip).
+- Laser sights and thrown-weapon guides leave the weapon in your hand, with
+  the landing marker following the line, and they do not lean while you run
+  or roll.
 - Fencers aim both weapons independently with the game's own heavy aim; hand weapons ride the controllers, shoulder weapons sit on your shoulders.
-- **8-player online co-op** (EDF6MultiSlot).This is still in the experimental phase. Errors or crashes may occur.
+- **8-player online co-op** (EDF6MultiSlot). It only applies when you host:
+  unless you switch it on and make an eight-player room, ordinary online play
+  is untouched. You can also copy the armour of the lowest player of your own
+  class in the room, so playing alongside a beginner does not leave you far
+  behind in health.
 - **HD textures** (2x), built from your own game files.
 - Compact HUD: radar, armour and weapons sit together at the corner of your view, or on the inside of a wrist.
 - Menus float in the room; subtitles and messages sit on a panel in front of you. Other players' nameplates float over their heads and show through walls.
@@ -91,6 +98,8 @@ Tested with Bigscreen Beyond 2 + Index controllers, PSVR2 (SteamVR), and Quest v
 ## Known Issues
 
 - Fencer movement audio may occasionally crackle while moving.
+- After a revive, a Fencer's hand model can stretch back toward the body for
+  the rest of the mission.
 
 ## Notes
 
