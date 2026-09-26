@@ -17,9 +17,13 @@ Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://gi
   the landing marker following the line, and they do not lean while you run
   or roll.
 - Fencers aim both weapons independently with the game's own heavy aim; hand weapons ride the controllers, shoulder weapons sit on your shoulders.
+- **VR cockpits for every vehicle**, built per vehicle type into the machine's own hull: walkers (Nix, Depth Crawler,
+  Barga, Proteus MK2, ...), tanks, combat vehicles, helicopters and trucks. The view stays open to the world, and your
+  armour, ammunition and radar are on the cabin's screens.
 - **8-player online co-op** (EDF6MultiSlot). It only applies when you host:
   unless you switch it on and make an eight-player room, ordinary online play
-  is untouched. You can also match your armour to the lowest player of your
+  is untouched. While it is on, the room search shows eight-player rooms only.
+  You can also match your armour to the lowest player of your
   own class in the room -- the lowest in the room if nobody else is on it --
   so playing alongside a beginner does not leave you far behind in health.
 - **HD textures** (2x), built from your own game files.
@@ -39,6 +43,8 @@ Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://gi
 ## Updating
 
 Close the game and extract the new ZIP over your install, replacing files. Your settings (weapon and hand position, resolution, panel size, ...) are kept, and settings added in the new version are filled in automatically. HD textures stay as they are.
+
+**Updating to 2.0 from an older version:** `EDF6VR.ini` is replaced once with the new defaults, since many settings changed. Your resolution is kept and the old file is saved as `EDF6VR.ini.v1.bak`; adjust hand and weapon positions again if needed. If you built HD textures, run `HD_Texture_2x.bat` once more to repair the textures that went dark at a distance.
 
 If you had chosen **N** in `VR_Play.bat`, run it again after updating.
 
@@ -71,7 +77,7 @@ In adjust mode: left stick moves, triggers raise/lower, right stick turns, grips
 | Key | |
 |---|---|
 | **F1** | Collect all items on mission clear, on/off |
-| **F2** / left stick click | 8-player rooms on/off (menu screen, outside a room) |
+| **F2** / left stick click | 8-player rooms on/off (menu screen, outside a room); while on, the room search lists 8-player rooms only |
 | **F3 / Tab** / right stick click | Show squad members 5–8 (in a room) |
 | **F4** / left stick click | Match your armour to the room, on/off (in a room) |
 | **F11** | VR on/off for this session |
@@ -82,10 +88,10 @@ Radar, armour and weapon boxes sit together, smaller, at the bottom-right of you
 
 ### 8-player co-op
 Press **F2**, or click the left stick, on the menu screen **outside a room** to switch 8-player rooms on or off (shown at the bottom left). A room keeps the setting it was made with.
-- It only applies when you host. Hosting with it **ON**, only players who have the 8P mod can join your room; with it **OFF** you make an ordinary room and play with anyone.
-- As a guest the setting doesn't matter: you can find and join both kinds of room.
+- Hosting with it **ON**, only players who have the 8P mod can join your room; with it **OFF** you make an ordinary room and play with anyone.
+- **It also filters the room search.** With it **ON**, only 8-player rooms are listed; with it **OFF**, ordinary and 8-player rooms are both listed and you can join either. To look for an ordinary 4-player room, switch it OFF. Switching while the room list is open searches again straight away.
 - Up to 4 players nothing changes. From the 5th on there are more enemies (x1.2, x1.4, x1.6, x1.8 for 5 to 8 players), and their durability, damage and speed stay exactly as they are with four.
-- Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later.
+- Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later; the bundled 1.5.6 is recommended for all.
 
 ### Matching armour
 In a room, press **F4** or click the left stick to turn armour matching on or off (shown at the bottom left). It is for playing alongside a beginner, or on a class you rarely use, without being far behind in health.
@@ -109,8 +115,10 @@ Tested with Bigscreen Beyond 2 + Index controllers, PSVR2 (SteamVR), and Quest v
 ## Known Issues
 
 - Fencer movement audio may occasionally crackle while moving.
-- After a revive, a Fencer's hand model can stretch back toward the body for
-  the rest of the mission.
+- After a revive, a hand model could stretch back toward the body. A fix is in,
+  but it has not been seen in a real revive yet.
+- Fencer: the aim line of the left shoulder weapon can swing during a dash and
+  is slightly off at the moment of a jump.
 
 ## Notes
 
