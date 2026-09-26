@@ -120,6 +120,12 @@ Tested with Bigscreen Beyond 2 + Index controllers, PSVR2 (SteamVR), and Quest v
 - Fencer: the aim line of the left shoulder weapon can swing during a dash and
   is slightly off at the moment of a jump.
 
+## Source code
+
+The source of every compiled file in the package (`EDF6VR.dll`, `EDF6MultiSlot.dll`, `EDF6ClearLoot.dll` and the fixed `winmm.dll`) is in [source/](source/), with the build steps in [source/BUILD.md](source/BUILD.md).
+
+Code written for this project is released under the Unlicense: modify it, reuse it and share it, no credit needed. Third-party parts keep their own licenses. Among them, the Proteus control stick is adapted from "Low Poly Hands On Throttle and Stick for VR" by marcosgon (CC BY-NC 4.0, non-commercial). The full list is in [source/BUILD.md](source/BUILD.md#licenses).
+
 ## Notes
 
 This mod is provided as-is. No support or continued maintenance is guaranteed.

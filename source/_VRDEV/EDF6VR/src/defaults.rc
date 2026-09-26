@@ -1,0 +1,2 @@
+// The shipped EDF6VR.ini, carried inside the DLL (see ini_defaults.h).
+101 RCDATA "../packaging/EDF6VR.ini"

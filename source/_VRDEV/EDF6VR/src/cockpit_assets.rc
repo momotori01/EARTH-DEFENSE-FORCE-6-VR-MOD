@@ -1,0 +1,5 @@
+// Local Nix source textures remapped by prepare_native_cockpit_materials.py.
+201 RCDATA "../assets/cockpit/textures/native_v1/NixInterior_BaseColor.png"
+202 RCDATA "../assets/cockpit/textures/native_v1/NixInterior_Emissive.png"
+203 RCDATA "../assets/cockpit/textures/native_v1/NixInterior_Roughness.png"
+204 RCDATA "../assets/cockpit/textures/native_v1/NixInterior_Normal.png"

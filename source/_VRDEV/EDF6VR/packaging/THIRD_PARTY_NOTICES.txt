@@ -1,0 +1,101 @@
+EDF6VR - distribution components
+
+Source code: https://github.com/momotori01/EARTH-DEFENSE-FORCE-6-VR-MOD (folder source/).
+
+winmm.dll: EDFModLoader by BlueAmulet, with one fix. MIT license in Licenses/EDFModLoader.txt.
+https://github.com/BlueAmulet/EDFModLoader
+Since EDF6VR 1.7.5 this is not the unmodified build. The unmodified loader
+(SHA-256 B80E4DA6AE7264F0E9774C992DE3C5F9B6E9BC9422146ADEEB5BB2BD681E112E, shipped
+in EDF6VR 1.0.0-1.7.3) forwards its 180 winmm exports through one shared global,
+so two threads calling at once could be sent into each other's Windows function.
+EDF6MultiSlot's tools/fix_winmm_proxy.py rewrites only those 19-byte export thunks
+so each jumps through its own pointer, giving SHA-256
+BE94E1FAC0CA12C41B6924E2EB168851641C999CE951D2A5A9FAEA5161B0F9A3. The script and the
+build steps are in the source repository above.
+Its dependency notices are also included:
+- MinHook: https://github.com/TsudaKageyu/minhook (BSD-style license, including HDE notices)
+- plog: https://github.com/SergiusTheBest/plog (MIT)
+- LightningScanner: https://github.com/localcc/LightningScanner (MIT)
+These licenses require retaining their notices; they do not require bundling game files.
+Microsoft Visual C++ runtime components are not bundled; install through Microsoft if needed.
+
+EDF6VR.dll uses the Khronos OpenXR headers (Copyright 2017-2026 The Khronos Group Inc.).
+Headers are dual Apache-2.0 OR MIT; the Apache-2.0 text is included here.
+https://github.com/KhronosGroup/OpenXR-SDK
+The runtime (SteamVR, VDXR or Quest Link) belongs to its respective provider and
+must be installed separately. No proprietary VR runtime DLL is included.
+
+F.E.A.R. VR's original MIT-covered host/OpenXR structures and weapon-transform
+approach were consulted. Its license is included for attribution. No F.E.A.R.
+retail files or Public Tools-derived GameClient module is bundled.
+
+Dear ImGui's D3D11 backend was a reference for alpha accumulation and D3D state
+preservation. Its MIT notice is included. No ImGui runtime component is required.
+https://github.com/ocornut/imgui
+
+UEVR and STALKER2-UEVR were research references for stereo/control design;
+neither package is included. Do not infer redistribution permission for those
+projects from their source being visible. In particular the local UEVR top-level
+LICENSE says "All rights reserved". This archive does not distribute that source.
+
+Cockpit geometry includes adapted parts from Quaternius' Modular Sci-Fi assets:
+Column_Slim, Props_Computer and Details_Plate_Details, Details_Vent_1,
+Details_Pipes_Small, Details_Output_Small. Resized, reoriented, triangulated and
+given shared cockpit materials; original source projects/textures are not bundled.
+Quaternius lists these sci-fi packs as CC0:
+https://quaternius.com/packs/ultimatemodularscifi.html
+https://quaternius.com/packs/modularscifimegakit.html
+
+Cockpit gauge geometry is adapted from 3DAssets.dev, "Helm Station with Control
+Yokes (Submarine Interior and Control Room)". CC0 1.0 Universal. Only a lower gauge
+and its marks are reused, resized and assigned cockpit materials.
+https://3dassets.dev/assets/submarine-interior-and-control-room-helm-station-with--5041df91
+https://creativecommons.org/publicdomain/zero/1.0/
+
+The Proteus cockpit control stick is adapted from "Low Poly Hands On Throttle and
+Stick for VR" by marcosgon, licensed CC BY-NC 4.0:
+https://sketchfab.com/3d-models/low-poly-hands-on-throttle-and-stick-for-vr-1d7ccf5cf71744a694b77dc7276577ee
+https://creativecommons.org/licenses/by-nc/4.0/
+Changes: only the stick half is used, welded, triangulated, decimated, rescaled and
+given cockpit materials (src/cockpit_proteus_stick.inc). NonCommercial: this part,
+and so any build that contains it, may not be used commercially.
+
+The hand rig tables in src/hand_rest_data.inc are bone bind poses read from the
+game's player models, so the mod's hands line up with the game's own skeleton.
+EDF6MultiSlot's menu layout (LYT_MAINFRAME.SGO) is the game's own layout with one
+added text field. Its build generates it from the builder's installed Root.cpk
+(tools/make_menu_label.py); the source repository does not contain it.
+
+EDF6VR.dll embeds four cockpit material atlases. Paint/scuff and normal details
+were cropped from EDF6's v612_newnixblack_df.DDS and v612_newnix_nm.DDS
+(Root.cpk, OBJECT/V612_NIX_BLACK.MRAB), tinted and combined with authored cockpit
+materials. These game-derived material samples are not original or CC0 artwork;
+EARTH DEFENSE FORCE and all game content remain with their respective owners.
+Original DDS files, game executable, EDF.dll, Umbra, Steam/EOS libraries, original
+game models, CPK archives, saves and debug captures are NOT included.
+
+This is an unofficial mod. This component inventory is not an endorsement by
+the game's publisher. No public upload has been performed during packaging.
+
+The HD texture builder in Mods/HDTexture bundles three programs. None of them is
+modified, and none of the game's own data travels with them: the pack is built
+on the player's machine from the player's own installation.
+
+- texconv, from Microsoft DirectXTex. MIT. Licenses/DirectXTex.txt
+  https://github.com/microsoft/DirectXTex
+  Decodes and encodes BC1/BC3/BC5/BC7 and builds mip chains.
+
+- waifu2x-ncnn-vulkan by nihui, with the models from nagadomi/waifu2x. MIT.
+  Licenses/waifu2x-ncnn-vulkan.txt
+  https://github.com/nihui/waifu2x-ncnn-vulkan
+  https://github.com/nagadomi/waifu2x
+  Only the photo model is included. Needs a Vulkan-capable GPU; it falls back to
+  the CPU otherwise.
+
+- CPython, embeddable build, from python.org. PSF License. Licenses/Python.txt
+  https://www.python.org/
+  Runs the builder. It is confined to Mods/HDTexture, installs nothing, writes
+  no registry keys and does not touch any other Python on the machine.
+
+The CRILAYLA/CPK, SSA and CMPL formats are read and written by code written for
+this project. No CRI Middleware code or SDK is used or included.
