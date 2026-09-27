@@ -174,12 +174,15 @@ float4 fragment(Output i):SV_Target {
  if(i.surface>=15.5&&i.surface<19.5) {
    // Blue, transmissive combiner glass with clipped corners. It is a real
    // display surface; scene colour remains visible through its background.
-   float2 edge=abs(i.uv-.5);clip(.945-edge.x-edge.y);
+   // A cabin drawn as its mirror image (accent.w: the Brute's right door
+   // gunner) reads its screens the right way round.
+   float2 uv=i.uv;if(accent.w>.5)uv.x=1-uv.x;
+   float2 edge=abs(uv-.5);clip(.945-edge.x-edge.y);
    uint id=(uint)(i.surface-16+.5);float4 rect=Crop[id];
    float aspect=panelAspect[id];
    float sourceAspect=(rect.z-rect.x)*options.w/(rect.w-rect.y);
    float2 fit=sourceAspect>aspect?float2(.93,.93*aspect/sourceAspect):float2(.93*sourceAspect/aspect,.93);
-   float2 local=.5+(i.uv-.5)/fit;
+   float2 local=.5+(uv-.5)/fit;
    float4 h=0;
    if(options.x>.5&&all(local>=0)&&all(local<=1))h=Hud.SampleLevel(Smooth,lerp(rect.xy,rect.zw,local),0);
    if(options.z>.5&&options.y<.5)h.rgb=encode(h.rgb);
@@ -495,6 +498,8 @@ static bool DrawCockpitPass(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,con
         for(int k=0;k<3;++k){data.paint[k]=CombatPaintLinear(heli->paint[k]);data.accent[k]=CombatPaintLinear(heli->accent[k]);}
         data.paint[3]=pose.rig.kind==CockpitKind::TruckPickup?2.f:1.f;
     }
+    // A mirrored cabin (CockpitMirrored): its screens' images turned back.
+    data.accent[3]=CockpitMirrored(pose.rig)?1.f:0.f;
     Matrix camera{};if(!InvertCamera(view,camera))return false;
     std::memcpy(data.cameraPosition,camera.m[3],12);
     const auto lighting=GetCockpitLighting(ctx,frame);

@@ -4,6 +4,7 @@
 #include "vehicle_camera.h"
 #include "image_profile.h"
 #include "weapon_hold.h"
+#include "angle_field_finder.h"
 #include <Windows.h>
 #include <cmath>
 #include <algorithm>
@@ -407,5 +408,26 @@ int main() {
     TestRedirect();
     TestTurnAboutVertical();
     printf(failures?"FAILURES %d\n":"vr math and call redirection OK\n",failures);
+    // The gun camera's angles found in memory by watching them move: a float
+    // that follows the yaw in radians and one that follows the pitch in
+    // negative degrees are picked out of noise and constants.
+    {
+        AngleFieldFinder finder;finder.Reset(16);
+        float knownYaw=0,knownPitch=0,region[16]{};
+        auto fill=[&](int step){for(int i=0;i<16;++i)region[i]=float(i)*.37f+std::sin(float(step*7+i))*.5f;
+            region[3]=knownYaw;region[7]=-knownPitch*57.2957795f;region[9]=1.f;};
+        for(int step=0;step<40;++step) {
+            float dy=0,dp=0;
+            if(step%2)dy=.03f;else dp=-.02f;
+            if(step==0){dy=dp=0;}
+            knownYaw+=dy;knownPitch+=dp;fill(step);
+            finder.Sample(region,dy,dp);
+        }
+        AngleFieldFinder::Best yawBest[2]{},pitchBest[2]{};
+        CHECK(finder.Top(false,yawBest,2)>=1);CHECK(finder.Top(true,pitchBest,2)>=1);
+        CHECK(yawBest[0].offset==12&&yawBest[0].kind==AngleFieldFinder::kRadians&&yawBest[0].hits==finder.YawEvents());
+        CHECK(pitchBest[0].offset==28&&pitchBest[0].kind==AngleFieldFinder::kNegDegrees&&pitchBest[0].hits==finder.PitchEvents());
+        CHECK(finder.YawEvents()==20&&finder.PitchEvents()==19);
+    }
     return failures?1:0;
 }

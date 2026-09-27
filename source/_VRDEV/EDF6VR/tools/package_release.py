@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.0.0'
+VERSION = '2.0.1'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.6.zip'
@@ -20,10 +20,10 @@ MULTISLOT_SHA = '7682EEC0C56B77C863FD4839C046E299AA6F102C727DB5974C467424D7748F9
 MULTISLOT_DLL_SHA = '45528ACFF37095E2515E1F6CCFA19FAD9D1490D910AA7F70569C8FE9DA5118BD'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
-# 2.0.0 is the hardware-checked CF372003 build with its version strings
-# changed, plus the steadying hand kicking with a two-handed weapon (checked
-# on hardware 2026-09-26).
-VERIFIED_VR_SHA = '3368B05DDE5A8665B7CE9971C89B49D2274DB1DE6735196195F3847A7E26835C'
+# 2.0.1: the Brute door gun's controls (base out of the door, stick up/down
+# inverted, a held push carried over the bottom) and its right seat's screens
+# no longer mirrored, on 2.0.0; the controls checked on hardware 2026-09-27.
+VERIFIED_VR_SHA = 'D1913A9A0E25ADBEECD6B1054A5C0296C4EA21CC3F9BDB69BEB5DF1DDAF52144'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

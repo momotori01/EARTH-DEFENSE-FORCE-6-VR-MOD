@@ -594,6 +594,13 @@ bool g_vehicleReady=false,g_requestPointReady=false;
 int g_testRequestPoints=0;
 edf6vr::RequestPointBudget g_requestBudget{};
 std::atomic<bool> g_vehicleMounted{false};
+// Set each camera update while the player sits at one of the Brute's door guns:
+// the user wants the barrel's up and down the other way round there.
+std::atomic<ULONGLONG> g_bruteGunnerAt{0};
+// The right stick as read there, for AssistBruteGun, and whether a push is being
+// carried over the bottom (its pitch input turned over while held).
+std::atomic<float> g_gunStick[2]{};
+std::atomic<bool> g_gunPitchTurned{false};
 std::atomic<ULONGLONG> g_vehicleSeen{0};
 std::atomic<float> g_vehicleHeadYaw{0};
 std::atomic<float> g_moveStickRead[2]{};   // the left stick as read, for the WALKER log
@@ -1189,7 +1196,14 @@ void BuildPad(const edf6vr::ControllerState& controls,bool handTracked,
             if(controls.stick[1][1]>g_stickButtonEdge) pad.buttons|=kPadY;
             if(controls.stick[1][1]<-g_stickButtonEdge) pad.buttons|=kPadLeftThumb;
         } else {
-            pad.rightY=ToAxis(controls.stick[1][1]);
+            // The Brute's door gun: up and down inverted (the user, 2026-09-27),
+            // and turned back over while a push is carried over the bottom
+            // (AssistBruteGun). The game's own aim, weight and all, moves it.
+            const bool bruteGun=VehiclePadActive()&&GetTickCount64()-g_bruteGunnerAt.load(std::memory_order_relaxed)<250;
+            g_gunStick[0].store(bruteGun?controls.stick[1][0]:0.f,std::memory_order_relaxed);
+            g_gunStick[1].store(bruteGun?controls.stick[1][1]:0.f,std::memory_order_relaxed);
+            const bool turned=bruteGun&&g_gunPitchTurned.load(std::memory_order_relaxed);
+            pad.rightY=ToAxis(bruteGun&&!turned?-controls.stick[1][1]:controls.stick[1][1]);
         }
         if(controls.stickClick[0]) pad.buttons|=kPadLeftThumb;
         if(controls.stickClick[1]) pad.buttons|=kPadRightThumb;
@@ -4091,6 +4105,71 @@ void ProbeFencerWeapons(void* soldier,bool fpsApplied) noexcept {
 #endif
     } __except(EXCEPTION_EXECUTE_HANDLER) { g_fencerProbeAt.store(0); }
 }
+// The Brute's door gun (the user, 2026-09-27). The game keeps the gun's aim as
+// two angles in the seat (RideInfo): +F8 the heading off the nose (0..pi on the
+// left door, -pi..0 on the right: heli_gatling_ctrl's 0..180 on canon_barrel)
+// and +138 the pitch, positive down (-pi/2..pi/2 on gun_emplacement); the barrel
+// points along RotY(heading)*RotX(pitch)*Z in the hull's axes (+X left, +Y up,
+// +Z nose), within 3 degrees of the posed barrel (found by watching memory in
+// the 11:44 ride: +138 matched 1176 of 1193 samples).
+// The game's own stick moves them, with its own weight, which the user wants
+// kept as it is (it is the game's difficulty); the stick's up and down are
+// inverted for him in BuildPad. A mod-driven aim (12:00) was worse.
+// What is added: on entering the seat the heading is set straight out of the
+// door, the base he drew. And straight down, the pole of that yaw/pitch aim,
+// no longer stops a barrel still pushed down: the heading is mirrored about
+// the door's axis (the nose side to the tail side) and the pitch input turned
+// over while the stick is held that way, so the game's own motion carries it up
+// the other side, round like a clock hand, without the U-turn a changed "up"
+// would give (the fixed cameras of old Resident Evil, his comparison). It holds
+// only while the stick stays pushed the same way (within 25 degrees): let go or
+// turned, the stick reads as before at once (the user: hardly held at all; a
+// moment's jolt of the barrel then is acceptable). Pushed down straight out of the
+// door there is no other side (it would be inside the fuselage): it stops.
+// The player's view is not touched.
+struct BruteGunAssist { void* seat=nullptr; ULONGLONG seenAt=0,logAt=0; unsigned flips=0; float pushed[2]{}; };
+BruteGunAssist g_bruteAssist;
+void AssistBruteGun(const edf6vr::VehicleSeat& seat,unsigned side) noexcept {
+    auto* ride=static_cast<unsigned char*>(seat.seat);
+    if(!edf6vr::Readable(ride+0xF8,4,true)||!edf6vr::Readable(ride+0x138,4,true)) return;
+    auto* heading=reinterpret_cast<float*>(ride+0xF8);auto* pitch=reinterpret_cast<float*>(ride+0x138);
+    // Over the bottom at the pole itself: the record reaches pi/2, where the
+    // heading no longer moves the barrel. At 1.45 (12:13 rides) the barrel
+    // jumped 13 degrees across, then the aim's own weight took it on down.
+    constexpr float kPi=3.14159265f,kPole=1.55f,kNearOut=.2f;
+    const float s=side?-1.f:1.f,outward=s*kPi*.5f;
+    auto& a=g_bruteAssist;
+    const auto now=GetTickCount64();
+    const bool entered=seat.seat!=a.seat||now-a.seenAt>500;
+    a.seat=seat.seat;a.seenAt=now;
+    const float x=g_gunStick[0].load(std::memory_order_relaxed),y=g_gunStick[1].load(std::memory_order_relaxed);
+    const float push=std::sqrt(x*x+y*y);
+    if(entered) {
+        Log("GUNNERASSIST seat %u entered: heading %.3f pitch %.3f; heading set straight out of the door (%.3f)",side+1,*heading,*pitch,outward);
+        *heading=outward;
+        g_gunPitchTurned.store(false,std::memory_order_relaxed);a.flips=0;
+    } else if(g_gunPitchTurned.load(std::memory_order_relaxed)) {
+        // Carried over the pole only while pushed the same way (within 25
+        // degrees); let go or turned, the stick reads as before.
+        if(push<.3f||(x*a.pushed[0]+y*a.pushed[1])/push<.9063f) {
+            g_gunPitchTurned.store(false,std::memory_order_relaxed);
+            Log("GUNNERASSIST seat %u stick (%.2f,%.2f) let go or turned: it reads as before",side+1,x,y);
+        }
+    } else if(*pitch>kPole&&y>.5f&&std::fabs(*heading-outward)>kNearOut) {
+        // At the bottom and still pushed down (stick up turns the barrel down):
+        // over to the other side of the door's axis, pitch input turned over.
+        const float was=*heading;
+        *heading=s*kPi-was;
+        g_gunPitchTurned.store(true,std::memory_order_relaxed);++a.flips;
+        a.pushed[0]=x/push;a.pushed[1]=y/push;
+        Log("GUNNERASSIST seat %u over the bottom: heading %.3f -> %.3f at pitch %.3f",side+1,was,*heading,*pitch);
+    }
+    if(now-a.logAt>=1000) {
+        a.logAt=now;
+        Log("GUNNERASSIST seat %u heading %.3f pitch %.3f stick (%.2f,%.2f) turned %d flips %u",side+1,*heading,*pitch,
+            x,y,g_gunPitchTurned.load(std::memory_order_relaxed)?1:0,a.flips);
+    }
+}
 // Runs under the existing camera-update lock; no game transforms are written.
 bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
                         edf6vr::Matrix nativeCamera,edf6vr::PlayerPose& rider,bool& detected) noexcept {
@@ -4191,6 +4270,14 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
         anchored=true;
     }
     else edf6vr::ClearCockpitPose();
+    // The Brute's door guns (the user, 2026-09-27): the game's own stick, its
+    // up and down inverted (BuildPad, while g_bruteGunnerAt is fresh), the base
+    // out of the door and a pass over the bottom (AssistBruteGun). Only the gun
+    // changes: the player's view is not touched (he watches it from the booth).
+    if(seatIndex>=1&&seatIndex<=2&&edf6vr::HasType(g_image,seat.vehicle,".?AVVehicleHelicopter410@@")) {
+        g_bruteGunnerAt.store(GetTickCount64(),std::memory_order_relaxed);
+        AssistBruteGun(seat,static_cast<unsigned>(seatIndex-1));
+    }
     // A passenger seat keeps the game's own camera, which sits inside the
     // rider's own soldier, and the game goes on drawing it: it is left out as
     // the body is on foot, with nothing drawn in its place. A camera well clear
@@ -6464,7 +6551,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 2.0.0 cockpit loading, with EDF6MultiSlot 1.5.6. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 2.0.1 cockpit loading, with EDF6MultiSlot 1.5.6. Fencer weapons aim the barrel itself; no dead band on the aim.");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
     if(_wcsicmp(slash?slash+1:host,L"EDF6.exe")) { Log("REFUSED: process is not EDF6.exe"); return false; }

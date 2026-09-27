@@ -1,5 +1,12 @@
-﻿EDF6VR 2.0.0
+﻿EDF6VR 2.0.1
 =============================
+
+CHANGES IN 2.0.1
+- Brute door gunner: easier to control. The gun starts pointing straight out
+  of the door; stick up and down are inverted in this seat; held down, the
+  barrel swings through straight down to the other side instead of stopping
+  (let go or change direction and it steers as usual). The right-hand seat's
+  screens are no longer mirrored.
 
 CHANGES IN 2.0.0
 - VR cockpits for every vehicle, built for each vehicle type into the

@@ -25,6 +25,10 @@ bool MissionTruckRider(const ImageProfile&,const VehicleSeat&,NodeLookup,bool* d
 // A world point in the vehicle's own frame (its root: +X its left, +Y up, +Z
 // forward), i.e. model coordinates, for the log.
 bool VehicleLocalPoint(const VehicleSeat&,const float world[3],float local[3]) noexcept;
+// A world direction in the vehicle's own unit axes (+X its left, +Y up, +Z its nose).
+bool VehicleLocalDirection(const VehicleSeat&,const float world[3],float local[3]) noexcept;
+// A named bone's posed world matrix.
+bool VehicleBoneRows(const VehicleSeat&,NodeLookup,const wchar_t* bone,Matrix& rows) noexcept;
 // Moves only the camera origin to a model-specific cabin/hatch position.
 // Seat zero plus explicitly identified Proteus/Brute gun seats are eligible.
 // Other passengers/unknown models keep native placement.

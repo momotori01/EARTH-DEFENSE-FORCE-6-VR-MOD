@@ -236,6 +236,35 @@ bool VehicleLocalPoint(const VehicleSeat& seat,const float world[3],float local[
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+namespace {
+bool UnitHull(const VehicleSeat& seat,Matrix& hull) noexcept {
+    if(!Readable(seat.vehicle,0xA0)) return false;
+    hull=At<Matrix>(seat.vehicle,0x60);
+    if(!ValidCamera(hull)) return false;
+    for(int i=0;i<3;++i){float n=0;for(int k=0;k<3;++k)n+=hull.m[i][k]*hull.m[i][k];n=std::sqrt(n);
+        if(!(n>1e-4f))return false;for(int k=0;k<3;++k)hull.m[i][k]/=n;}
+    return true;
+}
+}
+bool VehicleLocalDirection(const VehicleSeat& seat,const float world[3],float local[3]) noexcept {
+    __try {
+        Matrix hull{};if(!UnitHull(seat,hull))return false;
+        for(int i=0;i<3;++i){local[i]=0;for(int k=0;k<3;++k)local[i]+=world[k]*hull.m[i][k];}
+        return std::isfinite(local[0])&&std::isfinite(local[1])&&std::isfinite(local[2]);
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool VehicleBoneRows(const VehicleSeat& seat,NodeLookup lookup,const wchar_t* bone,Matrix& rows) noexcept {
+    __try {
+        auto v=static_cast<unsigned char*>(seat.vehicle);
+        if(!lookup || !Readable(v,0xF08)) return false;
+        auto nodes=At<unsigned char*>(v,0xEF0);const auto count=At<std::uint64_t>(v,0xF00);
+        if(!count || count>2048 || !Readable(nodes,count*0x110)) return false;
+        auto node=CabinNode(lookup,v+0xEE0,nodes,count,bone);
+        if(!node) return false;
+        rows=At<Matrix>(node,0xB0);
+        return ValidCamera(rows);
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 bool FaceVehicleForward(const VehicleSeat& seat,Matrix& camera) noexcept {
     __try {
         if(!Readable(seat.vehicle,0xA0) || !ValidCamera(camera)) return false;
