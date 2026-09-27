@@ -152,7 +152,14 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                             g_fencerBulletRightChecks.fetch_add(1,std::memory_order_relaxed);
                         }
                         // Blades and hammers sweep their hit along their own rows: left alone.
-                        const bool sweeps=edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_Swing@@")
+                        // The spears share Weapon_Swing with the katana, and since they
+                        // were laid on the hand like guns (2026-09-26) their thrust has to
+                        // follow the drawn spear like a gun's shot: left alone it went out
+                        // along the game's aim, 10 to 50 degrees off the spear whenever the
+                        // hand had moved (FENCERSHOTAIM, aligned R=0, 2026-09-27).
+                        const bool swing=edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_Swing@@");
+                        const bool spear=swing && FencerKnownSpear(reinterpret_cast<void*>(shot->weapon));
+                        const bool sweeps=(swing && !spear)
                             || edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_ImpactHammer@@")
                             || edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_Shield@@");
                         // 45 degrees was the angle the two aims were opened to,
@@ -212,9 +219,14 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                         }
                         diagBuiltAlong=builtAlong;
                         diagResidual=std::acos(std::clamp(from[0]*aimed[0]+from[1]*aimed[1]+from[2]*aimed[2],-1.0f,1.0f))*57.29578f;
+                        // A spear's thrust is turned from where it was built, not from
+                        // the aim: it was built as far as 82 degrees off the game's aim
+                        // (residual, 2026-09-27), which a turn by the aim's own arc keeps,
+                        // and it has no spread to carry through.
+                        const float* turnFrom=spear?from:aimed;
                         float cb=cw;
                         if(handShot && FencerDrawnBarrel(hand,reinterpret_cast<void*>(shot->weapon),barrel))
-                            cb=std::clamp(aimed[0]*barrel[0]+aimed[1]*barrel[1]+aimed[2]*barrel[2],-1.0f,1.0f);
+                            cb=std::clamp(turnFrom[0]*barrel[0]+turnFrom[1]*barrel[1]+turnFrom[2]*barrel[2],-1.0f,1.0f);
                         // 135 was still a wall the player could reach. The gap
                         // is the split he asked for, so the only angle that has
                         // to be refused is the half turn itself, where there is
@@ -231,7 +243,7 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                             // weapon matrix, whose model axes were snapped onto
                             // the aim and so lose the model's own tilt (the left
                             // spear shot off its reticle).
-                            if(cb<0.99999f && FencerTurnRows(rows,aimed,barrel)) {
+                            if(cb<0.99999f && FencerTurnRows(rows,turnFrom,barrel)) {
                                 g_fencerBulletAligned[hand].fetch_add(1,std::memory_order_relaxed);
                                 g_fencerBulletAlignDeg[hand].store(std::acos(cb)*57.29578f,std::memory_order_relaxed);
                             }

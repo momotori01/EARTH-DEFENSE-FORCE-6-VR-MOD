@@ -1,5 +1,10 @@
-﻿EDF6VR 2.0.2
+﻿EDF6VR 2.0.3
 =============================
+
+CHANGES IN 2.0.3
+- Fencer: spear thrusts go where the spear points. Since 2.0.0 the thrust
+  followed the game's slower aim, so it missed to the side of the spear
+  whenever the hand had just moved.
 
 CHANGES IN 2.0.2
 - Tanks (Blacker, Varias, EMC, Railgun, Titan, Kebler): the direction you

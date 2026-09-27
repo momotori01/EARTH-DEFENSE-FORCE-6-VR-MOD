@@ -914,14 +914,27 @@ bool FencerStraightenJoint(const WeaponHoldCommand& command,const edf6vr::Matrix
     g_fencerJointDraws.fetch_add(1,std::memory_order_relaxed);
     return true;
 }
+struct FencerSpearMemo { std::atomic<const void*> weapon{nullptr}; std::atomic<bool> spear{false}; };
+FencerSpearMemo g_fencerSpearMemo[4]{};
+unsigned g_fencerSpearNext=0;
 bool FencerIsSpear(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
-    struct Memo { void* weapon=nullptr; bool spear=false; };
-    static Memo memo[4]{}; static unsigned next=0;
-    for(const auto& m:memo) if(m.weapon==weapon && weapon) return m.spear;
+    for(const auto& m:g_fencerSpearMemo)
+        if(weapon && m.weapon.load(std::memory_order_acquire)==weapon) return m.spear.load(std::memory_order_relaxed);
     const bool spear=FencerModelHasNode(model,nodes,count,L"pile_attack") || FencerModelHasNode(model,nodes,count,L"pile_top");
-    memo[next]={weapon,spear}; next=(next+1)%4;
+    auto& slot=g_fencerSpearMemo[g_fencerSpearNext]; g_fencerSpearNext=(g_fencerSpearNext+1)%4;
+    slot.weapon.store(nullptr,std::memory_order_release);
+    slot.spear.store(spear,std::memory_order_relaxed);
+    slot.weapon.store(weapon,std::memory_order_release);
     if(spear) g_fencerSpearsSeen.fetch_add(1,std::memory_order_relaxed);
     return spear;
+}
+// The answer FencerIsSpear gave for a weapon that has been drawn; false for one
+// it has not seen. For the shot hook, which has no model or node table to hand
+// and runs on the game's thread while the draw fills the memo.
+bool FencerKnownSpear(const void* weapon) noexcept {
+    for(const auto& m:g_fencerSpearMemo)
+        if(weapon && m.weapon.load(std::memory_order_acquire)==weapon) return m.spear.load(std::memory_order_relaxed);
+    return false;
 }
 bool FencerRebuildRows(const float native[3][4],const float nativeDir[3],float wanted[3][3],float rows[3][4],FencerAxisMap* map=nullptr,void* weapon=nullptr,unsigned hand=2) noexcept {
     float from[3][3]{}; FencerAimFrame(nativeDir,from);

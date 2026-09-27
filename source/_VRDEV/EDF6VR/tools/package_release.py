@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.0.2'
+VERSION = '2.0.3'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.7.zip'
@@ -23,7 +23,9 @@ MULTISLOT_DLL_SHA = 'E28E2841C1E6B04DB251D054421DEEF1E2BC36B7700BA193F0CF4CDF32B
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
 # 2.0.1, with EDF6MultiSlot 1.5.7 (crash log); the tank fix is the cockpit
 # session's F6F48A39 build with version strings changed.
-VERIFIED_VR_SHA = '532A23ACAFB60A3A703D2BAA3E96F6BB4B7460DB208ED7806A7BA4928BC44652'
+# 2.0.3: Fencer spear thrusts follow the drawn spear (shot_origin.h, 3DFB7CDB
+# tested on hardware 2026-09-28) with version strings changed.
+VERIFIED_VR_SHA = 'C53A4D5F6F6D0558D9F4FA2401C6316F96DED73156F96C5589D0CA13D6FA2A9E'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()
