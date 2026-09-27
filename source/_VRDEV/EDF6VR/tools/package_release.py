@@ -12,18 +12,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.0.1'
+VERSION = '2.0.2'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.6.zip'
-MULTISLOT_SHA = '7682EEC0C56B77C863FD4839C046E299AA6F102C727DB5974C467424D7748F96'
-MULTISLOT_DLL_SHA = '45528ACFF37095E2515E1F6CCFA19FAD9D1490D910AA7F70569C8FE9DA5118BD'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.7.zip'
+MULTISLOT_SHA = '00B5FDC59B54EA5548769B5F0DD246F9F443B3BDFC027E0CF661429E70FE6C02'
+MULTISLOT_DLL_SHA = 'E28E2841C1E6B04DB251D054421DEEF1E2BC36B7700BA193F0CF4CDF32BD4D54'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
-# 2.0.1: the Brute door gun's controls (base out of the door, stick up/down
-# inverted, a held push carried over the bottom) and its right seat's screens
-# no longer mirrored, on 2.0.0; the controls checked on hardware 2026-09-27.
-VERIFIED_VR_SHA = 'D1913A9A0E25ADBEECD6B1054A5C0296C4EA21CC3F9BDB69BEB5DF1DDAF52144'
+# 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
+# 2.0.1, with EDF6MultiSlot 1.5.7 (crash log); the tank fix is the cockpit
+# session's F6F48A39 build with version strings changed.
+VERIFIED_VR_SHA = '532A23ACAFB60A3A703D2BAA3E96F6BB4B7460DB208ED7806A7BA4928BC44652'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

@@ -34,7 +34,7 @@
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.5.6";
+constexpr const char* kVersion = "1.5.7";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -334,6 +334,11 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     const bool enabled = GetPrivateProfileIntW(L"MultiSlot", L"Enabled", 1, iniPath) != 0;
     const bool eightPlayers = GetPrivateProfileIntW(L"MultiSlot", L"EightPlayerRooms", 0, iniPath) != 0;
     const bool crashLog = GetPrivateProfileIntW(L"MultiSlot", L"CrashLog", 1, iniPath) != 0;
+    // A minidump of the first access violation inside EDF.dll, one file overwritten each launch. The
+    // 2026-09-27 host crash is a null whose source is a stack local, which no log line can show.
+    // Off unless the INI asks for it: a dump carries process memory, which can include the room name and
+    // chat text, and that is not something to switch on for everyone who installs the package.
+    const bool crashDump = GetPrivateProfileIntW(L"MultiSlot", L"CrashDump", 0, iniPath) != 0;
     // On by default since 1.2.2, so reports from real rooms come with the lobby and P2P lines (the log caps itself).
     const bool netLog = GetPrivateProfileIntW(L"MultiSlot", L"NetLog", 1, iniPath) != 0;
     const bool recovery = GetPrivateProfileIntW(L"MultiSlot", L"HandshakeRecovery", 1, iniPath) != 0;
@@ -526,8 +531,19 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("HandshakeRecovery=0: off");
     }
     if (crashLog) {
-        InstallCrashLog(game);
-        Log("Crash log armed");
+        wchar_t dumpPath[MAX_PATH]{};
+        const bool wantDump = crashDump && SiblingPath(dumpPath, L"-crash.dmp");
+        InstallCrashLog(game, wantDump ? dumpPath : nullptr);
+        if (CrashDumpArmed())
+            Log("Crash log armed; CrashDump=1, so the first access violation in EDF.dll also writes %ls "
+                "(one per launch, overwritten each time). It holds process memory, so only send it on "
+                "purpose", dumpPath);
+        else if (crashDump)
+            Log("Crash log armed; CrashDump=1 but no dump can be written (DbgHelp.dll or the path was "
+                "not usable)");
+        else
+            Log("Crash log armed; no crash dump (CrashDump is off by default because a dump holds "
+                "process memory; set CrashDump=1 in the INI to help chase a crash)");
     }
     return true;  // stays loaded: call stubs, import wrappers and the exception handler point here
 }

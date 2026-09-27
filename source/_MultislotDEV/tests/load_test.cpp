@@ -330,7 +330,14 @@ int wmain(int argc, wchar_t** argv) {
                       Contains(written, "DummyAddKey=F6\r\n") && !Contains(written, "MaxPlayers=") && !Contains(written, "PageKey="),
                   "missing INI is written with the documented defaults (CRLF)");
             Check(Contains(log, "Wrote default settings"), "writing the default INI is logged");
+            // A dump copies the game's memory, so it must never be on for someone who only installed
+            // the package. The default INI says 0 and the plugin must read 0 when the key is absent.
+            Check(Contains(written, "CrashDump=0\r\n"), "the default INI leaves crash dumps off");
         }
+        Check(Contains(log, "Crash log armed"), "the crash log is armed");
+        // The off-path wording is what tells the player nothing is being written. (The same line also
+        // mentions CrashDump=1 as the way to turn it on, so the wording is checked, not the substring.)
+        Check(Contains(log, "no crash dump (CrashDump is off by default"), "the log says the dump is off");
         Check(Contains(log, "switched with F3/Tab/RS"), "member pages switch with F3, Tab and the right stick");
         if (mode == L"host8") {
             // An INI from 0.5.0: PageKey=F2 and dummy keys F3/F4.

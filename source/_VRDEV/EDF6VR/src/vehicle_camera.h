@@ -67,6 +67,7 @@ bool VehicleStickYaw(const Matrix& nativeCamera,const Vec3& forward,float& yaw) 
 // Machines whose stick the game already reads on their own hull, not the
 // camera: the stick goes to them as it is. The Negling (hardware, 2026-09-25:
 // hull at 12, launcher at 9, the camera rebase made the stick drive at 9),
-// the Combat Wagon, and the Nix on its lower body.
+// the Combat Wagon, the Nix on its lower body, and the six tanks (hardware,
+// 2026-09-27: the Kebler drove along its barrel).
 bool VehicleStickOnHull(const ImageProfile&,const VehicleSeat&) noexcept;
 }

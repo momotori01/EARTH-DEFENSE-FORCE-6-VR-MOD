@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EDF6MultiSlot VERSION 1.5.6 LANGUAGES CXX)
+project(EDF6MultiSlot VERSION 1.5.7 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -110,3 +110,7 @@ foreach(mode off host4 host8 fresh nomission recoveryoff quiet)
 endforeach()
 
 configure_file(EDF6MultiSlot.ini "${CMAKE_SOURCE_DIR}/dist/EDF6MultiSlot.ini" COPYONLY)
+
+add_executable(CrashDumpTests tests/crashdump_test.cpp src/crashlog.cpp src/log.cpp)
+target_compile_options(CrashDumpTests PRIVATE ${WARNINGS})
+add_test(NAME CrashDump COMMAND CrashDumpTests "${CMAKE_BINARY_DIR}/crashdumptest")

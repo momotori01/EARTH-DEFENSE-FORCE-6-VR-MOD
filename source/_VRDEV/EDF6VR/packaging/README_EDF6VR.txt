@@ -1,5 +1,12 @@
-﻿EDF6VR 2.0.1
+﻿EDF6VR 2.0.2
 =============================
+
+CHANGES IN 2.0.2
+- Tanks (Blacker, Varias, EMC, Railgun, Titan, Kebler): the direction you
+  drive is taken from the hull again; turning the turret no longer changes
+  where the tank goes.
+- EDF6MultiSlot 1.5.7: a more detailed log when the game crashes (see
+  README_EDF6MultiSlot.txt). Rooms and joining are unchanged.
 
 CHANGES IN 2.0.1
 - Brute door gunner: easier to control. The gun starts pointing straight out

@@ -786,10 +786,17 @@ bool VehicleStickOnHull(const ImageProfile& image,const VehicleSeat& seat) noexc
     // body; the game drives them on the truck, so the stick is left as read.
     // So does the Nix on its lower body (hardware, 2026-09-25: turned by the
     // lower body's angle off the camera, the walk followed the upper body's
-    // twist, as the Negling's had followed its launcher).
-    __try {return seat.vehicle&&(HasType(image,seat.vehicle,".?AVVehicle402_Rocket@@")||
-        HasType(image,seat.vehicle,".?AVVehicle607_RoboTruck@@")||
-        HasType(image,seat.vehicle,".?AVVehicle504_begaruta@@")||HasType(image,seat.vehicle,".?AVVehicle612_nix@@"));}
+    // twist, as the Negling's had followed its launcher). And the tanks
+    // (hardware, 2026-09-27: the Kebler drove along its barrel -- the game
+    // steers a tank on its hull, the camera rebase added the turret's angle):
+    // the Railgun, the Titan, the Blacker, the EMC, the Varias, the Kebler.
+    __try {
+        if(!seat.vehicle) return false;
+        for(const auto type:{".?AVVehicle402_Rocket@@",".?AVVehicle607_RoboTruck@@",".?AVVehicle504_begaruta@@",".?AVVehicle612_nix@@",
+            ".?AVVehicle403_Tank@@",".?AVVehicle404_Tank@@",".?AVVehicle505_Tank@@",".?AVVehicle510_Maser@@",".?AVVehicle601_Tank@@",".?AVVehicle603_Flak@@"})
+            if(HasType(image,seat.vehicle,type)) return true;
+        return false;
+    }
     __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 bool VehicleStickYaw(const Matrix& nativeCamera,const Vec3& forward,float& yaw) noexcept {
