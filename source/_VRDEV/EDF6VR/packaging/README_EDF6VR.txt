@@ -3,8 +3,8 @@
 
 CHANGES IN 2.1.0
 - Update_EDF6VR.bat is included. Run it and it updates EDF6VR (with the
-  bundled EDF6MultiSlot) to the latest release on GitHub. If something seems
-  wrong or you run into a bug, try this first. See UPDATE below. When a newer
+  bundled EDF6MultiSlot) to the latest release on GitHub. If you run into a
+  bug, try this first. See UPDATE below. When a newer
   version is out, the lower-left line of the menu says so.
 - Fencer: better controls, closer to the game on a monitor.
 - Fencer: after a revive, your equipment no longer points the wrong way.
