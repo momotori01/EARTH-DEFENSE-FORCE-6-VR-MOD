@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EDF6MultiSlot VERSION 1.5.7 LANGUAGES CXX)
+project(EDF6MultiSlot VERSION 1.5.12 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -24,7 +24,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_D
 add_library(EDF6MultiSlot SHARED
     src/plugin.cpp src/patches.cpp src/rooms.cpp src/roomview.cpp src/fakemembers.cpp src/hostmode.cpp src/menulayout.cpp
     src/mission.cpp src/spawn.cpp src/joinlog.cpp src/armor.cpp src/midhook.cpp src/code.cpp src/crashlog.cpp src/log.cpp
-    src/netlog.cpp src/identity.cpp)
+    src/netlog.cpp src/identity.cpp src/smoothing.cpp src/updatecheck.cpp)
+target_link_libraries(EDF6MultiSlot PRIVATE winhttp)
 target_include_directories(EDF6MultiSlot PRIVATE ${MODLOADER_INCLUDE} "${CMAKE_BINARY_DIR}/generated")
 target_compile_options(EDF6MultiSlot PRIVATE ${WARNINGS})
 target_link_options(EDF6MultiSlot PRIVATE /DYNAMICBASE /NXCOMPAT /INCREMENTAL:NO /PDBALTPATH:EDF6MultiSlot.pdb)
@@ -55,7 +56,7 @@ target_compile_options(NetLogForwardTests PRIVATE ${WARNINGS})
 add_test(NAME NetworkImportForwarding COMMAND NetLogForwardTests)
 set(EDF_DLL "${CMAKE_SOURCE_DIR}/../EDF.dll")
 
-add_executable(MultiSlotTests tests/tests.cpp src/patches.cpp src/rooms.cpp src/mission.cpp src/midhook.cpp src/code.cpp src/log.cpp)
+add_executable(MultiSlotTests tests/tests.cpp src/patches.cpp src/rooms.cpp src/mission.cpp src/midhook.cpp src/code.cpp src/log.cpp src/smoothing.cpp)
 target_compile_options(MultiSlotTests PRIVATE ${WARNINGS})
 add_test(NAME PatchTablesMatchEDF COMMAND MultiSlotTests "${EDF_DLL}")
 
@@ -73,7 +74,8 @@ target_compile_options(MissionTests PRIVATE ${WARNINGS})
 add_test(NAME MissionSlots COMMAND MissionTests)
 
 add_executable(HostModeTests tests/hostmode_test.cpp src/hostmode.cpp src/roomview.cpp src/mission.cpp src/armor.cpp
-    src/midhook.cpp src/code.cpp src/patches.cpp src/log.cpp src/identity.cpp src/joinlog.cpp)
+    src/midhook.cpp src/code.cpp src/patches.cpp src/log.cpp src/identity.cpp src/joinlog.cpp src/updatecheck.cpp)
+target_link_libraries(HostModeTests PRIVATE winhttp)
 target_compile_options(HostModeTests PRIVATE ${WARNINGS})
 add_test(NAME HostModeAndMenuLabel COMMAND HostModeTests)
 
@@ -100,17 +102,17 @@ add_executable(LogTests tests/log_test.cpp src/log.cpp)
 target_compile_options(LogTests PRIVATE ${WARNINGS})
 add_test(NAME LogFileCap COMMAND LogTests "${CMAKE_BINARY_DIR}/logtest")
 
+add_executable(CrashDumpTests tests/crashdump_test.cpp src/crashlog.cpp src/log.cpp)
+target_compile_options(CrashDumpTests PRIVATE ${WARNINGS})
+add_test(NAME CrashDump COMMAND CrashDumpTests "${CMAKE_BINARY_DIR}/crashdumptest")
+
 add_executable(MultiSlotLoadTest tests/load_test.cpp src/patches.cpp src/midhook.cpp src/code.cpp)
 target_include_directories(MultiSlotLoadTest PRIVATE ${MODLOADER_INCLUDE} "${CMAKE_BINARY_DIR}/generated")
 target_compile_options(MultiSlotLoadTest PRIVATE ${WARNINGS})
 add_dependencies(MultiSlotLoadTest EDF6MultiSlot)
-foreach(mode off host4 host8 fresh nomission recoveryoff quiet)
+foreach(mode off host4 host8 fresh nomission recoveryoff quiet smooth)
     add_test(NAME PluginLoad_${mode} COMMAND MultiSlotLoadTest "${EDF_DLL}" "$<TARGET_FILE:EDF6MultiSlot>"
              "${CMAKE_BINARY_DIR}/loadtest" ${mode})
 endforeach()
 
 configure_file(EDF6MultiSlot.ini "${CMAKE_SOURCE_DIR}/dist/EDF6MultiSlot.ini" COPYONLY)
-
-add_executable(CrashDumpTests tests/crashdump_test.cpp src/crashlog.cpp src/log.cpp)
-target_compile_options(CrashDumpTests PRIVATE ${WARNINGS})
-add_test(NAME CrashDump COMMAND CrashDumpTests "${CMAKE_BINARY_DIR}/crashdumptest")

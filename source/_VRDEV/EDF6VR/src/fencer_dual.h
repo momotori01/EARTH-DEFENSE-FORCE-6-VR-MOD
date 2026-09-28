@@ -206,6 +206,32 @@ constexpr unsigned kFencerRestFirstUpdates=15;     // steady settled updates bef
 constexpr float kFencerRestLearnSec=0.3f;          // how fast the learned pose follows, standing
 constexpr float kFencerRestWalkSec=1.0f;           // and walking
 constexpr float kFencerRestSteady=0.02f;           // largest change of a row per update still taken as steady
+// Down: the head bone near the floor. Lying downed and waiting for rescue passed
+// every "settled" test (slow, no dash, no trigger), and the shield's rest pose
+// followed the downed animation -- 144-179 degrees off at 23:50 on 2026-09-28,
+// and rolled 62 degrees away over two minutes from 23:58 -- so after the revive
+// it was held on the palm side. The head was 0.21 and 0.60 m above the feet in
+// those two spells; on his feet it never went under 0.89 (a dash's crouch).
+constexpr float kFencerDownHead=0.75f;
+constexpr ULONGLONG kFencerDownTailMs=800;         // and the stand-up after it
+bool g_fencerDown=false;
+std::atomic<unsigned long long> g_fencerDowns{0};
+// A backstop behind it: a learned pose only follows the game's while that stays
+// within this of the FIRST pose learned. Aiming up and down moves the game's
+// own pose by about 30 degrees; the downed poses were 144-179 away.
+constexpr float kFencerRestAnchorDeg=60.0f;
+std::atomic<unsigned long long> g_fencerRestOffAnchor{0};
+// The rotation between two row sets, in degrees, each row taken as a direction.
+float FencerRowsAngle(const float a[3][3],const float b[3][3]) noexcept {
+    float trace=0;
+    for(int i=0;i<3;++i) {
+        const float la=std::sqrt(a[i][0]*a[i][0]+a[i][1]*a[i][1]+a[i][2]*a[i][2]);
+        const float lb=std::sqrt(b[i][0]*b[i][0]+b[i][1]*b[i][1]+b[i][2]*b[i][2]);
+        if(!(la>1e-4f) || !(lb>1e-4f)) return 180.0f;
+        trace+=(a[i][0]*b[i][0]+a[i][1]*b[i][1]+a[i][2]*b[i][2])/(la*lb);
+    }
+    return std::acos(std::clamp((trace-1.0f)*0.5f,-1.0f,1.0f))*57.29578f;
+}
 // The back-mounted models: every weapon whose ModelConstraint is "backWeapon"
 // (48 in sgott data/6/weapon) uses one of these ten. A model's root node bears
 // its name, so the node lookup tells them apart (FencerBackModel). FENCERREST
@@ -224,7 +250,7 @@ constexpr const wchar_t* kFencerBackModels[]={L"h_attach_large02",L"h_cannon_sho
     L"h_attach_heavylazer01",L"h_attach_616_shoulder04"};
 constexpr int kFencerBackModelCount=static_cast<int>(sizeof(kFencerBackModels)/sizeof(kFencerBackModels[0]));
 constexpr unsigned kFencerRestReportUpdates=60;    // steady updates standing before the pose is reported
-struct FencerRestMemo { void* weapon=nullptr; float rest[3][3]{}; float last[3][3]{}; float reported[3][3]{};
+struct FencerRestMemo { void* weapon=nullptr; float rest[3][3]{}; float anchor[3][3]{}; float last[3][3]{}; float reported[3][3]{};
     bool learned=false,haveLast=false,haveReported=false; unsigned steadyRun=0,standRun=0; double at=0; };
 FencerRestMemo g_fencerRest[8]{};
 unsigned g_fencerRestNext=0;
@@ -246,7 +272,9 @@ void FencerRestPose(unsigned hand,void* weapon,float c[3][3],int model=-1,float 
     if(g_fencerSettled && steady) {
         if(m->steadyRun<kFencerRestFirstUpdates) ++m->steadyRun;
         if(!m->learned) {
-            if(m->steadyRun>=kFencerRestFirstUpdates) { std::memcpy(m->rest,c,sizeof(m->rest)); m->learned=true; g_fencerRestLearnt.fetch_add(1,std::memory_order_relaxed); }
+            if(m->steadyRun>=kFencerRestFirstUpdates) { std::memcpy(m->rest,c,sizeof(m->rest)); std::memcpy(m->anchor,c,sizeof(m->anchor)); m->learned=true; g_fencerRestLearnt.fetch_add(1,std::memory_order_relaxed); }
+        } else if(FencerRowsAngle(c,m->anchor)>kFencerRestAnchorDeg) {
+            g_fencerRestOffAnchor.fetch_add(1,std::memory_order_relaxed);
         } else if(dt>0 && dt<0.5) {
             const float follow=1.0f-std::exp(-static_cast<float>(dt)/(g_fencerWalking?kFencerRestWalkSec:kFencerRestLearnSec));
             for(int i=0;i<3;++i) for(int k=0;k<3;++k) m->rest[i][k]+=(c[i][k]-m->rest[i][k])*follow;
@@ -303,7 +331,7 @@ void FencerRestPose(unsigned hand,void* weapon,float c[3][3],int model=-1,float 
 // pose, smoothed as before. SHIELDREST reports each learned pose for a table.
 struct FencerShieldMemo {
     void* weapon=nullptr;
-    float pose[2][3][3]{}; bool learned[2]{};
+    float pose[2][3][3]{}; float anchor[2][3][3]{}; bool learned[2]{};
     float reported[2][3][3]{}; bool haveReported[2]{};
     float shown[3][3]{}; bool haveShown=false;
     float last[3][3]{}; bool haveLast=false;
@@ -352,7 +380,10 @@ void FencerShieldPose(unsigned hand,void* weapon,float c[3][3]) noexcept {
         if(m->steadyRun>=kFencerRestFirstUpdates) {
             if(!m->learned[state]) {
                 std::memcpy(m->pose[state],c,sizeof(m->pose[state])); m->learned[state]=true;
+                std::memcpy(m->anchor[state],c,sizeof(m->anchor[state]));
                 g_fencerShieldLearnt[state].fetch_add(1,std::memory_order_relaxed);
+            } else if(FencerRowsAngle(c,m->anchor[state])>kFencerRestAnchorDeg) {
+                g_fencerRestOffAnchor.fetch_add(1,std::memory_order_relaxed);
             } else if(dt>0 && dt<0.5) {
                 const float follow=1.0f-std::exp(-static_cast<float>(dt)/kFencerRestLearnSec);
                 for(int i=0;i<3;++i) for(int k=0;k<3;++k) m->pose[state][i][k]+=(c[i][k]-m->pose[state][i][k])*follow;
@@ -1361,6 +1392,18 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
             }
             gripWas[h]=down;
         }
+        {
+            static ULONGLONG downUntil=0;
+            float head[3]{};
+            if(g_nodeLookup && edf6vr::ReadNamedBone(soldier,g_nodeLookup,L"head",head)) {
+                const float height=head[1]-aim.position[1];
+                if(std::isfinite(height) && height<kFencerDownHead) {
+                    if(tick>=downUntil) g_fencerDowns.fetch_add(1,std::memory_order_relaxed);
+                    downUntil=tick+kFencerDownTailMs;
+                }
+            }
+            g_fencerDown=tick<downUntil;
+        }
         if(g_fencerPrevAt>0 && dt>0.004 && dt<0.5) {
             const float dx=aim.position[0]-g_fencerPrevPos[0], dz=aim.position[2]-g_fencerPrevPos[2];
             const float dy=aim.position[1]-g_fencerPrevPos[1];
@@ -1378,9 +1421,9 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
                 // On his feet: on the ground, no dash or jump hold, not firing. What a
                 // shoulder weapon is learned from (FencerRestPose), standing or walking.
                 g_fencerSettled=speed<kFencerDashSpeed && std::isfinite(climb) && climb<0.3f && tick>=g_fencerDashUntil
-                    && tick-g_playerFireAt.load(std::memory_order_relaxed)>300;
+                    && tick-g_playerFireAt.load(std::memory_order_relaxed)>300 && !g_fencerDown;
                 g_fencerWalking=speed>=0.6f;
-                g_fencerOnFeet=speed<kFencerDashSpeed && std::isfinite(climb) && climb<0.3f && tick>=g_fencerDashUntil;
+                g_fencerOnFeet=speed<kFencerDashSpeed && std::isfinite(climb) && climb<0.3f && tick>=g_fencerDashUntil && !g_fencerDown;
             }
         }
         for(int j=0;j<3;++j) g_fencerPrevPos[j]=aim.position[j];
@@ -1520,9 +1563,9 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
             g_fencerGuideWatch[0].worst[0],g_fencerGuideWatch[0].worst[1],g_fencerGuideWatch[1].worst[0],g_fencerGuideWatch[1].worst[1],
             g_fencerGuideWatch[0].baseline,g_fencerGuideWatch[1].baseline,g_fencerGuideWatch[0].spikes,g_fencerGuideWatch[1].spikes);
         for(auto& w:g_fencerGuideWatch) { w.worst[0]=w.worst[1]=0; }
-        Log("SHIELDSTATE learnt lowered/guard=%llu/%llu shown lowered/guard=%llu/%llu reported=%llu trigger L/R=%.2f/%.2f",
+        Log("SHIELDSTATE learnt lowered/guard=%llu/%llu shown lowered/guard=%llu/%llu reported=%llu offAnchor=%llu downs=%llu trigger L/R=%.2f/%.2f",
             g_fencerShieldLearnt[0].load(),g_fencerShieldLearnt[1].load(),g_fencerShieldShown[0].load(),g_fencerShieldShown[1].load(),
-            g_fencerShieldReported.load(),g_handTrigger[0].load(),g_handTrigger[1].load());
+            g_fencerShieldReported.load(),g_fencerRestOffAnchor.load(),g_fencerDowns.load(),g_handTrigger[0].load(),g_handTrigger[1].load());
         for(unsigned h=0;h<2;++h) if(g_fencerShieldSeen[h]) {
             const auto& c=g_fencerShieldNative[h];
             Log("SHIELDPOSE %s native rows in the aim frame (left,up,forward): x=(%.2f,%.2f,%.2f) y=(%.2f,%.2f,%.2f) z=(%.2f,%.2f,%.2f)",

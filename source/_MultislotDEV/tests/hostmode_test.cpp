@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "../src/hostmode.h"
+#include "../src/updatecheck.h"
 #include "../src/patches.h"
 
 using namespace multislot;
@@ -303,6 +304,22 @@ int main() {
           "outside a room there is nothing to copy from, so the guide stays away");
     wchar_t tiny[8]{};
     Check(ComposeLabel(Menu(true, true, 8, 0), false, true, tiny, 8) == 7 && tiny[7] == 0, "a short buffer is truncated, not overrun");
+
+    // The "a newer EDF6VR exists" line (updatecheck.h) goes on the end, and is the part that gives way
+    // when the field is full: the guides above it say what the buttons do right now, the notice does not.
+    SetUpdateNoticeForTest(L"NEW EDF6VR 2.0.1 → 2.1.0 - Update_EDF6VR.bat");
+    const std::wstring withNotice = Compose(Menu(false, false, 0, 0), true, false);
+    Check(withNotice.find(L"8Player MOD :ON") != std::wstring::npos, "the controls still come first");
+    Check(withNotice.find(L"NEW EDF6VR") > withNotice.find(L"8Player MOD"), "the notice comes after them");
+    Check(withNotice.find(L"Update_EDF6VR.bat") != std::wstring::npos, "and says what to run");
+    wchar_t squeezed[32]{};
+    ComposeLabel(Menu(false, false, 0, 0), true, false, squeezed, 32);
+    const std::wstring cut = squeezed;
+    Check(cut.find(L"8Player MOD :ON") != std::wstring::npos, "a full field keeps the controls");
+    Check(cut.find(L"Update_EDF6VR.bat") == std::wstring::npos, "and drops the notice, not the other way round");
+    SetUpdateNoticeForTest(L"");
+    Check(Compose(Menu(false, false, 0, 0), true, false).find(L"NEW EDF6VR") == std::wstring::npos,
+          "with nothing to say the label is exactly as before");
 
     // Menu frame updates write the label through the game's functions, once per change.
     wchar_t iniPath[MAX_PATH]{};

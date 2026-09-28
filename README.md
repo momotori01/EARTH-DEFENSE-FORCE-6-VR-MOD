@@ -6,6 +6,8 @@ VR mod for the Steam version of EARTH DEFENSE FORCE 6, bundled with an 8-player 
 
 Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://github.com/momotori01/EARTH-DEFENSE-FORCE-6-VR-MOD/releases) page (not the automatically generated source code archives).
 
+Already installed 2.1.0 or later? Close the game and run `Update_EDF6VR.bat` in the game folder: it updates to the latest release and keeps your settings.
+
 ## Features
 
 - Native stereo rendering, room-scale 6DoF tracking.
@@ -91,7 +93,7 @@ Press **F2**, or click the left stick, on the menu screen **outside a room** to 
 - Hosting with it **ON**, only players who have the 8P mod can join your room; with it **OFF** you make an ordinary room and play with anyone.
 - **It also filters the room search.** With it **ON**, only 8-player rooms are listed; with it **OFF**, ordinary and 8-player rooms are both listed and you can join either. To look for an ordinary 4-player room, switch it OFF. Switching while the room list is open searches again straight away.
 - Up to 4 players nothing changes. From the 5th on there are more enemies (x1.2, x1.4, x1.6, x1.8 for 5 to 8 players), and their durability, damage and speed stay exactly as they are with four.
-- Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later; the bundled 1.5.7 is recommended for all.
+- Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later; the bundled 1.5.12 is recommended for all.
 
 ### Matching armour
 In a room, press **F4** or click the left stick to turn armour matching on or off (shown at the bottom left). It is for playing alongside a beginner, or on a class you rarely use, without being far behind in health.

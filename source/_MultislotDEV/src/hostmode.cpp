@@ -9,6 +9,7 @@
 #include <cwchar>
 
 #include "armor.h"
+#include "updatecheck.h"
 #include "identity.h"
 #include "log.h"
 #include "mission.h"
@@ -322,6 +323,14 @@ std::size_t ComposeLabel(const MenuContext& context, bool on, bool roomOn, wchar
             _snwprintf_s(copy, _TRUNCATE, L"%s%ls copy armor :%s", out[0] ? L"   " : L"", context.copyArmorHint,
                          CopyArmor() ? L"ON" : L"OFF");
         wcsncat_s(out, outChars, copy, _TRUNCATE);
+    }
+    // Last on purpose. The field holds 96 characters and the guides above tell the player what the
+    // buttons do right now; if something has to be cut it should be this, so the notice is appended with
+    // _TRUNCATE after everything else rather than competing with it.
+    if (const wchar_t* update = UpdateNotice(); update && update[0]) {
+        wchar_t line[kLabelChars]{};
+        _snwprintf_s(line, _TRUNCATE, L"%s%ls", out[0] ? L"   " : L"", update);
+        wcsncat_s(out, outChars, line, _TRUNCATE);
     }
     // Test harness: the players a mission started alone would have (hidden while it is off).
     if (context.ghosts > 0) {

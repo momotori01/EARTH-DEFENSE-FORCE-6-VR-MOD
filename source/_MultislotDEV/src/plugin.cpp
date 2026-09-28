@@ -29,12 +29,14 @@
 #include "patches.h"
 #include "roomview.h"
 #include "rooms.h"
+#include "smoothing.h"
+#include "updatecheck.h"
 #include "spawn.h"
 
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.5.7";
+constexpr const char* kVersion = "1.5.12";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -134,7 +136,7 @@ struct SlotWrite {
 // All or nothing: a half-applied set could publish a 5-slot room that unmodded players can join,
 // read a capacity from a call that was never redirected, or page a member list the builder never sees.
 bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int ghosts, bool diagnostics, bool armor, bool recovery,
-           ThunkPage& thunks) {
+           float smoothing, ThunkPage& thunks) {
     auto patches = GuestPatches();
     const auto sessionPatches = SessionPatches();
     patches.insert(patches.end(), sessionPatches.begin(), sessionPatches.end());
@@ -237,6 +239,19 @@ bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int gho
         }
         writes.push_back({site.name, site.rva, site.original, std::move(bytes)});
     }
+    // The remote-player correction factor, emitted next to the stubs while the page is still writable.
+    if (smoothing > 0.0f && smoothing != kVanillaSmoothing) {
+        Patch factor{};
+        if (SmoothingPatch(base, thunks, smoothing, factor)) {
+            writes.push_back(std::move(factor));
+        } else {
+            Log("REFUSED: the remote player correction factor site (EDF+%X) is not what this build expects, "
+                "or there was no room for the constant; nothing was changed",
+                kSmoothingSite);
+            thunks.Release();
+            return false;
+        }
+    }
     if (!thunks.Seal()) {
         Log("REFUSED: could not make call stubs executable (error %lu); nothing was changed", GetLastError());
         thunks.Release();
@@ -334,6 +349,16 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     const bool enabled = GetPrivateProfileIntW(L"MultiSlot", L"Enabled", 1, iniPath) != 0;
     const bool eightPlayers = GetPrivateProfileIntW(L"MultiSlot", L"EightPlayerRooms", 0, iniPath) != 0;
     const bool crashLog = GetPrivateProfileIntW(L"MultiSlot", L"CrashLog", 1, iniPath) != 0;
+    // The only thing here that contacts anything outside the game: one read of the VR mod's release page,
+    // so the menu can say when a newer package exists. Nothing is downloaded (updatecheck.h).
+    const bool checkUpdates = GetPrivateProfileIntW(L"Update", L"CheckEDF6VR", 1, iniPath) != 0;
+    // How fast a remote player's drawn position catches up (smoothing.h). A percentage, so the INI holds
+    // a whole number; 0 leaves the game's own 5 alone. Local and display-only: it changes nothing that is
+    // sent, and a player without it is unaffected.
+    const int smoothingPercent = GetPrivateProfileIntW(L"Smoothing", L"RemotePlayerPercent", 0, iniPath);
+    const float smoothing = smoothingPercent > 0 && smoothingPercent <= 100
+                                ? static_cast<float>(smoothingPercent) / 100.0f
+                                : 0.0f;
     // A minidump of the first access violation inside EDF.dll, one file overwritten each launch. The
     // 2026-09-27 host crash is a null whose source is a stack local, which no log line can show.
     // Off unless the INI asks for it: a dump carries process memory, which can include the room name and
@@ -479,7 +504,8 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     InitJoinLog(base);
     InitArmor(base, copyArmorKey, copyArmorPad, copyArmorHint, copyArmorIgnore, copyArmorCaps);
     InitHostMode(base, iniPath, eightPlayers, hostModeKey, hostModePad, hostModeHint);
-    if (!Apply(base, roomView.dummies, mission, spawns, ghosts, netLog, copyArmorKey || copyArmorPad, recovery, thunks)) {
+    if (!Apply(base, roomView.dummies, mission, spawns, ghosts, netLog, copyArmorKey || copyArmorPad, recovery,
+               smoothing, thunks)) {
         KeepMenuLayout(false);
         return false;
     }
@@ -529,6 +555,31 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             Log("Recovery transport: %d EOS import redirected; detailed network logging off", imports);
     } else {
         Log("HandshakeRecovery=0: off");
+    }
+    if (smoothing > 0.0f && smoothing != kVanillaSmoothing)
+        Log("Remote players: their drawn position closes %d%% of the gap per update instead of %d%%, so a "
+            "correction shrinks to a tenth in about %d ms instead of %d ms. Display only - nothing sent "
+            "changes, and players without this are unaffected",
+            smoothingPercent, static_cast<int>(kVanillaSmoothing * 100.0f), SmoothingSettleMs(smoothing),
+            SmoothingSettleMs(kVanillaSmoothing));
+    else
+        Log("Remote players: the game's own position smoothing is untouched "
+            "([Smoothing] RemotePlayerPercent in the INI raises it; 0 = leave alone)");
+    // EDF.dll ends the game with TerminateProcess, so the shutdown marker needs that import wrapped, or
+    // it never fires and every start wrongly reports the last one as cut (1.5.2-1.5.8 did exactly that:
+    // 15 such lines in one friend's log, 9 in another's, none of them real).
+    if (InstallExitMarker(game))
+        Log("Exit marker: a normal quit now writes SHUTDOWN, so PREVIOUS RUN means the game really died");
+    else
+        Log("Exit marker: TerminateProcess could not be wrapped; PREVIOUS RUN cannot be trusted");
+    // The game folder is two levels above Mods\\Plugins, where this DLL sits.
+    {
+        wchar_t gameFolder[MAX_PATH]{};
+        if (SiblingPath(gameFolder, L".dll")) {
+            for (int up = 0; up < 3; ++up)
+                if (wchar_t* slash = wcsrchr(gameFolder, L'\\')) *slash = 0;
+            StartUpdateCheck(gameFolder, checkUpdates);
+        }
     }
     if (crashLog) {
         wchar_t dumpPath[MAX_PATH]{};

@@ -455,6 +455,16 @@ EOS_EResult HookSetLogCallback(LogCallback callback) {
     return result;
 }
 
+using TerminateProcessFn = BOOL(WINAPI*)(HANDLE, UINT);
+TerminateProcessFn originalTerminate = nullptr;
+
+BOOL WINAPI TerminateProcessHook(HANDLE process, UINT code) {
+    // Only this process ending counts as the game shutting down.
+    if (process == GetCurrentProcess() || GetProcessId(process) == GetCurrentProcessId())
+        LogShutdown("the game exited");
+    return originalTerminate ? originalTerminate(process, code) : FALSE;
+}
+
 bool RedirectImport(HMODULE module, const char* dll, const char* function, void* replacement, void** original) {
     const auto base = reinterpret_cast<unsigned char*>(module);
     const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
@@ -482,6 +492,32 @@ bool RedirectImport(HMODULE module, const char* dll, const char* function, void*
 }
 
 }  // namespace
+
+bool InstallExitMarker(HMODULE game) {
+    if (originalTerminate) return true;  // already wrapped
+    void* previous = nullptr;
+    const bool ok = RedirectImport(game, "KERNEL32.dll", "TerminateProcess",
+                                   reinterpret_cast<void*>(&TerminateProcessHook), &previous) ||
+                    RedirectImport(game, "kernel32.dll", "TerminateProcess",
+                                   reinterpret_cast<void*>(&TerminateProcessHook), &previous);
+    if (!ok) return false;
+    originalTerminate = reinterpret_cast<TerminateProcessFn>(previous);
+    // The game must always be able to exit. If the slot held something unusable - null, or our own hook
+    // because something redirected it already - fall back to the real one rather than return FALSE from
+    // the wrapper and leave the process unable to end.
+    if (!originalTerminate || originalTerminate == &TerminateProcessHook) {
+        const HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+        originalTerminate = kernel ? reinterpret_cast<TerminateProcessFn>(
+                                         reinterpret_cast<void*>(GetProcAddress(kernel, "TerminateProcess")))
+                                   : nullptr;
+    }
+    if (!originalTerminate) {  // could not find a way through: put the slot back and stay out of it
+        void* restore = nullptr;
+        RedirectImport(game, "KERNEL32.dll", "TerminateProcess", reinterpret_cast<void*>(previous), &restore);
+        return false;
+    }
+    return true;
+}
 
 void FinalHelloHook(void* manager, const void* peer, const char* token) {
     HelloAttempt attempt{manager, peer};

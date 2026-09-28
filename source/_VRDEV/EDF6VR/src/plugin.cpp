@@ -1502,12 +1502,7 @@ float g_soldierStep[3]{};
 ULONGLONG g_soldierAt=0;
 float g_lastCameraYaw=0, g_lastCameraPitchUp=0;
 
-// Each run writes this first, so the log can be cut back to whole runs.
-const char kSessionMark[]="SESSION START";
-// The log is appended to for the life of the install. A week of testing had put
-// it past a hundred megabytes, and nobody reads back further than the last few
-// starts, so the file is cut to the most recent runs before this one begins.
-// A mod should not quietly grow a file that size in somebody's game folder.
+#include "log_file.h"
 // Mods/Plugins/EDF6VR.patches.txt: every byte this plugin has changed, for
 // checking against another mod's list before running the two together.
 void WritePatchListBesideLog() noexcept {
@@ -1516,70 +1511,6 @@ void WritePatchListBesideLog() noexcept {
     auto* slash=wcsrchr(path,L'\\'); if(!slash) return;
     wcscpy_s(slash+1,static_cast<std::size_t>(path+MAX_PATH-(slash+1)),L"EDF6VR.patches.txt");
     edf6vr::WritePatchList(path);
-}
-void TrimLog(int keep) noexcept {
-    if(!g_logPath[0] || keep<1) return;
-    // One run that logs without restraint must not defeat this either, so the
-    // tail is bounded before the runs inside it are counted.
-    constexpr long long kMostBytes=32ll*1024*1024;
-    FILE* file=nullptr;
-    if(_wfopen_s(&file,g_logPath,L"rb") || !file) return;
-    long long size=0;
-    if(!_fseeki64(file,0,SEEK_END)) size=_ftelli64(file);
-    if(size<=0) { fclose(file); return; }
-    const long long from=size>kMostBytes?size-kMostBytes:0;
-    const auto length=static_cast<std::size_t>(size-from);
-    auto text=static_cast<char*>(std::malloc(length+1));
-    if(!text) { fclose(file); return; }
-    _fseeki64(file,from,SEEK_SET);
-    const auto read=std::fread(text,1,length,file);
-    fclose(file);
-    text[read]=0;
-    // The last `keep - 1` run starts, held in a ring so that a log with
-    // hundreds of runs in it costs no more than one with ten. The run about to
-    // begin makes up the last of them.
-    constexpr int kMostKept=32;
-    if(keep>kMostKept) keep=kMostKept;
-    const int wanted=keep-1;
-    std::size_t recent[kMostKept]{};
-    int seen=0;
-    const auto mark=std::strlen(kSessionMark);
-    for(std::size_t i=0;i+mark<read;++i) {
-        if(i && text[i-1]!='\n') continue;
-        const auto close=std::memchr(text+i,']',read-i>80?80:read-i);
-        if(!close) continue;
-        const auto at=static_cast<std::size_t>(static_cast<const char*>(close)-text)+2;
-        if(at+mark<=read && !std::memcmp(text+at,kSessionMark,mark)) {
-            if(wanted>0) recent[seen%wanted]=i;
-            ++seen;
-        }
-    }
-    // The oldest of the ones being kept is where the file now starts. With no
-    // marks at all -- a log written before this existed -- only the byte cap
-    // applies, and that lands mid-line, so it moves on to the next one.
-    std::size_t cut=0;
-    if(wanted>0 && seen>wanted) cut=recent[seen%wanted];
-    else if(from>0) {
-        const auto line=std::memchr(text,'\n',read);
-        cut=line?static_cast<std::size_t>(static_cast<const char*>(line)-text)+1:0;
-    }
-    if(cut>0 || from>0) {
-        FILE* out=nullptr;
-        if(!_wfopen_s(&out,g_logPath,L"wb") && out) {
-            std::fwrite(text+cut,1,read-cut,out);
-            fclose(out);
-        }
-    }
-    std::free(text);
-}
-void Log(const char* format,...) noexcept {
-    if(!g_logPath[0]) return;
-    FILE* file=nullptr;
-    if(_wfopen_s(&file,g_logPath,L"a") || !file) return;
-    SYSTEMTIME time{}; GetLocalTime(&time);
-    fprintf(file,"[%04u-%02u-%02u %02u:%02u:%02u] ",time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond);
-    va_list args; va_start(args,format); vfprintf(file,format,args); va_end(args);
-    fputc('\n',file); fclose(file);
 }
 void LogText(const char* text) noexcept { Log("VR: %s",text); }
 void LogRender(const char* text) noexcept { Log("RENDER: %s",text); }
@@ -6551,7 +6482,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 2.0.3 cockpit loading, with EDF6MultiSlot 1.5.7. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 2.1.0 cockpit loading, with EDF6MultiSlot 1.5.12. Fencer weapons aim the barrel itself; no dead band on the aim.");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
     if(_wcsicmp(slash?slash+1:host,L"EDF6.exe")) { Log("REFUSED: process is not EDF6.exe"); return false; }

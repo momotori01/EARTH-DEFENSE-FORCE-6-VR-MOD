@@ -123,8 +123,11 @@ LastRun ReadLastRun(const wchar_t* path) {
                 const char* shutdown = nullptr;
                 for (const char* at = text; (at = strstr(at, kBannerMark)) != nullptr; ++at) banner = at;
                 for (const char* at = text; (at = strstr(at, kShutdownMark)) != nullptr; ++at) shutdown = at;
-                if (banner || shutdown)
-                    verdict = (shutdown && (!banner || shutdown > banner)) ? LastRun::Ended : LastRun::Cut;
+                // A missing SHUTDOWN only means the run was cut if this build can write one at all. On
+                // 2026-09-29 it still could not - DLL_PROCESS_DETACH does not run for this game, and
+                // wrapping TerminateProcess did not catch it either - so a file that has never held the
+                // mark says nothing, and claiming otherwise called every ordinary quit a crash.
+                if (shutdown) verdict = (!banner || shutdown > banner) ? LastRun::Ended : LastRun::Cut;
             }
             HeapFree(GetProcessHeap(), 0, text);
         }

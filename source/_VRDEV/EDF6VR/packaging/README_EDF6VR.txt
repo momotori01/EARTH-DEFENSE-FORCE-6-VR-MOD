@@ -1,5 +1,16 @@
-﻿EDF6VR 2.0.3
+﻿EDF6VR 2.1.0
 =============================
+
+CHANGES IN 2.1.0
+- Update_EDF6VR.bat is included. Run it and it updates EDF6VR (with the
+  bundled EDF6MultiSlot) to the latest release on GitHub. If something seems
+  wrong or you run into a bug, try this first. See UPDATE below. When a newer
+  version is out, the lower-left line of the menu says so.
+- Fencer: better controls, closer to the game on a monitor.
+- Fencer: after a revive, your equipment no longer points the wrong way.
+- EDF6MultiSlot 1.5.12. Known issue, being fixed: rarely, with certain players
+  in the room, the host cannot press OK to start a mission. If it happens,
+  restart the game.
 
 CHANGES IN 2.0.3
 - Fencer: spear thrusts go where the spear points. Since 2.0.0 the thrust
@@ -424,8 +435,13 @@ HD_Texture_2x.bat needs Redirect=True in ModLoader.ini and sets it if a
 ModLoader.ini says False; nothing else in that file is changed.
 
 UPDATE
-Close the game and extract the new ZIP over the old install, replacing files.
-That is all. Your settings are kept: the package no longer contains
+From 2.1.0 on: close the game and double-click Update_EDF6VR.bat in the game
+folder. It compares your version with the latest release on GitHub, asks
+before it downloads, checks the download, and replaces only the files that
+changed (the old ones are kept in EDF6VR\backup). Your settings are kept, and
+if you play flat (N in VR_Play.bat) it stays flat.
+By hand, or from an older version: close the game and extract the new ZIP over
+the old install, replacing files. That is all. Your settings are kept: the package no longer contains
 Mods/Plugins/EDF6VR.ini. On start the mod creates it if it is missing, and on
 an existing one only adds settings that are new in this version, with their
 default values. The shipped defaults are in EDF6VR/EDF6VR.defaults.ini for

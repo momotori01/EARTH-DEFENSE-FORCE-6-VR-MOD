@@ -15,6 +15,7 @@
 
 #include "../src/mission.h"
 #include "../src/patches.h"
+#include "../src/smoothing.h"
 #include "../src/rooms.h"
 #include "../src/joinlog.h"
 
@@ -192,6 +193,28 @@ int main(int argc, char** argv) {
         return static_cast<std::uint32_t>(static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(length) + disp);
     };
     Check(RipTarget(0x901ADB, 7) == 0x180AC00, "member creation stores the MemberInfo vtable 180AC00", 0x901ADB);
+    // The remote-player position correction (smoothing.h). SoldierBase's per-frame sync steps its
+    // correction vector toward the received one by a fixed fraction; the fraction is a shared 0.05, so
+    // only this one instruction's operand may be retargeted. If a game update moves either, the factor
+    // must not be written at all.
+    const std::uint8_t smoothing[] = {0x0F, 0x59, 0x35, 0xE3, 0xF6, 0x20, 0x01};  // mulps xmm6, [rip+...]
+    Check(std::memcmp(image.At(kSmoothingSite, sizeof(smoothing)), smoothing, sizeof(smoothing)) == 0 &&
+              RipTarget(kSmoothingSite, sizeof(smoothing)) == 0x17A5A70,
+          "the remote player correction still multiplies by the constant at 17A5A70", kSmoothingSite);
+    const std::uint8_t splat[16] = {0xCD, 0xCC, 0x4C, 0x3D, 0xCD, 0xCC, 0x4C, 0x3D,
+                                    0xCD, 0xCC, 0x4C, 0x3D, 0xCD, 0xCC, 0x4C, 0x3D};
+    Check(std::memcmp(image.At(0x17A5A70, sizeof(splat)), splat, sizeof(splat)) == 0,
+          "and that constant is still 0.05 four ways", 0x17A5A70);
+    // The neighbours the site is identified by: the read before it and the write after.
+    const std::uint8_t around[] = {0x0F, 0x10, 0x87, 0x20, 0x19, 0x00, 0x00};  // movups xmm0, [rdi+0x1920]
+    Check(std::memcmp(image.At(0x59637C, sizeof(around)), around, sizeof(around)) == 0,
+          "the correction vector is still read from player+0x1920", 0x59637C);
+    // How long a correction takes to shrink to a tenth, at 90 ms a step.
+    Check(SmoothingSettleMs(kVanillaSmoothing) > 3800 && SmoothingSettleMs(kVanillaSmoothing) < 4200,
+          "the stock 0.05 needs about four seconds", 0);
+    Check(SmoothingSettleMs(0.5f) > 250 && SmoothingSettleMs(0.5f) < 350, "half closes it in about 0.3 s", 0);
+    Check(SmoothingSettleMs(0.0f) == 0 && SmoothingSettleMs(-1.0f) == 0 && SmoothingSettleMs(2.0f) == 0,
+          "a factor outside (0, 1] has no settle time", 0);
     // What LobbyOnUpdateHook (hostmode.cpp) relies on. 8EDBC0 takes the lobby alone, shows "Lobby_Refreshing" and
     // starts the search at lobby+0x7E0 through 73A6B0, which marks +0x43 and clears +0x40; 73ABE0 sets +0x40 once the
     // results are in. The lobby's dialogs keep the callback they run on closing at lobby+0x118+0x38 (8F0082 clears it
@@ -509,7 +532,11 @@ int main(int argc, char** argv) {
     all.insert(all.end(), sessions.begin(), sessions.end());
     all.insert(all.end(), missionPatches.begin(), missionPatches.end());
     allHooks.insert(allHooks.end(), hostHooks.begin(), hostHooks.end());
-    const Spans spans = WriteSpans(all, allCalls, allHooks);
+    auto spans = WriteSpans(all, allCalls, allHooks);
+    // The remote-player correction factor is built at load (its operand depends on where the constant
+    // lands), so it is not in the tables above - but it is still a write into EDF.dll and has to keep
+    // clear of EDF6VR like every other one. The package ships both mods together.
+    spans.insert({kSmoothingSite, kSmoothingSite + 7});
     CheckNoOverlap(spans);
     CheckClearOfVr(spans);
 

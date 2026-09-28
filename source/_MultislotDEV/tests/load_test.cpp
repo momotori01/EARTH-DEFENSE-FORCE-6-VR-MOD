@@ -25,6 +25,7 @@
 #include "../src/hostmode.h"
 #include "../src/midhook.h"
 #include "../src/patches.h"
+#include "../src/smoothing.h"
 #include "menu_layout.h"
 
 using namespace multislot;
@@ -228,6 +229,7 @@ int wmain(int argc, wchar_t** argv) {
                           : mode == L"quiet"     ? "[MultiSlot]\r\nEnabled=1\r\nHandshakeRecovery=0\r\nNetLog=0\r\n"
                           : mode == L"host4"     ? "[MultiSlot]\r\nEnabled=1\r\nNetLog=0\r\n[Mission]\r\nExtraEnemies=0\r\n"
                           : mode == L"nomission" ? "[MultiSlot]\r\nEnabled=1\r\nMaxPlayers=4\r\n[Mission]\r\nExtend=0\r\n"
+                          : mode == L"smooth"    ? "[MultiSlot]\r\nEnabled=1\r\nNetLog=1\r\n[Smoothing]\r\nRemotePlayerPercent=30\r\n"
                                                  : "[MultiSlot]\r\nEnabled=1\r\nEightPlayerRooms=1\r\nCrashLog=1\r\nNetLog=1\r\n"
                                                    "[RoomScreen]\r\nDummyMembers=1\r\nPageKey=F2\r\nDummyAddKey=F3\r\nDummyRemoveKey=F4\r\n"
                                                    "[Test]\r\nGhostPlayers=4\r\n[Mission]\r\nScale6=1.25\r\n";
@@ -338,6 +340,36 @@ int wmain(int argc, wchar_t** argv) {
         // The off-path wording is what tells the player nothing is being written. (The same line also
         // mentions CrashDump=1 as the way to turn it on, so the wording is checked, not the substring.)
         Check(Contains(log, "no crash dump (CrashDump is off by default"), "the log says the dump is off");
+        if (mode == L"smooth") {
+            // The one instruction is retargeted; the shared 0.05 at 17A5A70 must be left alone.
+            const unsigned char* site = base + kSmoothingSite;
+            Check(site[0] == 0x0F && site[1] == 0x59 && site[2] == 0x35, "the multiply itself is unchanged");
+            std::int32_t disp = 0;
+            std::memcpy(&disp, site + 3, sizeof(disp));
+            const unsigned char* constant = site + 7 + disp;
+            Check(constant != base + 0x17A5A70, "it no longer reads the shared 0.05");
+            Check(reinterpret_cast<std::uintptr_t>(constant) % 16 == 0, "its operand is 16-byte aligned for mulps");
+            float splat[4]{};
+            std::memcpy(splat, constant, sizeof(splat));
+            Check(splat[0] > 0.29f && splat[0] < 0.31f && splat[1] == splat[0] && splat[2] == splat[0] &&
+                      splat[3] == splat[0],
+                  "and points at 0.30 four ways");
+            const std::uint8_t stock[16] = {0xCD, 0xCC, 0x4C, 0x3D, 0xCD, 0xCC, 0x4C, 0x3D,
+                                            0xCD, 0xCC, 0x4C, 0x3D, 0xCD, 0xCC, 0x4C, 0x3D};
+            Check(std::memcmp(base + 0x17A5A70, stock, sizeof(stock)) == 0,
+                  "the shared constant the other nine sites use is untouched");
+            Check(Contains(log, "closes 30% of the gap"), "the log says what it changed");
+        } else {
+            const unsigned char* site = base + kSmoothingSite;
+            std::int32_t disp = 0;
+            std::memcpy(&disp, site + 3, sizeof(disp));
+            Check(site + 7 + disp == base + 0x17A5A70, "without the setting the correction is left alone");
+            Check(Contains(log, "own position smoothing is untouched"), "and the log says so");
+        }
+        // EDF.dll ends the game with TerminateProcess; if that import cannot be wrapped the shutdown
+        // marker never fires and every start misreports the last one as cut, which is what 1.5.2-1.5.8 did.
+        Check(Contains(log, "Exit marker: a normal quit now writes SHUTDOWN"),
+              "the TerminateProcess import is wrapped, so a clean exit can be recorded");
         Check(Contains(log, "switched with F3/Tab/RS"), "member pages switch with F3, Tab and the right stick");
         if (mode == L"host8") {
             // An INI from 0.5.0: PageKey=F2 and dummy keys F3/F4.

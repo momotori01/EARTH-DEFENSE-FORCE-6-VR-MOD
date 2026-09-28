@@ -138,6 +138,34 @@ void UserSlotTakenHandler(CpuContext* context) {
             id[0] ? ", EOS " : "", id);
 }
 
+const char* MemberStatusName(std::uint32_t status) {
+    switch (status) {
+    case 0: return "JOINED";
+    case 1: return "LEFT";
+    case 2: return "DISCONNECTED";
+    case 3: return "KICKED";
+    case 4: return "PROMOTED";
+    case 5: return "CLOSED";
+    default: return "unknown";
+    }
+}
+
+// EOS lobby member status (12BEF00): rdx = the callback info, +0x10 the member, +0x18 the code.
+// LEFT, DISCONNECTED and KICKED all end up removing the user and closing their connection, so a code of
+// 2 here is the thing to look for when someone will not finish their handshake.
+void MemberStatusHandler(CpuContext* context) {
+    const void* user = nullptr;
+    std::uint32_t status = 0xFFFFFFFF;
+    Read(context->rdx + 0x10, user);
+    Read(context->rdx + 0x18, status);
+    char id[40]{};
+    ProductUserIdText(user, id, sizeof(id));
+    if (Budget())
+        Log("LOBBY member status: %s -> %u (%s)%s", id[0] ? id : "?", status, MemberStatusName(status),
+            status == 2 ? "  <- treated the same as LEFT: the user is removed and their connection closed"
+                        : "");
+}
+
 void UserSlotsFullHandler(CpuContext* context) {
     if (Budget())
         Log("ROOM all %llu user slots are taken: the new member gets no P2P link", static_cast<unsigned long long>(context->r8));
@@ -205,6 +233,7 @@ MidHandler JoinLogHookHandler(std::uint32_t rva) {
         case 0x8F02E0: return &RoomListHandler<1>;
         case 0x743496: return &SteamLobbyEnterHandler;
         case 0x12B80CB: return &UserSlotTakenHandler;
+        case 0x12BEF00: return &MemberStatusHandler;
         case 0x12B8076: return &UserSlotsFullHandler;
         case 0x12D5C90: return &HandshakeTimeoutHandler;
         default: return nullptr;

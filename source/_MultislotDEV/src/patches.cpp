@@ -324,6 +324,12 @@ std::vector<MidSite> DiagnosticHooks() {
         // Users::Add (12B7F50) after the empty-slot search: a slot was found (`lea r9, [rbx+8]; mov r8, rbx`), or
         // none was left (`mov [r15], r14; mov [r15+8], r14` returns an empty user).
         {"room user slot taken", 0x12B80CB, {0x4C, 0x8D, 0x4B, 0x08, 0x4C, 0x8B, 0xC3}, 0, 7},
+        // The EOS lobby member-status callback (registered at 12B378A). rdx is the callback info:
+        // +0x10 the member's ProductUserId, +0x18 the status. The jump table at 12BF4E0 sends LEFT(1),
+        // DISCONNECTED(2) and KICKED(3) down the same path, which removes the user from eos::Users and
+        // closes their P2P connection, so a transient disconnect tears a member down exactly like a
+        // deliberate leave. Recording the code is how the next occurrence proves or refutes that.
+        {"lobby member status", 0x12BEF00, {0x48, 0x89, 0x5C, 0x24, 0x10}, 0, 5},
         {"room user slots full", 0x12B8076, {0x4D, 0x89, 0x37, 0x4D, 0x89, 0x77, 0x08}, 0, 7},
         {"handshake initial timeout", 0x12D5C90, {0xC6, 0x87, 0xA8, 0x00, 0x00, 0x00, 0x01}, 0, 7},
     };

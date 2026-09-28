@@ -14,4 +14,10 @@ int InstallNetLog(HMODULE game, bool diagnostics, bool recovery);
 // Call site EDF+12D5B9B only: one final hello when leaving Link::OnInitial.
 void FinalHelloHook(void* manager, const void* peer, const char* token);
 
+// EDF.dll ends the game by calling TerminateProcess on itself, which skips every DLL_PROCESS_DETACH,
+// so the SHUTDOWN line added in 1.5.2 was never written once and every start reported the previous run
+// as cut. Wrapping that import writes the line just before the process goes, and leaves a crash or a
+// kill (which never reach it) correctly unmarked. True when the import was found and redirected.
+bool InstallExitMarker(HMODULE game);
+
 }  // namespace multislot

@@ -170,6 +170,15 @@ int wmain(int argc,wchar_t** argv) {
     VERIFY(pursuit.x<0 && pursuit.y>0 && pursuit.Fresh(199) && !pursuit.Fresh(200) && !pursuit.Fresh(99));
     VERIFY(edf6vr::FencerPursuitAxis(0)==0 && edf6vr::FencerPursuitAxis(100)==1);
     VERIFY(edf6vr::FencerPursuitAxis(-100)==-1);
+    {
+        constexpr float degree=0.0174532925f;
+        VERIFY(edf6vr::FencerPursuitAxis(0.5f*degree)==0);                 // settled within a degree
+        VERIFY(edf6vr::FencerPursuitAxis(5.01f*degree)==1);                // full stick from 5 degrees
+        VERIFY(edf6vr::FencerPursuitAxis(-6.0f*degree)==-1);
+        const float three=edf6vr::FencerPursuitAxis(3.0f*degree);          // a small correction: well past the dead zone
+        VERIFY(three>0.6f && three<0.7f);
+        VERIFY(edf6vr::FencerPursuitAxis(1.2f*degree)>0.28f);              // just outside the band: moving, gently
+    }
     VERIFY(!edf6vr::FencerPursuit(0,0,0,std::numeric_limits<float>::infinity(),100).valid);
     VERIFY(std::fabs(edf6vr::FencerYawError(-3.13f,3.13f))<0.03f);
     VERIFY(std::fabs(edf6vr::FencerYawError(3.13f,-3.13f))<0.03f);

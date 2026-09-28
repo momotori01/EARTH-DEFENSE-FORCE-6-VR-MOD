@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.0.3'
+VERSION = '2.1.0'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.7.zip'
-MULTISLOT_SHA = '00B5FDC59B54EA5548769B5F0DD246F9F443B3BDFC027E0CF661429E70FE6C02'
-MULTISLOT_DLL_SHA = 'E28E2841C1E6B04DB251D054421DEEF1E2BC36B7700BA193F0CF4CDF32BD4D54'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.12.zip'
+MULTISLOT_SHA = '9A0B35F48E588DC84C0062E046A5C7D3957E6D3B4B0AE78488B495D3957DD528'
+MULTISLOT_DLL_SHA = '9DCB03DA6301202A8C834326F067EAF22B25E51A29FD3AADEC9217747DBE733C'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -25,7 +25,11 @@ MULTISLOT_DLL_SHA = 'E28E2841C1E6B04DB251D054421DEEF1E2BC36B7700BA193F0CF4CDF32B
 # session's F6F48A39 build with version strings changed.
 # 2.0.3: Fencer spear thrusts follow the drawn spear (shot_origin.h, 3DFB7CDB
 # tested on hardware 2026-09-28) with version strings changed.
-VERIFIED_VR_SHA = 'C53A4D5F6F6D0558D9F4FA2401C6316F96DED73156F96C5589D0CA13D6FA2A9E'
+# 2.1.0: Update_EDF6VR.bat; Fencer aim full stick from 5 degrees; shield/shoulder
+# rest poses not learned while down; EDF6VR.log lines appended atomically; with
+# EDF6MultiSlot 1.5.12 (its menu line announces a newer EDF6VR). Each change
+# hardware-checked on 2026-09-29.
+VERIFIED_VR_SHA = '6A65DD39A71E3B1DF1EC39C72D9320C452FC8AC05559FFD0121A0A6713823C4D'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()
@@ -84,6 +88,9 @@ def build(test_clear_loot=False):
         'HD_Texture_2x.bat': (source/'HD_Texture_2x.bat').read_bytes(),
         'Set_Resolution.bat': (source/'Set_Resolution.bat').read_bytes(),
         'EDF6VR/Switch-VR.ps1': (source/'Switch-VR.ps1').read_bytes(),
+        # Updates an installed package to the latest GitHub release (tests/package_update_tests.ps1).
+        'Update_EDF6VR.bat': (source/'Update_EDF6VR.bat').read_bytes(),
+        'EDF6VR/Update-EDF6VR.ps1': (source/'Update-EDF6VR.ps1').read_bytes(),
         'EDF6VR/THIRD_PARTY_NOTICES.txt': (source/'THIRD_PARTY_NOTICES.txt').read_bytes(),
     }
     # A friends' test build may go out before its notes are written (1.7.9).

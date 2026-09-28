@@ -212,7 +212,12 @@ int wmain(int argc, wchar_t** argv) {
     Check(write("", false) == LastRun::Unknown, "no log at all says nothing about a previous run");
     Check(write(line("[2026-09-20 00:00:00.000] nothing to go on")) == LastRun::Unknown,
           "a log trimmed past both marks says nothing");
-    Check(write(banner + busy) == LastRun::Cut, "a banner with no shutdown after it is a run that was cut");
+    // A file that has never held a SHUTDOWN cannot tell a crash from an ordinary quit: this build may
+    // simply be unable to write the mark, which is what 1.5.2-1.5.9 turned out to be. Saying "cut" there
+    // called every normal exit a crash (15 such lines in one friend log, 9 in another).
+    Check(write(banner + busy) == LastRun::Unknown, "with no shutdown ever seen, nothing is claimed");
+    Check(write(banner + ended + banner + busy) == LastRun::Cut,
+          "but once the mark has been seen to work, a run without one really was cut");
     Check(write(banner + ended) == LastRun::Ended, "a shutdown line after the banner is a game that was closed");
     // Several runs in one file: only the last pair counts.
     Check(write(banner + ended + banner) == LastRun::Cut, "an earlier clean run does not cover for the last one");
