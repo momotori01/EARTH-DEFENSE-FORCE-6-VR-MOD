@@ -6,11 +6,12 @@ VR mod for the Steam version of EARTH DEFENSE FORCE 6, bundled with an 8-player 
 
 Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://github.com/momotori01/EARTH-DEFENSE-FORCE-6-VR-MOD/releases) page (not the automatically generated source code archives).
 
-Already installed 2.1.0 or later? Close the game and run `Update_EDF6VR.bat` in the game folder: it updates to the latest release and keeps your settings.
+Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** in the game folder and press **Update now** (or run `Update_EDF6VR.bat`): it updates to the latest release and keeps your settings.
 
 ## Features
 
 - Native stereo rendering, room-scale 6DoF tracking.
+- **EDF6 VR setting.exe**: one window for everything set outside the game -- update, VR or normal mode, picture size, HD textures, gun hand, a log zip for bug reports, and extra VR settings ([see Setup](#setup)).
 - One-handed and two-handed weapon aiming, all four soldier classes and vehicles.
 - **Left-handed mode** for Rangers, Wing Divers and Air Raiders: hold and fire the gun with the left hand ([how to switch it on](#left-handed-mode)).
 - Hand models for all four classes, with fingers that follow the trigger, grip and stick.
@@ -39,41 +40,58 @@ Already installed 2.1.0 or later? Close the game and run `Update_EDF6VR.bat` in 
 
 1. Extract everything in the ZIP into the game folder, next to `EDF6.exe`
    (for example `\Steam\steamapps\common\EARTH DEFENSE FORCE 6`).
-2. Run `VR_Play.bat`: **Y** = VR, **N** = normal flat play. Close the game before switching.
+2. VR is on as installed. To play on the monitor instead, open **EDF6 VR setting.exe** (next to `EDF6.exe`), choose **Normal** under **VR mode** and press **Apply**.
 3. Start the game from Steam as usual.
 4. **The first VR run may be heavy.** The mod measures your headset's field of view on the first run and saves it; until then it renders a wider picture than needed. Close the game once and start it again -- from the second run on, the picture is fitted to your headset and runs lighter. (Do the same once after changing headsets.)
 
 ## Updating
 
-Close the game and extract the new ZIP over your install, replacing files. Your settings (weapon and hand position, resolution, panel size, ...) are kept, and settings added in the new version are filled in automatically. HD textures stay as they are.
+Close the game, open **EDF6 VR setting.exe** and press **Update now**. It downloads the newest release, checks it and replaces only the files that changed. Your settings (weapon and hand position, resolution, panel size, ...) are kept, and settings added in the new version are filled in automatically. HD textures stay as they are.
 
-**Updating to 2.0 from an older version:** `EDF6VR.ini` is replaced once with the new defaults, since many settings changed. Your resolution is kept and the old file is saved as `EDF6VR.ini.v1.bak`; adjust hand and weapon positions again if needed. If you built HD textures, run `HD_Texture_2x.bat` once more to repair the textures that went dark at a distance.
+By hand: close the game and extract the new ZIP over your install, replacing files.
 
-If you had chosen **N** in `VR_Play.bat`, run it again after updating.
+**Updating to 2.0 from an older version:** `EDF6VR.ini` is replaced once with the new defaults, since many settings changed. Your resolution is kept and the old file is saved as `EDF6VR.ini.v1.bak`; adjust hand and weapon positions again if needed. If you built HD textures, press **Make** under **HD textures** in EDF6 VR setting.exe once more to repair the textures that went dark at a distance.
+
+If you play in **Normal** mode and extracted an update by hand, choose **Normal** again in EDF6 VR setting.exe.
+
+**From 2.1.5,** `VR_Play.bat`, `Set_Resolution.bat` and `HD_Texture_2x.bat` are replaced by EDF6 VR setting.exe, which deletes them the first time you open it.
 
 ## Setup
 
-### Resolution
-Run `Set_Resolution.bat` and pick a size: **Low 0.8** / **Normal 1.0** / **High 1.25** / **Custom** (up to 2.0). Bigger is sharper but slower. The mod ignores the resolution set in SteamVR or other runtimes. Restart the game after changing it.
+Everything outside the game is set in **EDF6 VR setting.exe**, next to `EDF6.exe`. Open it with the game closed; each item has its own button, and changes are used the next time you start the game.
+
+> The first time you open it after downloading the ZIP with a web browser, Windows may say "Windows protected your PC". Choose **More info**, then **Run anyway** (the program is not signed).
+
+| Main tab | |
+|---|---|
+| **Update** | Shows the installed and the newest version. **Update now** installs the newest release; your settings are kept. |
+| **VR mode** | **VR** (headset) or **Normal** (monitor, no VR). |
+| **Picture size** | **Low 0.8** / **Normal 1.0** / **High 1.25** / **Custom** (0.5 to 2.0). Bigger is sharper but slower. The mod ignores the resolution set in SteamVR or other runtimes. |
+| **HD textures** | **Make** or **Delete** the 2x textures, with progress. |
+| **Gun hand** | **Right** or **Left** (Ranger, Wing Diver, Air Raider). |
+| **Problem report** | **Make zip** puts the logs and settings into one zip, saved in the game folder next to EDF6 VR setting.exe (`EDF6VR-logs-<date>-<time>.zip`). Attach it to a bug report. |
+
+| Extra VR settings tab | |
+|---|---|
+| **VR cockpit** | A cockpit around you in vehicles, on or off. |
+| **Compact HUD** | On or off, and where: the corner of your view, or the right or left wrist. |
+| **Aim mark size** | The reticle's size (0.5 is normal). |
+| **Recoil** / **Shot vibration** | The gun kicking back when you shoot; how strongly the controller shakes (0 = off, 1 = strong). |
+| **Desktop mirror** | Also shows the game on your monitor, for recording and streaming. |
+| **Reset settings** | Every VR setting back to how it came. Your picture size and gun hand stay; the old file is kept as a backup. |
+
+Everything it changes can also be set by hand in `Mods/Plugins/EDF6VR.ini`.
 
 ### HD textures
-Run `HD_Texture_2x.bat` and answer **y**. It reads your own game files and writes sharper copies into the `Mods` folder; the game files themselves are not changed.
-- Takes about an hour and about 40 GB of free space.
+**Make** reads your own game files and writes sharper copies into the `Mods` folder; the game files themselves are not changed.
+- Takes about an hour and about 40 GB of free space. Closing the window stops it; **Make** goes on from where it stopped.
 - Uses about 300 MB more video memory in game.
-- To turn them off, run it again and answer **n**, then **y** to delete the files.
+- To turn them off, press **Delete**.
 
 ### Left-handed mode
-Rangers, Wing Divers and Air Raiders can hold and fire the gun with the **left** hand.
-1. Start the game once (after installing or updating), then close it.
-2. Open `Mods/Plugins/EDF6VR.ini`. The setting is at the very top of the file:
-   ```ini
-   [LeftHanded]
-   LeftHanded=0
-   LeftHandedSticks=1
-   ```
-3. Change `LeftHanded=0` to `LeftHanded=1` and start the game again.
+Rangers, Wing Divers and Air Raiders can hold and fire the gun with the **left** hand: choose **Left** under **Gun hand** and press **Apply**.
 
-The trigger, grip, buttons and sticks all change sides: you fire with the left trigger, move with the right stick and turn with the left. The gestures below use the other hand, and a Ranger draws the second gun from behind the right shoulder. Fencers, vehicles and menus stay right-handed. `LeftHanded=0` goes back to right-handed (the default); `LeftHandedSticks=0` keeps the sticks where they are.
+The trigger, grip, buttons and sticks all change sides: you fire with the left trigger, move with the right stick and turn with the left. The gestures below use the other hand, and a Ranger draws the second gun from behind the right shoulder. Fencers, vehicles and menus stay right-handed. By hand, it is at the very top of `Mods/Plugins/EDF6VR.ini`: `LeftHanded=1` (left) or `0` (right, the default); `LeftHandedSticks=0` keeps the sticks where they are.
 
 ## Controls
 
@@ -100,7 +118,7 @@ In adjust mode: left stick moves, triggers raise/lower, right stick turns, grips
 | **F12** | Recenter (also brings the menu back in front of you) |
 
 ### Compact HUD
-Radar, armour and weapon boxes sit together, smaller, at the bottom-right of your view. Hold the left controller beside your head with the stick **DOWN** for 3 s to move them: view corner → inside of the right wrist → inside of the left wrist. Subtitles and messages stay in front of you. `[Render] UiCluster=0` in `EDF6VR.ini` restores the full-size HUD.
+Radar, armour and weapon boxes sit together, smaller, at the bottom-right of your view. Hold the left controller beside your head with the stick **DOWN** for 3 s to move them: view corner → inside of the right wrist → inside of the left wrist. Subtitles and messages stay in front of you. Turning **Compact HUD** off in EDF6 VR setting.exe (Extra VR settings) restores the full-size HUD.
 
 ### 8-player co-op
 Press **F2**, or click the left stick, on the menu screen **outside a room** to switch 8-player rooms on or off (shown at the bottom left). A room keeps the setting it was made with.

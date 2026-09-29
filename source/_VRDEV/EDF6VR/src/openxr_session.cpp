@@ -20,6 +20,7 @@
 #include "render_capture.h"
 #include "ui_capture.h"
 #include "ui_world_composite.h"
+#include "eye_check_sampler.h"
 
 #include <unknwn.h>
 #include <d3d11.h>
@@ -585,6 +586,24 @@ bool CreateInstance() noexcept {
     return true;
 }
 
+// Which GPU and driver the picture is made on: a picture problem seen on one PC
+// only (2026-09-29, double vision on Meta Link and Steam Link) starts here.
+void LogAdapter(IDXGIAdapter* adapter) noexcept {
+    if(!adapter || !g_log) return;
+    DXGI_ADAPTER_DESC desc{};
+    if(FAILED(adapter->GetDesc(&desc))) return;
+    LARGE_INTEGER umd{};
+    const bool driver=SUCCEEDED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice),&umd));
+    char name[128]{};
+    WideCharToMultiByte(CP_UTF8,0,desc.Description,-1,name,sizeof(name),nullptr,nullptr);
+    const char* vendor=desc.VendorId==0x10DE?"NVIDIA":desc.VendorId==0x1002?"AMD":desc.VendorId==0x8086?"Intel":"other";
+    char line[320]{};
+    std::snprintf(line,sizeof(line),"GPU %s vendor=%04X (%s) device=%04X vram=%lluMB driver=%u.%u.%u.%u",
+        name,desc.VendorId,vendor,desc.DeviceId,static_cast<unsigned long long>(desc.DedicatedVideoMemory>>20),
+        driver?HIWORD(umd.HighPart):0u,driver?LOWORD(umd.HighPart):0u,driver?HIWORD(umd.LowPart):0u,driver?LOWORD(umd.LowPart):0u);
+    g_log(line);
+}
+
 bool CreateDevice(const LUID& adapterLuid,D3D_FEATURE_LEVEL minimum) noexcept {
     IDXGIFactory1* factory=nullptr;
     if(FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),reinterpret_cast<void**>(&factory))) || !factory) {
@@ -605,6 +624,7 @@ bool CreateDevice(const LUID& adapterLuid,D3D_FEATURE_LEVEL minimum) noexcept {
     }
     factory->Release();
     if(!adapter) { SetStatus("the D3D11 adapter requested by the runtime was not found"); return false; }
+    LogAdapter(adapter);
     const D3D_FEATURE_LEVEL levels[]={D3D_FEATURE_LEVEL_11_1,D3D_FEATURE_LEVEL_11_0};
     D3D_FEATURE_LEVEL achieved{};
     const HRESULT hr=D3D11CreateDevice(adapter,D3D_DRIVER_TYPE_UNKNOWN,nullptr,0,levels,
@@ -634,6 +654,7 @@ bool AdoptGameDevice(const LUID& adapterLuid) noexcept {
     if(FAILED(hr) || !adapter) { SetStatus("the game device has no adapter"); return false; }
     DXGI_ADAPTER_DESC desc{};
     const bool described=SUCCEEDED(adapter->GetDesc(&desc));
+    LogAdapter(adapter);
     adapter->Release();
     if(!described) { SetStatus("the game adapter could not be described"); return false; }
     if(desc.AdapterLuid.LowPart!=adapterLuid.LowPart || desc.AdapterLuid.HighPart!=adapterLuid.HighPart) {
@@ -1263,6 +1284,7 @@ void DestroyDisplaySwapchain() noexcept {
     ReleaseWarp();
     ReleaseDesktopMirror();
     ReleaseSceneAA();
+    ResetEyeCheck();
     if(g_swapchain!=XR_NULL_HANDLE && g_api.destroySwapchain) g_api.destroySwapchain(g_swapchain);
     g_swapchain=XR_NULL_HANDLE;
     if(g_swapchainRight!=XR_NULL_HANDLE && g_api.destroySwapchain) g_api.destroySwapchain(g_swapchainRight);
@@ -2000,6 +2022,47 @@ float DesktopWindowAspect() noexcept {
     if(wide<=0 || tall<=0) return 0;
     return static_cast<float>(wide)/static_cast<float>(tall);
 }
+// Where each eye's picture is submitted, against where the runtime says the eyes
+// are this frame: sideways (a swap shows as signs the wrong way round), up and
+// ahead, the lag of the whole pair, the turn, which picture went to which eye,
+// and the frusta. Five-second sample.
+void ReportViews(const XrView* runtime,const XrCompositionLayerProjectionView* submitted,
+                 bool leftGetsRight,bool rightGetsRight,const XrFovf& fov) noexcept {
+    if(!g_log) return;
+    const auto& q=runtime[0].pose.orientation;
+    const float rotation[4]={q.x,q.y,q.z,q.w};
+    const float x[3]={1,0,0},y[3]={0,1,0},z[3]={0,0,1};
+    float right[3]{},up[3]{},back[3]{};
+    RotateByQuat(rotation,x,right); RotateByQuat(rotation,y,up); RotateByQuat(rotation,z,back);
+    auto middle=[](const XrPosef& a,const XrPosef& b) {
+        return XrVector3f{(a.position.x+b.position.x)*.5f,(a.position.y+b.position.y)*.5f,(a.position.z+b.position.z)*.5f};
+    };
+    const XrVector3f rm=middle(runtime[0].pose,runtime[1].pose), sm=middle(submitted[0].pose,submitted[1].pose);
+    auto along=[](const XrVector3f& p,const XrVector3f& m,const float* axis) {
+        return (p.x-m.x)*axis[0]+(p.y-m.y)*axis[1]+(p.z-m.z)*axis[2];
+    };
+    auto turn=[](const XrQuaternionf& a,const XrQuaternionf& b) {
+        const float d=std::fabs(a.x*b.x+a.y*b.y+a.z*b.z+a.w*b.w);
+        return 2.0f*std::acos((std::min)(1.0f,d))*57.29578f;
+    };
+    auto deg=[](float radians) { return radians*57.29578f; };
+    const auto& s0=submitted[0].pose.position; const auto& s1=submitted[1].pose.position;
+    char line[640]{};
+    std::snprintf(line,sizeof(line),
+        "XRVIEWS eyes across (m, + = right) runtime %+.4f/%+.4f submitted %+.4f/%+.4f, submitted up %+.4f/%+.4f ahead %+.4f/%+.4f; "
+        "submitted pair off the runtime's by %+.3f/%+.3f/%+.3f m (right/up/ahead, lag); turned %.1f/%.1f deg; "
+        "pictures L<-%s R<-%s; fov deg runtime L[%.1f %.1f %.1f %.1f] R[%.1f %.1f %.1f %.1f] submitted [%.1f %.1f %.1f %.1f]",
+        along(runtime[0].pose.position,rm,right),along(runtime[1].pose.position,rm,right),
+        along(s0,sm,right),along(s1,sm,right),along(s0,sm,up),along(s1,sm,up),-along(s0,sm,back),-along(s1,sm,back),
+        along(sm,rm,right),along(sm,rm,up),-along(sm,rm,back),
+        turn(submitted[0].pose.orientation,runtime[0].pose.orientation),turn(submitted[1].pose.orientation,runtime[1].pose.orientation),
+        leftGetsRight?"right":"left",rightGetsRight?"right":"left",
+        deg(runtime[0].fov.angleLeft),deg(runtime[0].fov.angleRight),deg(runtime[0].fov.angleUp),deg(runtime[0].fov.angleDown),
+        deg(runtime[1].fov.angleLeft),deg(runtime[1].fov.angleRight),deg(runtime[1].fov.angleUp),deg(runtime[1].fov.angleDown),
+        deg(fov.angleLeft),deg(fov.angleRight),deg(fov.angleUp),deg(fov.angleDown));
+    g_log(line);
+}
+
 void PublishStereoAdvice(const XrView* views,uint32_t count,unsigned width,unsigned height) noexcept {
     if(count<2 || !width || !height) return;
     float halfVertical=0,halfHorizontal=0;
@@ -2209,6 +2272,8 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
     // An allocation failure must not turn it into legacy mono projection.
     if(NativeWorldEnabled() && mode!=XrDisplayMode::Quad && !stereo) mode=XrDisplayMode::Quad;
     const bool native=stereo && nativeImages.ready;
+    // Do the two native pictures really differ, the right way round? (eye_check.h)
+    if(native && displayReady) EyeCheckFrame(g_context,nativeImages.eye[0].Get(),nativeImages.eye[1].Get(),g_log);
     XrSwapchain target=(stereo && eye==1)?g_swapchainRight:g_swapchain;
     ID3D11Texture2D** targetImages=(stereo && eye==1)?g_imagesRight:g_images;
     const uint32_t targetCount=(stereo && eye==1)?g_imageCountRight:g_imageCount;
@@ -2392,6 +2457,12 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
                 projection.space=g_refSpace;
                 projection.viewCount=2;
                 projection.views=projectionViews;
+                static ULONGLONG nextViewsReport=0;
+                if(g_log && viewCount>=2 && GetTickCount64()>=nextViewsReport) {
+                    nextViewsReport=GetTickCount64()+5000;
+                    ReportViews(views,projectionViews,projectionViews[0].subImage.swapchain==g_swapchainRight,
+                                projectionViews[1].subImage.swapchain==g_swapchainRight,fov);
+                }
                 layers[0]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
                 layerCount=1;
                 g_lastLayerKind.store(2,std::memory_order_relaxed);

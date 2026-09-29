@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.1.2'
+VERSION = '2.1.5'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.12.zip'
@@ -36,7 +36,13 @@ MULTISLOT_DLL_SHA = '9DCB03DA6301202A8C834326F067EAF22B25E51A29FD3AADEC9217747DB
 # section at the top of the INI, which the merge now inserts whole into an
 # existing file -- unit-tested and dry-run on a real 2.1.1 INI), same
 # EDF6MultiSlot 1.5.12.
-VERIFIED_VR_SHA = 'E162308293B9B38D452D49745649E1886A51EFD5607944D7CFBF0B2B2756822F'
+# 2.1.5: "EDF6 VR setting.exe" replaces VR_Play.bat, Set_Resolution.bat and
+# HD_Texture_2x.bat (driven end to end on 2026-09-29: settings, log zip, a real
+# update of a fake 2.1.1 folder, VR mode, HD delete/make); stereo diagnostics in
+# the log (GPU, EYECHECK, XRVIEWS; first run here: stereo looks right). Same
+# EDF6MultiSlot 1.5.12.
+VERIFIED_VR_SHA = 'E20069F77EE9F3B6B751C1F385B175453DFE29CA9D29372BF80490C52CB68E13'
+VERIFIED_SETTINGS_SHA = '9DF40494B0C943E1CC656FEF65AF0758A850FA561D8D538A64FC6D2C9DF350A9'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()
@@ -62,6 +68,9 @@ def build(test_clear_loot=False):
     dll = (ROOT/'dist/EDF6VR.dll').read_bytes()
     assert f'EDF6VR {VERSION} cockpit loading'.encode() in dll, 'Build current DLL first'
     assert sha(dll) == VERIFIED_VR_SHA, 'Package the pinned, tested DLL'
+    settings = (ROOT/'dist/EDF6 VR setting.exe').read_bytes()
+    assert VERSION.encode('utf-16-le') in settings, 'Build the current settings program first'
+    assert sha(settings) == VERIFIED_SETTINGS_SHA, 'Package the pinned, tested settings program'
     # 1.2.0: the positional code IS the audio fix, so it ships. What must not
     # ship is the research logging that shares the file, and the placement has
     # to be on -- a release with the file compiled in and the fix off would look
@@ -90,11 +99,10 @@ def build(test_clear_loot=False):
         'Mods/Plugins/EDF6ClearLoot.dll': loot_dll,
         'Mods/Plugins/EDF6ClearLoot.ini': (loot/'EDF6ClearLoot.ini').read_bytes(),
         'README_ClearLoot.txt': (source/'README_ClearLoot.txt').read_bytes(),
-        'VR_Play.bat': (source/'VR_Play.bat').read_bytes(),
         'README_EDF6VR.txt': (source/'README_EDF6VR.txt').read_bytes(),
-        'HD_Texture_2x.bat': (source/'HD_Texture_2x.bat').read_bytes(),
-        'Set_Resolution.bat': (source/'Set_Resolution.bat').read_bytes(),
-        'EDF6VR/Switch-VR.ps1': (source/'Switch-VR.ps1').read_bytes(),
+        # One window for what VR_Play.bat, Set_Resolution.bat and HD_Texture_2x.bat
+        # did (it deletes those when it first opens), and the out-of-game settings.
+        'EDF6 VR setting.exe': settings,
         # Updates an installed package to the latest GitHub release (tests/package_update_tests.ps1).
         'Update_EDF6VR.bat': (source/'Update_EDF6VR.bat').read_bytes(),
         'EDF6VR/Update-EDF6VR.ps1': (source/'Update-EDF6VR.ps1').read_bytes(),

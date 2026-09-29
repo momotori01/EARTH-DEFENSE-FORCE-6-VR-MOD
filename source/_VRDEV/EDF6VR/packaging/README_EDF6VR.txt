@@ -1,5 +1,13 @@
-﻿EDF6VR 2.1.2
+﻿EDF6VR 2.1.5
 =============================
+
+CHANGES IN 2.1.5
+- EDF6 VR setting.exe: one window for everything you set outside the game.
+  Update, VR / normal mode, picture size, HD textures, gun hand, a log zip for
+  problem reports, and extra VR settings (cockpit, compact HUD, aim mark size,
+  recoil, shot vibration, desktop mirror, reset). It replaces VR_Play.bat,
+  Set_Resolution.bat and HD_Texture_2x.bat, and deletes them the first time
+  you open it. See SETTINGS PROGRAM below.
 
 CHANGES IN 2.1.2
 - Left-handed mode: Rangers, Wing Divers and Air Raiders can hold and fire
@@ -351,13 +359,14 @@ short. On a 97 by 97 degree headset, for example:
   7680x4320            ->  renders 4656x4320, 20.1 Mpix  (+299%)
 The RESOLUTION line in EDF6VR.log reports what was actually locked in.
 
-Set_Resolution.bat does the same edit for you. Pick Low, Normal or High, or
-type your own number: it is a multiple of the normal size, so 1.25 is a
-quarter bigger and 0.8 is a fifth smaller. The limit is 2.0.
+Picture size in EDF6 VR setting.exe does the same edit for you. Pick Low,
+Normal or High, or type your own number: it is a multiple of the normal size,
+so 1.25 is a quarter bigger and 0.8 is a fifth smaller. The limit is 2.0.
 
 HD TEXTURES
-HD_Texture_2x.bat makes the game's colour textures twice as sharp. It is off
-until you run it and answer y.
+HD textures in EDF6 VR setting.exe makes the game's colour textures twice as
+sharp. It is off until you press Make there. The window shows how far it has
+got; closing it stops the work, and Make goes on from where it stopped.
 
 It reads your own installation, enlarges the textures and writes new copies
 into the Mods folder. Your game files are never opened for writing and never
@@ -374,8 +383,8 @@ change, so there is nothing to back up and nothing that can be damaged.
   Needs             A Vulkan-capable graphics card with 10 GB or more.
 
 TURNING HD TEXTURES OFF
-Run HD_Texture_2x.bat, answer n, then y when it offers to delete the files. The
-game is back to normal the next time you start it.
+Press Delete beside HD textures in EDF6 VR setting.exe. The game is back to
+normal the next time you start it.
 
 It removes exactly the files it wrote, which are listed one per line in
 Mods\HDTextureWork\written.txt. They are not in a folder of their own because
@@ -388,7 +397,7 @@ If you would rather do it by hand, delete the files named in that list, then
 delete Mods\HDTexture and Mods\HDTextureWork. Deleting Mods\HDTextureWork on
 its own only frees working space; it does not turn the textures off.
 
-HD textures are not a VR feature. Choosing N in VR_Play.bat only renames the VR
+HD textures are not a VR feature. Choosing Normal in VR mode only renames the VR
 plugin; the mod loader and its replacement mechanism are untouched, so the game
 keeps the sharper textures in flat mode as well. Flat mode also renders one
 ordinary screen instead of two 4K eyes, so it uses less video memory than VR
@@ -422,11 +431,14 @@ INSTALL
 1. Install and run the Steam PC version of EARTH DEFENSE FORCE 6 normally once.
 2. Close the game. In Steam: Manage -> Browse local files.
 3. Extract ALL contents of this ZIP into the folder containing EDF6.exe.
-   VR_Play.bat and winmm.dll must sit directly beside EDF6.exe, not in a nested folder.
+   EDF6 VR setting.exe and winmm.dll must sit directly beside EDF6.exe, not in
+   a nested folder.
 4. Connect your headset and controllers to your PC VR runtime (see below).
-5. Double-click VR_Play.bat. At "VR Play? Y/N", press Y for VR or N for flat play.
-   This only saves your VR / non-VR mode; it does not launch the game.
-6. Launch EDF6 from Steam normally. Use the BAT again only to change modes.
+5. VR is on as installed. To play on the monitor instead, open
+   EDF6 VR setting.exe, choose Normal under VR mode and press Apply. This only
+   saves your choice; it does not launch the game.
+6. Launch EDF6 from Steam normally. Open the settings program again only to
+   change modes or settings.
 
 No Python, Visual Studio or separate OpenXR loader DLL is required.
 The bundled EDFModLoader needs the Microsoft Visual C++ x64 runtime normally
@@ -440,15 +452,42 @@ loader (winmm.dll) but no ModLoader.ini, so existing loader settings are kept;
 without that file the loader uses its defaults. This bundle includes EDF6MultiSlot
 and EDF6ClearLoot as listed above. It includes no Patcher, game executable or CPK
 archives, and does not remove existing mods.
-HD_Texture_2x.bat needs Redirect=True in ModLoader.ini and sets it if a
+Making HD textures needs Redirect=True in ModLoader.ini and sets it if a
 ModLoader.ini says False; nothing else in that file is changed.
 
+SETTINGS PROGRAM (EDF6 VR setting.exe)
+EDF6 VR setting.exe sits next to EDF6.exe. Open it with the game closed to
+change anything outside the game. Each item has its own button, and changes
+are used the next time you start the game. Its buttons are off while the game
+runs.
+Main tab:
+  Update          The installed and the newest version. Update now installs
+                  the newest release from GitHub; your settings are kept.
+  VR mode         VR (headset) or Normal (monitor, no VR).
+  Picture size    Low 0.8, Normal 1.0, High 1.25, or your own number from 0.5
+                  to 2.0. See RAISING THE RESOLUTION.
+  HD textures     Make or Delete the 2x textures. See HD TEXTURES.
+  Gun hand        Right or Left. See LEFT-HANDED MODE.
+  Problem report  Puts the logs and settings into one zip, saved in the game
+                  folder next to EDF6 VR setting.exe as
+                  EDF6VR-logs-<date>-<time>.zip. Send it with a bug report.
+Extra VR settings tab:
+  VR cockpit, compact HUD (on or off, and where: the corner of your view or
+  the right or left wrist), aim mark size, recoil, shot vibration, desktop
+  mirror, and Reset: every VR setting back to how it came. Reset keeps your
+  picture size and gun hand, and keeps the old file as
+  Mods/Plugins/EDF6VR.ini.reset-<date>-<time>.bak.
+The first time you open it after downloading the ZIP with a web browser,
+Windows may say "Windows protected your PC": choose More info, then Run
+anyway. The program is not signed. Everything it changes can also be set by
+hand in Mods/Plugins/EDF6VR.ini.
+
 UPDATE
-From 2.1.0 on: close the game and double-click Update_EDF6VR.bat in the game
-folder. It compares your version with the latest release on GitHub, asks
-before it downloads, checks the download, and replaces only the files that
-changed (the old ones are kept in EDF6VR\backup). Your settings are kept, and
-if you play flat (N in VR_Play.bat) it stays flat.
+From 2.1.0 on: close the game, open EDF6 VR setting.exe and press Update now
+(or double-click Update_EDF6VR.bat in the game folder). It compares your
+version with the latest release on GitHub, checks the download, and replaces
+only the files that changed (the old ones are kept in EDF6VR\backup). Your
+settings are kept, and if you play flat (Normal) it stays flat.
 By hand, or from an older version: close the game and extract the new ZIP over
 the old install, replacing files. That is all. Your settings are kept: the package no longer contains
 Mods/Plugins/EDF6VR.ini. On start the mod creates it if it is missing, and on
@@ -456,18 +495,19 @@ an existing one only adds settings that are new in this version, with their
 default values. The shipped defaults are in EDF6VR/EDF6VR.defaults.ini for
 reference. HD textures and EDF6MultiSlot.ini are not in the package either,
 so they stay as they are.
-If you had chosen N (flat play) in VR_Play.bat, run it again after updating:
-the new EDF6VR.dll takes precedence over the disabled one.
+If you play flat and extracted an update by hand, choose Normal under VR mode
+again: the new EDF6VR.dll takes precedence over the disabled one.
 
 VR / FLAT SWITCH
-- Y enables Mods/Plugins/EDF6VR.dll. VR starts automatically when the runtime is ready.
-- N renames ONLY that DLL to EDF6VR.dll.disabled so none of this VR plugin loads.
-  Other installed plugins are unaffected. Your settings are preserved.
-- Close the game before switching. The script refuses to switch a running game.
+VR mode in EDF6 VR setting.exe:
+- VR enables Mods/Plugins/EDF6VR.dll. VR starts automatically when the runtime is ready.
+- Normal renames ONLY that DLL to EDF6VR.dll.disabled so none of this VR plugin
+  loads. Other installed plugins are unaffected. Your settings are preserved.
+- Close the game before switching; the buttons are off while it runs.
 - The choice persists for later launches from Steam as well.
-- F11 is an in-session VR toggle, NOT a complete unload. Use N for ordinary flat play.
+- F11 is an in-session VR toggle, NOT a complete unload. Use Normal for ordinary flat play.
 - If a package update leaves both an enabled and disabled DLL, the enabled one
-  takes precedence. Switching to N preserves the old disabled copy as .previous-*.
+  takes precedence. Switching to Normal keeps the old disabled copy as .previous-*.
 
 HEADSETS / RUNTIMES
 The mod uses OpenXR and automatically uses XR_RUNTIME_JSON if explicitly set,
@@ -481,7 +521,7 @@ headsets you intend to wear. Choose the runtime for your current connection once
 - Quest through Virtual Desktop (wireless PCVR):
   Install Virtual Desktop on the headset and Virtual Desktop Streamer on the PC.
   Connect to the PC first. Select VirtualDesktopXR / VDXR as the OpenXR runtime
-  in the Streamer settings. Then use VR_Play.bat -> Y. SteamVR is not required
+  in the Streamer settings. VR mode must be VR. SteamVR is not required
   for this route. Steam itself still launches EDF6. Confirm Runtime: VDXR in
   Virtual Desktop's performance overlay.
 - Quest through Steam Link / SteamVR: use SteamVR as the active OpenXR runtime.
@@ -525,9 +565,9 @@ move it away to return to one hand. In normal single wield, reload works as in
 the game: there is no manual magazine grabbing or reload gesture.
 
 LEFT-HANDED MODE
-Rangers, Wing Divers and Air Raiders can hold the gun in the LEFT hand. The
-setting is at the very top of Mods/Plugins/EDF6VR.ini (after updating from an
-older version, start the game once and it is added there):
+Rangers, Wing Divers and Air Raiders can hold the gun in the LEFT hand. Choose
+Left under Gun hand in EDF6 VR setting.exe and press Apply. By hand, it is at
+the very top of Mods/Plugins/EDF6VR.ini:
   [LeftHanded]
   LeftHanded=0          1 = left-handed, 0 = right-handed (default)
   LeftHandedSticks=1    0 = keep the sticks where they are
@@ -658,7 +698,7 @@ F1: toggle the separate Clear Loot mod while in a mission (game focused).
     Enabled by default. Turning it on plays the native item pickup cue once.
     The choice is saved in Mods/Plugins/EDF6ClearLoot.ini across restarts.
     This mod collects remaining drops near the mission-clear banner; not on retreat.
-    It remains enabled in non-VR mode too. VR_Play.bat only switches EDF6VR.
+    It remains enabled in non-VR mode too. VR mode only switches EDF6VR.
     See README_ClearLoot.txt. Anti-aliasing remains off; use SceneAA in the INI if needed.
 F5: FPS limiter toggle.
 
@@ -696,13 +736,13 @@ KNOWN LIMITATIONS / TROUBLESHOOTING
   mod on other players is claimed to be required or sufficient for compatibility.
 
 UNINSTALL
-Close the game. If you made HD textures, turn them off FIRST: HD_Texture_2x.bat,
-n, then y. The textures are loaded by the mod loader, so removing winmm.dll
+Close the game. If you made HD textures, turn them off FIRST: Delete beside
+HD textures in EDF6 VR setting.exe. The textures are loaded by the mod loader, so removing winmm.dll
 leaves thirty gigabytes in Mods that nothing reads any more. Harmless, but it is
 a lot of disk to lose track of.
 
-Then remove EDF6VR.dll / EDF6VR.dll.disabled, EDF6VR.ini, VR_Play.bat,
-HD_Texture_2x.bat, Set_Resolution.bat, Mods\HDTexture,
+Then remove EDF6VR.dll / EDF6VR.dll.disabled, EDF6VR.ini, EDF6 VR setting.exe,
+Update_EDF6VR.bat, Mods\HDTexture,
 README_EDF6VR.txt and the EDF6VR support folder installed by this archive.
 EDF6MultiSlot: remove Mods\Plugins\EDF6MultiSlot.dll, EDF6MultiSlot.ini and
 README_EDF6MultiSlot.txt; it removes its own Mods\UI file when disabled first

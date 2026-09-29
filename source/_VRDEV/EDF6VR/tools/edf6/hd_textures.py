@@ -496,7 +496,14 @@ def main():
     # made and nothing else. Mods/MAP is shared with any other mod the user has
     # installed, so deleting the folder would not be safe.
     record = os.path.join(work, 'written.txt')
+    # Written when a whole run gets to the end, so "EDF6 VR setting.exe" can tell
+    # a finished pack from one that was stopped halfway. Beside this script
+    # rather than in HDTextureWork, which players are told they may delete.
+    finished = os.path.join(here, 'complete.txt')
+    whole_run = not options.only and not options.limit and not options.dry_run
     if options.remove:
+        if os.path.isfile(finished):
+            os.remove(finished)
         removed = 0
         if os.path.isfile(record):
             for line in open(record, encoding='utf-8').read().splitlines():
@@ -563,6 +570,8 @@ def main():
     say('Using: %s' % card_name)
     say('')
 
+    if whole_run and os.path.isfile(finished):
+        os.remove(finished)
     run = progress_module.Run(sum(sizes), len(chosen))
     started = time.time()
     written = skipped = 0
@@ -595,6 +604,10 @@ def main():
                    '.  %d left alone' % refused if refused else ''))
 
     run.complete()
+    if whole_run:
+        with open(finished, 'w', encoding='utf-8') as note:
+            print('HD textures made %s: %d files made, %d already there.'
+                  % (time.strftime('%Y-%m-%d %H:%M'), written, skipped), file=note)
     say('')
     say('All done. %d files made, %d were already there.' % (written, skipped))
     if refused_total:

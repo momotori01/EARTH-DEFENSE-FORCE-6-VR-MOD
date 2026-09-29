@@ -4,7 +4,7 @@ This folder holds the source of every compiled file in the EDF6VR package:
 
 | Folder | Builds | Shipped as |
 |---|---|---|
-| `_VRDEV/EDF6VR` | the VR mod | `Mods/Plugins/EDF6VR.dll` |
+| `_VRDEV/EDF6VR` | the VR mod and its settings program | `Mods/Plugins/EDF6VR.dll`, `EDF6 VR setting.exe` |
 | `_VRDEV/EDF6ClearLoot` | item collection on mission clear | `Mods/Plugins/EDF6ClearLoot.dll` |
 | `_MultislotDEV` | 8-player online co-op, and the fixed mod loader | `Mods/Plugins/EDF6MultiSlot.dll`, `winmm.dll` |
 | `_VRDEV/EDFModLoader-src` | nothing: `PluginAPI.h` from EDFModLoader (BlueAmulet, MIT), used by the three plugins | - |
@@ -38,7 +38,8 @@ build.cmd
 
 The first command writes the cockpit material atlases (`assets/cockpit/textures/native_v1`) from the
 CC0 textures in `assets/cockpit/textures/cc0` (ambientCG). `build.cmd` configures with
-CMake, builds `dist\EDF6VR.dll` and runs the tests. Some tests read the game's `EDF.dll`; the ones that
+CMake, builds `dist\EDF6VR.dll` and `dist\EDF6 VR setting.exe` (the settings program; its icon is
+`assets/settings/vr.ico`, made by `tools/make_settings_icon.py`) and runs the tests. Some tests read the game's `EDF.dll`; the ones that
 need the developer's research captures are skipped when those are absent.
 
 **2. EDF6ClearLoot**
