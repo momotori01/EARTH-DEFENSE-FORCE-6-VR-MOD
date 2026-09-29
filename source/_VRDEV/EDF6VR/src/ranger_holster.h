@@ -4,10 +4,11 @@ namespace edf6vr {
 // Coordinates follow XrToGame: right=(-cos(yaw),0,sin(yaw)). Left only.
 inline bool InLeftShoulder(const float* head,const float* hand,float yaw,bool leaving,
     float sideCentre=.18f,float up=0,float forward=0,float enterRadius=.15f,
-    float leaveRadius=.19f,float front=.05f,float frontLeave=.09f) noexcept {
+    float leaveRadius=.19f,float front=.05f,float frontLeave=.09f,bool mirrored=false) noexcept {
     if(!head || !hand || !std::isfinite(yaw)) return false;
     const float dx=hand[0]-head[0],dy=hand[1]-head[1],dz=hand[2]-head[2];
-    const float side=dz*std::sin(yaw)-dx*std::cos(yaw);
+    // Mirrored (left-handed mode): the off hand is the right one, at the right temple.
+    const float side=(dz*std::sin(yaw)-dx*std::cos(yaw))*(mirrored?-1.0f:1.0f);
     const float ahead=dx*std::sin(yaw)+dz*std::cos(yaw);
     // Holster-only margin: original 3 cm plus the requested additional 5 cm.
     constexpr float margin=.08f;

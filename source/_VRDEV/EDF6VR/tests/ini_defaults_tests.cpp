@@ -18,7 +18,30 @@ static std::wstring Get(const wchar_t* section,const wchar_t* key,const wchar_t*
     wchar_t value[128]{}; GetPrivateProfileStringW(section,key,L"<none>",value,128,path); return value;
 }
 
-int wmain() {
+// The INI this build ships (packaging/EDF6VR.ini): a 2.1.1 file, which has no
+// [LeftHanded], comes out with it placed exactly as in a fresh one.
+static void ShippedIniGainsLeftHanded(const wchar_t* shippedPath,const wchar_t* path) {
+    const std::string shipped=ReadAll(shippedPath);
+    const auto section=shipped.find("[LeftHanded]");
+    CHECK(section!=std::string::npos);
+    if(section==std::string::npos) return;
+    CHECK(section<1000);                                             // in view as soon as the file is opened
+    const auto blank=shipped.rfind("\r\n\r\n\r\n",section);
+    const auto end=shipped.find("; Which generation",section);
+    CHECK(blank!=std::string::npos && end!=std::string::npos);
+    if(blank==std::string::npos || end==std::string::npos) return;
+    const std::string older=shipped.substr(0,blank+2)+shipped.substr(end);
+    DeleteFileW(path);
+    FILE* file=nullptr; _wfopen_s(&file,path,L"wb"); fwrite(older.data(),1,older.size(),file); fclose(file);
+    const auto r=edf6vr::MergeIniDefaults(shipped.data(),shipped.size(),path);
+    CHECK(!r.failed && r.sections==1 && r.added==2);
+    CHECK(ReadAll(path)==shipped);
+    CHECK(Get(L"LeftHanded",L"LeftHanded",path)==L"0");               // right-handed unless asked
+    CHECK(Get(L"LeftHanded",L"LeftHandedSticks",path)==L"1");
+    DeleteFileW(path);
+}
+
+int wmain(int argc,wchar_t** argv) {
     const char defaults[]=
         "; shipped defaults\r\n"
         "[VR]\r\n"
@@ -50,6 +73,8 @@ int wmain() {
     FILE* f=nullptr; _wfopen_s(&f,path,L"wb"); fwrite(older,1,sizeof(older)-1,f); fclose(f);
     r=edf6vr::MergeIniDefaults(defaults,sizeof(defaults)-1,path);
     CHECK(!r.created && !r.failed && r.added==3);          // B, HandRightMetres, BoardWorldLocked
+    CHECK(r.sections==1);                                  // [Hand.index], whole, above [Render]
+    CHECK(ReadAll(path).find("\r\n[Hand.index]\r\nHandRightMetres=0.0639\r\n[Render]\r\n")!=std::string::npos);
     CHECK(Get(L"VR",L"A",path)==L"7");                     // the player's value stays
     CHECK(Get(L"VR",L"B",path)==L"2.5");                   // added, trimmed
     CHECK(Get(L"VR",L"Empty",path)==L"");                  // present but empty: not overwritten
@@ -61,6 +86,38 @@ int wmain() {
     DeleteFileW(path);
 
     CHECK(edf6vr::MergeIniDefaults(nullptr,0,path).failed);
+
+    // A new section goes in whole where the shipped file has it: blank lines,
+    // comments and keys, above the comments leading into the next section.
+    {
+        const char shipped[]=
+            "; header\r\n; more header\r\n\r\n\r\n"
+            "; new section, explained\r\n[New]\r\nOn=0\r\nSticks=1\r\n\r\n\r\n"
+            "; about Settings\r\n[Settings]\r\nRevision=2\r\n\r\n"
+            "; last\r\n[Tail]\r\nT=1\r\n";
+        const char before[]=
+            "; header\r\n; more header\r\n"
+            "; about Settings\r\n[Settings]\r\nRevision=2\r\n\r\n"
+            "; last\r\n[Tail]\r\nT=5\r\n";
+        DeleteFileW(path);
+        FILE* file=nullptr; _wfopen_s(&file,path,L"wb"); fwrite(before,1,sizeof(before)-1,file); fclose(file);
+        r=edf6vr::MergeIniDefaults(shipped,sizeof(shipped)-1,path);
+        CHECK(!r.failed && r.sections==1 && r.added==2);
+        std::string expected(shipped,sizeof(shipped)-1);
+        expected.replace(expected.find("T=1"),3,"T=5");                 // the player's value stays
+        CHECK(ReadAll(path)==expected);
+        r=edf6vr::MergeIniDefaults(shipped,sizeof(shipped)-1,path);
+        CHECK(!r.failed && r.sections==0 && r.added==0 && ReadAll(path)==expected);
+        // An LF file gets LF lines; a file without the next section gets the block at the end.
+        const char lf[]="[Settings]\nRevision=2\n";
+        DeleteFileW(path);
+        _wfopen_s(&file,path,L"wb"); fwrite(lf,1,sizeof(lf)-1,file); fclose(file);
+        const char tailOnly[]="[Settings]\r\nRevision=2\r\n\r\n; last\r\n[Tail]\r\nT=1\r\n";
+        r=edf6vr::MergeIniDefaults(tailOnly,sizeof(tailOnly)-1,path);
+        CHECK(!r.failed && r.sections==1 && r.added==1);
+        CHECK(ReadAll(path)=="[Settings]\nRevision=2\n\n; last\n[Tail]\nT=1\n");
+        DeleteFileW(path);
+    }
 
     // A file from an older generation is replaced whole, once, with a backup; the resolution carries over.
     {
@@ -91,6 +148,8 @@ int wmain() {
         CHECK(!reset.reset && !reset.failed && GetFileAttributesW(path)==INVALID_FILE_ATTRIBUTES);
         DeleteFileW(backup.c_str());
     }
+    if(argc>1) ShippedIniGainsLeftHanded(argv[1],path);
+    else { printf("FAIL: the shipped INI's path is the first argument\n"); ++failures; }
     printf("EDF6VR INI defaults tests: %d failures\n",failures);
     return failures?1:0;
 }

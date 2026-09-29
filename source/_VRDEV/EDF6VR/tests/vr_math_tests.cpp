@@ -5,6 +5,9 @@
 #include "image_profile.h"
 #include "weapon_hold.h"
 #include "angle_field_finder.h"
+#include "body_tumble.h"
+#include "openxr_session.h"
+#include "ranger_holster.h"
 #include <Windows.h>
 #include <cmath>
 #include <algorithm>
@@ -428,6 +431,85 @@ int main() {
         CHECK(yawBest[0].offset==12&&yawBest[0].kind==AngleFieldFinder::kRadians&&yawBest[0].hits==finder.YawEvents());
         CHECK(pitchBest[0].offset==28&&pitchBest[0].kind==AngleFieldFinder::kNegDegrees&&pitchBest[0].hits==finder.PitchEvents());
         CHECK(finder.YawEvents()==20&&finder.PitchEvents()==19);
+    }
+    {
+        // The view turning with the body (body_tumble.h).
+        using namespace edf6vr;
+        const float deg=0.0174532925f;
+        // Waist rows pitched back by a (about +X, the body's right), spine along its up row.
+        auto pitched=[&](float a,float rows[3][3],float spine[3]) {
+            const float c=std::cos(a*deg),s=std::sin(a*deg);
+            const float r[3][3]={{1,0,0},{0,c,s},{0,-s,c}};
+            for(int i=0;i<3;++i) for(int j=0;j<3;++j) rows[i][j]=r[i][j];
+            for(int j=0;j<3;++j) spine[j]=r[1][j];
+        };
+        BodyTumble t{}; float rows[3][3]{},spine[3]{},R[3][3]{};
+        pitched(0,rows,spine); CHECK(UpdateBodyTumble(t,rows,spine,25,45,75,R));
+        CHECK(t.haveRef && std::fabs(R[0][0]-1)<1e-5f && std::fabs(R[1][1]-1)<1e-5f);      // upright: no turn
+        pitched(20,rows,spine); UpdateBodyTumble(t,rows,spine,25,45,75,R);
+        CHECK(t.applied==0 && std::fabs(R[2][2]-1)<1e-5f);                                // a lean: nothing
+        pitched(0,rows,spine); UpdateBodyTumble(t,rows,spine,25,45,75,R);                // upright again: reference kept
+        pitched(40,rows,spine); UpdateBodyTumble(t,rows,spine,25,45,75,R);
+        CHECK(std::fabs(t.angle-40)<0.1f && t.applied==0);                                // tipped, under the start
+        pitched(60,rows,spine); UpdateBodyTumble(t,rows,spine,25,45,75,R);
+        CHECK(std::fabs(t.applied-30)<0.2f);                                               // half way through the ease
+        pitched(90,rows,spine); UpdateBodyTumble(t,rows,spine,25,45,75,R);
+        float up[3]={0,1,0},turned[3]{}; TumbleApply(R,up,turned);
+        CHECK(std::fabs(t.applied-90)<0.2f && std::fabs(turned[2]-1)<1e-3f);             // all of it: up goes where the spine went
+        // A whole back flip: the view's up follows the spine all the way round, no jump through upside down.
+        float last[3]={0,1,0}; bool smooth=true,followed=true;
+        for(int a=90;a<=270;a+=5) {
+            pitched(static_cast<float>(a),rows,spine); UpdateBodyTumble(t,rows,spine,25,45,75,R);
+            TumbleApply(R,up,turned);
+            const float step=std::acos(std::clamp(turned[0]*last[0]+turned[1]*last[1]+turned[2]*last[2],-1.0f,1.0f))/deg;
+            if(a>90 && step>5.5f) smooth=false;
+            if(std::fabs(turned[0]-spine[0])+std::fabs(turned[1]-spine[1])+std::fabs(turned[2]-spine[2])>1e-3f) followed=false;
+            for(int j=0;j<3;++j) last[j]=turned[j];
+        }
+        CHECK(smooth && followed);
+        // Scaling about a half turn keeps the axis: a quarter of 180 about X is 45 about X.
+        float half[3][3]={{1,0,0},{0,-1,0},{0,0,-1}},quarter[3][3]{};
+        TumbleScale(half,0.25f,quarter);
+        CHECK(std::fabs(TumbleAngle(quarter)/deg-45)<0.1f && std::fabs(quarter[0][0]-1)<1e-4f);
+        // Bad input changes nothing.
+        float zero[3][3]{}; CHECK(!UpdateBodyTumble(t,zero,spine,25,45,75,R));
+        // Only a quick tip turns the view: a flip reaches 45 at once, a free-fall pose settles in slowly.
+        BodyTumble q{};
+        pitched(0,rows,spine); UpdateBodyTumble(q,rows,spine,25,45,75,R,10.0,0.35);
+        pitched(30,rows,spine); UpdateBodyTumble(q,rows,spine,25,45,75,R,10.05,0.35);
+        pitched(90,rows,spine); UpdateBodyTumble(q,rows,spine,25,45,75,R,10.15,0.35);
+        CHECK(q.followed && std::fabs(q.applied-90)<0.2f);
+        pitched(0,rows,spine); UpdateBodyTumble(q,rows,spine,25,45,75,R,11.0,0.35);
+        CHECK(q.spellDone && q.doneFollowed && std::fabs(q.doneMax-90)<0.2f && q.doneReachMs>0 && q.doneReachMs<200);
+        BodyTumble slow{};
+        pitched(0,rows,spine); UpdateBodyTumble(slow,rows,spine,25,45,75,R,20.0,0.35);
+        pitched(30,rows,spine); UpdateBodyTumble(slow,rows,spine,25,45,75,R,20.1,0.35);
+        pitched(44,rows,spine); UpdateBodyTumble(slow,rows,spine,25,45,75,R,20.4,0.35);
+        pitched(95,rows,spine); UpdateBodyTumble(slow,rows,spine,25,45,75,R,20.8,0.35);
+        CHECK(!slow.followed && slow.applied==0 && std::fabs(R[1][1]-1)<1e-5f);          // held level all spell
+        pitched(0,rows,spine); UpdateBodyTumble(slow,rows,spine,25,45,75,R,22.0,0.35);
+        CHECK(slow.spellDone && !slow.doneFollowed);
+    }
+    {
+        // Left-handed mode: the whole controller state trades hands; the sticks can go back alone.
+        edf6vr::ControllerState s{};
+        s.present[0]=true; s.trigger[0]=.25f; s.trigger[1]=.75f; s.squeeze[1]=.5f; s.squeezeIsForce[0]=true;
+        s.stick[0][0]=-.5f; s.stick[0][1]=.3f; s.stick[1][0]=.9f; s.stick[1][1]=-.1f;
+        s.stickClick[1]=true; s.stickTouch[0]=true; s.lower[0]=true; s.upper[1]=true; s.menu[0]=true;
+        edf6vr::ControllerState w=s; edf6vr::SwapControllerHands(w);
+        CHECK(w.present[1] && !w.present[0] && w.trigger[1]==.25f && w.trigger[0]==.75f && w.squeeze[0]==.5f && w.squeezeIsForce[1]);
+        CHECK(w.stick[1][0]==-.5f && w.stick[1][1]==.3f && w.stick[0][0]==.9f && w.stick[0][1]==-.1f);
+        CHECK(w.stickClick[0] && !w.stickClick[1] && w.stickTouch[1] && w.lower[1] && w.upper[0] && w.menu[1]);
+        edf6vr::ControllerState twice=w; edf6vr::SwapControllerHands(twice);
+        CHECK(!std::memcmp(&twice,&s,sizeof(s)));
+        edf6vr::ControllerState sticksBack=w; edf6vr::UnswapControllerSticks(sticksBack);
+        CHECK(sticksBack.stick[0][0]==-.5f && sticksBack.stick[1][0]==.9f && sticksBack.stickClick[1] && sticksBack.stickTouch[0]);
+        CHECK(sticksBack.trigger[1]==.25f && sticksBack.lower[1]);   // everything else stays swapped
+        // The holster's temple zone on the right side when mirrored.
+        const float head[3]={0,1.6f,0},leftTemple[3]={.18f,1.6f,0},rightTemple[3]={-.18f,1.6f,0};
+        CHECK(edf6vr::InLeftShoulder(head,leftTemple,0,false) && !edf6vr::InLeftShoulder(head,rightTemple,0,false));
+        CHECK(edf6vr::InLeftShoulder(head,rightTemple,0,false,.18f,0,0,.15f,.19f,.05f,.09f,true)
+              && !edf6vr::InLeftShoulder(head,leftTemple,0,false,.18f,0,0,.15f,.19f,.05f,.09f,true));
     }
     return failures?1:0;
 }

@@ -2846,7 +2846,15 @@ void OpenXrRuntime::SetWarpSteps(float steps) noexcept {
     if(steps>=4 && steps<=256) g_warpSteps.store(steps,std::memory_order_relaxed);
 }
 
+std::atomic<bool> g_handSwap{false};
+void OpenXrRuntime::SetHandSwap(bool on) noexcept { g_handSwap.store(on,std::memory_order_release); }
+bool OpenXrRuntime::HandSwap() const noexcept { return g_handSwap.load(std::memory_order_acquire); }
+int PhysicalHand(int hand) noexcept { return g_handSwap.load(std::memory_order_acquire)?1-hand:hand; }
 bool OpenXrRuntime::GripPose(int hand,float position[3],float orientation[4]) const noexcept {
+    if(hand<0 || hand>1) return false;
+    return GripPosePhysical(PhysicalHand(hand),position,orientation);
+}
+bool OpenXrRuntime::GripPosePhysical(int hand,float position[3],float orientation[4]) const noexcept {
     if(hand<0 || hand>1) return false;
     AcquireSRWLockShared(&g_handLock);
     const HandTracked pose=g_grip[hand];
@@ -2859,6 +2867,10 @@ bool OpenXrRuntime::GripPose(int hand,float position[3],float orientation[4]) co
 
 bool OpenXrRuntime::HandPose(int hand,float position[3],float orientation[4]) const noexcept {
     if(hand<0 || hand>1) return false;
+    return HandPosePhysical(PhysicalHand(hand),position,orientation);
+}
+bool OpenXrRuntime::HandPosePhysical(int hand,float position[3],float orientation[4]) const noexcept {
+    if(hand<0 || hand>1) return false;
     AcquireSRWLockShared(&g_handLock);
     const HandTracked pose=g_hand[hand];
     ReleaseSRWLockShared(&g_handLock);
@@ -2869,6 +2881,11 @@ bool OpenXrRuntime::HandPose(int hand,float position[3],float orientation[4]) co
 }
 
 bool OpenXrRuntime::Controls(ControllerState& out) const noexcept {
+    const bool ready=ControlsPhysical(out);
+    if(ready && g_handSwap.load(std::memory_order_acquire)) SwapControllerHands(out);
+    return ready;
+}
+bool OpenXrRuntime::ControlsPhysical(ControllerState& out) const noexcept {
     AcquireSRWLockShared(&g_handLock);
     const bool ready=g_inputReady.load() && g_running.load();
     out=ready?g_controls:ControllerState{};
@@ -2878,12 +2895,12 @@ bool OpenXrRuntime::Controls(ControllerState& out) const noexcept {
 
 void OpenXrRuntime::Buzz(int hand,float seconds,float amplitude) const noexcept {
     if(hand<0 || hand>1 || !(amplitude>0) || !std::isfinite(amplitude) || !(seconds>0) || !std::isfinite(seconds)) return;
-    QueueHaptic(hand,seconds,amplitude,false);
+    QueueHaptic(PhysicalHand(hand),seconds,amplitude,false);
 }
 
 void OpenXrRuntime::StopBuzz(int hand) const noexcept {
     if(hand<0 || hand>1)return;
-    QueueHaptic(hand,0,0,true);
+    QueueHaptic(PhysicalHand(hand),0,0,true);
 }
 
 const char* OpenXrRuntime::InputStatus() const noexcept { return g_inputNote; }

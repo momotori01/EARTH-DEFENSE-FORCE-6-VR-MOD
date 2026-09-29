@@ -6,9 +6,11 @@
 // DLL instead, and on every start:
 //  - no INI yet: the defaults are written out whole, comments and all;
 //  - an INI already there: only the keys it lacks are added, with their
-//    default values. Nothing the player has set is ever changed.
+//    default values. Nothing the player has set is ever changed. A section it
+//    lacks altogether goes in whole, comments and all, where the shipped file
+//    has it (`sections`; its keys count in `added` too).
 namespace edf6vr {
-struct IniMergeResult { bool created=false; unsigned added=0; bool failed=false; };
+struct IniMergeResult { bool created=false; unsigned added=0; unsigned sections=0; bool failed=false; };
 IniMergeResult MergeIniDefaults(const char* defaults,std::size_t length,const wchar_t* iniPath) noexcept;
 
 // Once per generation, the other way round: a file whose [Settings] Revision is

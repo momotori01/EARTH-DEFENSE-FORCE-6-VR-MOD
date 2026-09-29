@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.1.1'
+VERSION = '2.1.2'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.12.zip'
@@ -31,7 +31,12 @@ MULTISLOT_DLL_SHA = '9DCB03DA6301202A8C834326F067EAF22B25E51A29FD3AADEC9217747DB
 # hardware-checked on 2026-09-29.
 # 2.1.1: the cockpit session's cockpit and texture update (CC0 atlases, trucks,
 # Barga), same EDF6MultiSlot 1.5.12.
-VERIFIED_VR_SHA = 'C668985567BC1B5BEE5BAD00180D0CE581191CD159562EA2A40141C64DB64070'
+# 2.1.2: left-handed mode (tried on hardware 2026-09-29 with the sticks kept;
+# then sticks swapped by default and the settings moved to a [LeftHanded]
+# section at the top of the INI, which the merge now inserts whole into an
+# existing file -- unit-tested and dry-run on a real 2.1.1 INI), same
+# EDF6MultiSlot 1.5.12.
+VERIFIED_VR_SHA = 'E162308293B9B38D452D49745649E1886A51EFD5607944D7CFBF0B2B2756822F'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

@@ -28,6 +28,20 @@ struct ControllerState {
     bool upper[2]{};         // B on Index and on Touch right, Y on Touch left
     bool menu[2]{};
 };
+// Left-handed mode (plugin.cpp, [VR] LeftHanded): every per-hand field trades
+// sides, so what the mod calls the right hand -- the gun's -- is the physical left.
+inline void SwapControllerHands(ControllerState& s) noexcept {
+    auto swapBoth=[](auto& pair) { auto keep=pair[0]; pair[0]=pair[1]; pair[1]=keep; };
+    swapBoth(s.present); swapBoth(s.trigger); swapBoth(s.squeeze); swapBoth(s.squeezeIsForce);
+    for(int a=0;a<2;++a) { const float keep=s.stick[0][a]; s.stick[0][a]=s.stick[1][a]; s.stick[1][a]=keep; }
+    swapBoth(s.stickClick); swapBoth(s.stickTouch); swapBoth(s.lower); swapBoth(s.upper); swapBoth(s.menu);
+}
+// Just the sticks back to their own hands (movement stays on the left stick).
+inline void UnswapControllerSticks(ControllerState& s) noexcept {
+    for(int a=0;a<2;++a) { const float keep=s.stick[0][a]; s.stick[0][a]=s.stick[1][a]; s.stick[1][a]=keep; }
+    const bool click=s.stickClick[0]; s.stickClick[0]=s.stickClick[1]; s.stickClick[1]=click;
+    const bool touch=s.stickTouch[0]; s.stickTouch[0]=s.stickTouch[1]; s.stickTouch[1]=touch;
+}
 
 struct HmdSample {
     Quat orientation{};
@@ -122,6 +136,14 @@ public:
     // Stop replaces pending feedback and is dispatched at the next XR input sync.
     void Buzz(int hand,float seconds,float amplitude) const noexcept;
     void StopBuzz(int hand) const noexcept;
+    // Left-handed mode: while on, hand 1 ("right", the gun's) is the physical
+    // left controller in HandPose, GripPose, Controls, Buzz and StopBuzz. The
+    // Physical forms never swap (the drawn hands stay on their own controllers).
+    void SetHandSwap(bool on) noexcept;
+    bool HandSwap() const noexcept;
+    bool HandPosePhysical(int hand,float position[3],float orientation[4]) const noexcept;
+    bool GripPosePhysical(int hand,float position[3],float orientation[4]) const noexcept;
+    bool ControlsPhysical(ControllerState& out) const noexcept;
     const char* InputStatus() const noexcept;
     // The controller family the runtime chose for the right hand, as a short
     // INI-friendly word: "index", "touch" (Quest), "psvr2", "wmr", "vive",

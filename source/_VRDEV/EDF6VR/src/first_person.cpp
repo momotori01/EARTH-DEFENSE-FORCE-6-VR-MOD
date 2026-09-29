@@ -108,6 +108,20 @@ bool ReadNamedBone(void* soldier,NodeLookup lookup,const wchar_t* name,float wor
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+bool ReadNamedBoneFrame(void* soldier,NodeLookup lookup,const wchar_t* name,float rows[3][3],float world[3]) noexcept {
+    __try {
+        auto node=static_cast<unsigned char*>(FindNamedBone(soldier,lookup,name));
+        if(!node) return false;
+        auto m=reinterpret_cast<const float*>(node+0xB0);
+        for(int i=0;i<3;++i) for(int j=0;j<3;++j) {
+            if(!std::isfinite(m[i*4+j])) return false;
+            rows[i][j]=m[i*4+j];
+        }
+        for(int j=0;j<3;++j) { if(!std::isfinite(m[12+j])) return false; world[j]=m[12+j]; }
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
 bool WriteBonePosition(void* node,const float world[3]) noexcept {
     __try {
         if(!node || !Readable(node,0xB0+64,true)) return false;

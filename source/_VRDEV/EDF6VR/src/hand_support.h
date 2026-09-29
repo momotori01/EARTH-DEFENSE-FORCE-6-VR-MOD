@@ -258,7 +258,7 @@ bool ResolveBodyPalette(void* model,int pass,edf6vr::Matrix*& palette,std::size_
 // head sample and eye the weapon is, so hand and weapon agree.
 bool HandControllerFrame(int hand,float axes[3][3],float palm[3]) noexcept {
     float pos[3]{},rot[4]{};
-    if(!edf6vr::g_openxr.GripPose(hand,pos,rot)) return false;
+    if(!edf6vr::g_openxr.GripPosePhysical(hand,pos,rot)) return false;   // the hand model on its own controller
     float eye[3]{},headRoom[3]{},yaw=0;
     AcquireSRWLockShared(&g_lock);
     const auto now=GetTickCount64();
@@ -364,7 +364,7 @@ bool DrawBodyHands(void* model,void* renderContext,int pass,void* view) noexcept
     // two-handed weapon with the firing hand.
     KickHands(have,axes,palm);
     edf6vr::ControllerState controls{};
-    edf6vr::g_openxr.Controls(controls);
+    edf6vr::g_openxr.ControlsPhysical(controls);   // each hand's fingers from its own controller
     if(layer) {
         // The same eye separation and origin the weapon hands the layer, so the
         // two are drawn against one camera and stay together when the head moves.

@@ -1,5 +1,12 @@
-﻿EDF6VR 2.1.1
+﻿EDF6VR 2.1.2
 =============================
+
+CHANGES IN 2.1.2
+- Left-handed mode: Rangers, Wing Divers and Air Raiders can hold and fire
+  the gun with the left hand. The trigger, grip, buttons and sticks all change
+  sides with it. Fencers and vehicles stay right-handed. To switch it on,
+  start the game once after updating, then set LeftHanded=1 at the very top of
+  Mods/Plugins/EDF6VR.ini and restart. See LEFT-HANDED MODE below.
 
 CHANGES IN 2.1.1
 - Cockpit surfaces look better: new materials and textures.
@@ -516,6 +523,19 @@ Use the RIGHT controller to aim; the headset looks independently. Bring the
 left hand near the front support point of the weapon to engage two-hand aim;
 move it away to return to one hand. In normal single wield, reload works as in
 the game: there is no manual magazine grabbing or reload gesture.
+
+LEFT-HANDED MODE
+Rangers, Wing Divers and Air Raiders can hold the gun in the LEFT hand. The
+setting is at the very top of Mods/Plugins/EDF6VR.ini (after updating from an
+older version, start the game once and it is added there):
+  [LeftHanded]
+  LeftHanded=0          1 = left-handed, 0 = right-handed (default)
+  LeftHandedSticks=1    0 = keep the sticks where they are
+Restart the game after changing it. While it is on, everything above swaps
+sides: the LEFT trigger fires, the buttons and grips trade places, and you move
+with the RIGHT stick and turn with the LEFT. The gestures below use the other
+hand, and a Ranger draws the second gun from behind the RIGHT shoulder.
+Fencers, vehicles and menus stay right-handed.
 
 RANGER DUAL WIELD
 This Ranger-only feature recreates alternating fire between two weapons in VR.

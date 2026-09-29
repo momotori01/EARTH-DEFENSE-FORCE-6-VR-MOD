@@ -251,7 +251,7 @@ bool MakeLeftHandCommand(const WeaponHoldCommand& right,void* weapon,WeaponHoldC
     const float rows[3][3]={{axes[0].x,axes[0].y,axes[0].z},{axes[1].x,axes[1].y,axes[1].z},{axes[2].x,axes[2].y,axes[2].z}};
     for(unsigned j=0;j<3;++j) {
         left.handPos[j]=palm[j];
-        left.hand.palm[j]=palm[j]+rows[2][j]*g_weaponAhead-rows[0][j]*g_weaponRight+rows[1][j]*g_weaponUp;
+        left.hand.palm[j]=palm[j]+rows[2][j]*g_weaponAhead-rows[0][j]*WeaponRightTrim()+rows[1][j]*g_weaponUp;
         for(unsigned i=0;i<3;++i)left.hand.axes[i][j]=(i==0?-1.0f:1.0f)*rows[i][j];
         left.weaponWas[j]=pose.world.m[3][j];
     }

@@ -12,6 +12,7 @@ Already installed 2.1.0 or later? Close the game and run `Update_EDF6VR.bat` in 
 
 - Native stereo rendering, room-scale 6DoF tracking.
 - One-handed and two-handed weapon aiming, all four soldier classes and vehicles.
+- **Left-handed mode** for Rangers, Wing Divers and Air Raiders: hold and fire the gun with the left hand ([how to switch it on](#left-handed-mode)).
 - Hand models for all four classes, with fingers that follow the trigger, grip and stick.
 - Recoil animation and per-hand firing vibration.
 - Rangers can dual wield (reach behind your left shoulder and press grip).
@@ -60,6 +61,19 @@ Run `HD_Texture_2x.bat` and answer **y**. It reads your own game files and write
 - Takes about an hour and about 40 GB of free space.
 - Uses about 300 MB more video memory in game.
 - To turn them off, run it again and answer **n**, then **y** to delete the files.
+
+### Left-handed mode
+Rangers, Wing Divers and Air Raiders can hold and fire the gun with the **left** hand.
+1. Start the game once (after installing or updating), then close it.
+2. Open `Mods/Plugins/EDF6VR.ini`. The setting is at the very top of the file:
+   ```ini
+   [LeftHanded]
+   LeftHanded=0
+   LeftHandedSticks=1
+   ```
+3. Change `LeftHanded=0` to `LeftHanded=1` and start the game again.
+
+The trigger, grip, buttons and sticks all change sides: you fire with the left trigger, move with the right stick and turn with the left. The gestures below use the other hand, and a Ranger draws the second gun from behind the right shoulder. Fencers, vehicles and menus stay right-handed. `LeftHanded=0` goes back to right-handed (the default); `LeftHandedSticks=0` keeps the sticks where they are.
 
 ## Controls
 

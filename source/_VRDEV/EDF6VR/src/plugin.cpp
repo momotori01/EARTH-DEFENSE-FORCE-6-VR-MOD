@@ -31,6 +31,7 @@
 #include "camera_math.h"
 #include "first_person.h"
 #include "fencer_input.h"
+#include "body_tumble.h"
 #include "gesture_input.h"
 #include "ranger_holster.h"
 #include "ranger_recoil.h"
@@ -153,6 +154,25 @@ bool g_uiRedirect=true;
 edf6vr::HeadSteady g_headSteady{};
 edf6vr::HeadAnchor g_headAnchor{};
 bool g_headRootLock=true;
+// [LeftHanded] LeftHanded: Rangers, Wing Divers and Air Raiders hold and fire the
+// gun with the left controller (openxr_session SetHandSwap). The sticks change
+// sides too (hardware 2026-09-29: with movement left and reload on the left hand,
+// one thumb had both); LeftHandedSticks=0 keeps movement on the left stick.
+bool g_leftHanded=false,g_leftHandedSticks=true;
+// The gun's sideways trim, mirrored when the gun is in the left hand.
+float WeaponRightTrim() noexcept;
+// [FirstPerson] ViewFollowsBody (body_tumble.h): off = the view keeps level, as always.
+bool g_viewFollowsBody=false;
+constexpr float kTumbleUprightDeg=25, kTumbleStartDeg=45, kTumbleFullDeg=75;
+constexpr double kTumbleWindowSec=0.35;   // past kTumbleStartDeg this soon after leaving upright, or no turn
+edf6vr::BodyTumble g_bodyTumble{};
+void* g_bodyTumbleOwner=nullptr;
+bool g_bodyTumbling=false;          // last frame put a turn onto the view
+unsigned long long g_tumbleFrames=0,g_tumbleEngaged=0;
+float g_tumbleAngleMax=0,g_tumbleAppliedMax=0;
+// The game's state names seen while the body was tipped, for choosing states later.
+char g_tumbleStates[8][96]{};
+unsigned g_tumbleStateCount=0;
 void* g_headAnchorOwner=nullptr;
 unsigned g_headAnchorId=0;
 float g_idleRootStepMax=0;
@@ -779,12 +799,16 @@ void KickHands(const bool have[2],float axes[2][3][3],float palm[2][3]) noexcept
     AcquireSRWLockShared(&g_lock);
     const bool leftHolds=g_leftHoldCommand.weapon!=nullptr;
     ReleaseSRWLockShared(&g_lock);
-    const bool steadying=g_twoHandOn && !leftHolds && have[0] && have[1] && level[1]>0;
+    // axes/palm are the physical hands (the drawn ones); the kick levels are by
+    // role, so in left-handed mode the gun's kick goes to the physical left.
+    if(edf6vr::g_openxr.HandSwap()) std::swap(level[0],level[1]);
+    const int gun=edf6vr::g_openxr.HandSwap()?0:1, other=1-gun;
+    const bool steadying=g_twoHandOn && !leftHolds && have[0] && have[1] && level[gun]>0;
     float firing[3][3]{},firingPalm[3]{};
-    if(steadying) { std::memcpy(firing,axes[1],sizeof(firing)); std::memcpy(firingPalm,palm[1],sizeof(firingPalm)); }
+    if(steadying) { std::memcpy(firing,axes[gun],sizeof(firing)); std::memcpy(firingPalm,palm[gun],sizeof(firingPalm)); }
     for(int h=0;h<2;++h) if(have[h]) edf6vr::ApplyRecoilKick(level[h],g_recoilShape,axes[h],palm[h]);
     if(steadying) {
-        edf6vr::ApplyRecoilKickWith(level[1],g_recoilShape,firing,firingPalm,axes[0],palm[0]);
+        edf6vr::ApplyRecoilKickWith(level[gun],g_recoilShape,firing,firingPalm,axes[other],palm[other]);
         g_supportKicks.fetch_add(1,std::memory_order_relaxed);
     }
 }
@@ -1001,9 +1025,14 @@ bool WriteTrackedAim(void* soldier,float pitch,float yaw,bool tracked) noexcept 
     }
     return edf6vr::WriteSoldierAim(soldier,pitch,yaw);
 }
-void BuildPad(const edf6vr::ControllerState& controls,bool handTracked,
+void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
               const float headXr[3],const float rightHandXr[3],const float leftHandXr[3],
               float headYaw=0,bool leftTracked=false) {
+    // Left-handed: the input arrives with the hands swapped, sticks included;
+    // LeftHandedSticks=0 sends the sticks back to their own hands.
+    edf6vr::ControllerState controls=controlsIn;
+    const bool leftHandedNow=edf6vr::g_openxr.HandSwap();
+    if(leftHandedNow && !g_leftHandedSticks) edf6vr::UnswapControllerSticks(controls);
     for(int hand=0;hand<2;++hand) {
         const float force=controls.present[hand]?controls.squeeze[hand]:0;
         const float press=controls.squeezeIsForce[hand]?g_gripForcePress:g_gripPress;
@@ -1020,7 +1049,7 @@ void BuildPad(const edf6vr::ControllerState& controls,bool handTracked,
     const auto shoulder=g_rangerHolster.Step(dualEligible && !adjusting,
         edf6vr::InLeftShoulder(headXr,leftHandXr,headYaw,g_rangerHolster.inside,
             g_gestureRight,g_gestureUp,g_gestureAhead,g_gestureRadius,g_gestureRadiusLeave,
-            g_gestureFront,g_gestureFrontLeave),g_gripHeld[0]);
+            g_gestureFront,g_gestureFrontLeave,leftHandedNow),g_gripHeld[0]);
     const bool holsterGrip=g_rangerHolster.captured;
     if(shoulder.entered) {
         edf6vr::g_openxr.Buzz(0,.06f,.45f);
@@ -2025,6 +2054,7 @@ void Settings() noexcept {
     edf6vr::SetDesktopMirrorUiScale(ReadFloat(path,L"DesktopMirrorUiScale",1.8f,0.5f,2.5f,L"Render"));
     g_headDamping=ReadFloat(path,L"HeadSteady",0.85f,0.0f,1.0f,L"FirstPerson");
     g_headRootLock=GetPrivateProfileIntW(L"FirstPerson",L"HeadRootLock",1,path)!=0;
+    g_viewFollowsBody=GetPrivateProfileIntW(L"FirstPerson",L"ViewFollowsBody",0,path)!=0;
     g_headLimit=ReadFloat(path,L"HeadSteadyLimitMetres",0.15f,0.005f,1.0f,L"FirstPerson");
     g_roomDead=ReadFloat(path,L"RoomScaleDeadZoneMetres",0.20f,0.0f,2.0f,L"VR");
     g_roomSettle=ReadFloat(path,L"RoomScaleSettleSeconds",0.0f,0.0f,5.0f,L"VR");
@@ -2081,6 +2111,8 @@ void Settings() noexcept {
     g_vrRotation=GetPrivateProfileIntW(L"VR",L"HeadRotation",1,path)!=0;
     g_vrRoomScale=GetPrivateProfileIntW(L"VR",L"RoomScaleWalk",1,path)!=0;
     g_vrCameraHeight=GetPrivateProfileIntW(L"VR",L"HeadHeightCameraOnly",1,path)!=0;
+    g_leftHanded=GetPrivateProfileIntW(L"LeftHanded",L"LeftHanded",0,path)!=0;
+    g_leftHandedSticks=GetPrivateProfileIntW(L"LeftHanded",L"LeftHandedSticks",1,path)!=0;
     g_vrMouseYaw=GetPrivateProfileIntW(L"VR",L"MouseAdjustsYawOffset",1,path)!=0;
     g_vrRoomScaleGain=ReadFloat(path,L"RoomScaleGain",1.0f,0.0f,3.0f,L"VR");
     g_vrMaxRoomSpeed=ReadFloat(path,L"RoomScaleMaxSpeed",4.0f,0.5f,10.0f,L"VR");
@@ -2400,7 +2432,7 @@ void TwoHanded(edf6vr::HeadBasis& hand,const float rightAt[3],const float rightR
     const auto* q=edf6vr::g_openxr.GripPose(1,palmAt,gripRotation)?gripRotation:rightRot;
     const edf6vr::Vec3 filteredGap{g_twoHandDir[0]*apart,g_twoHandDir[1]*apart,g_twoHandDir[2]*apart};
     edf6vr::CorrectTwoHandLateralYaw({q[0],q[1],q[2],q[3]},filteredGap,
-        g_weaponRight,g_weaponRollTrim,g_weaponYaw,g_weaponPitch,hand);
+        WeaponRightTrim(),g_weaponRollTrim,g_weaponYaw,g_weaponPitch,hand);
 }
 
 void PollInput() noexcept {
@@ -4312,6 +4344,83 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
     }
     return true;
 }
+// [FirstPerson] ViewFollowsBody: the body's turn since it was last upright
+// (body_tumble.h), put onto the camera about the eye.
+void ApplyBodyTumble(void* soldier,edf6vr::Matrix& camera) noexcept {
+    if(soldier!=g_bodyTumbleOwner) { g_bodyTumble={}; g_bodyTumbleOwner=soldier; g_bodyTumbling=false; }
+    float waist[3][3]{},waistAt[3]{},neck[3]{};
+    if(!g_nodeLookup || !edf6vr::ReadNamedBoneFrame(soldier,g_nodeLookup,L"koshi",waist,waistAt)
+       || !edf6vr::ReadNamedBone(soldier,g_nodeLookup,L"kubi",neck)) { g_bodyTumbling=false; return; }
+    const float spine[3]={neck[0]-waistAt[0],neck[1]-waistAt[1],neck[2]-waistAt[2]};
+    float R[3][3]{};
+    LARGE_INTEGER ticks{},rate{};
+    QueryPerformanceCounter(&ticks); QueryPerformanceFrequency(&rate);
+    const double clock=rate.QuadPart?static_cast<double>(ticks.QuadPart)/static_cast<double>(rate.QuadPart):0.0;
+    if(!edf6vr::UpdateBodyTumble(g_bodyTumble,waist,spine,kTumbleUprightDeg,kTumbleStartDeg,kTumbleFullDeg,R,
+                                 clock,kTumbleWindowSec)) {
+        g_bodyTumbling=false; return;
+    }
+    if(g_bodyTumble.spellDone) {
+        g_bodyTumble.spellDone=false;
+        if(g_bodyTumble.doneMax>=kTumbleStartDeg)
+            Log("TUMBLE spell %.0fms, past %.0f after %.0fms, max %.0fdeg, %s",g_bodyTumble.doneMs,kTumbleStartDeg,
+                g_bodyTumble.doneReachMs,g_bodyTumble.doneMax,g_bodyTumble.doneFollowed?"view turned":"too slow: view kept level");
+    }
+    ++g_tumbleFrames;
+    g_tumbleAngleMax=std::max(g_tumbleAngleMax,g_bodyTumble.angle);
+    g_tumbleAppliedMax=std::max(g_tumbleAppliedMax,g_bodyTumble.applied);
+    if(g_bodyTumble.angle>0) {
+        // Which state the game is in while the body is tipped, once per name.
+        if(const char* name=edf6vr::SoldierStateName(g_image,soldier)) {
+            const char* at=std::strstr(name,"State_");
+            const char* shown=at?at:name;
+            bool known=false;
+            for(unsigned i=0;i<g_tumbleStateCount;++i) if(!std::strncmp(g_tumbleStates[i],shown,sizeof(g_tumbleStates[i])-1)) known=true;
+            if(!known && g_tumbleStateCount<8) strncpy_s(g_tumbleStates[g_tumbleStateCount++],shown,_TRUNCATE);
+        }
+    }
+    const bool tumbling=g_bodyTumble.applied>0;
+    if(tumbling && !g_bodyTumbling) ++g_tumbleEngaged;
+    g_bodyTumbling=tumbling;
+    if(!tumbling) return;
+    for(int i=0;i<3;++i) {
+        const float row[3]={camera.m[i][0],camera.m[i][1],camera.m[i][2]};
+        float turned[3]{};
+        edf6vr::TumbleApply(R,row,turned);
+        for(int j=0;j<3;++j) camera.m[i][j]=turned[j];
+    }
+}
+void ReportBodyTumble() noexcept {
+    if(!g_viewFollowsBody) return;
+    char states[8*98]{};
+    for(unsigned i=0;i<g_tumbleStateCount;++i) {
+        strncat_s(states,i?" ":"",_TRUNCATE);
+        char cut[64]{}; strncpy_s(cut,g_tumbleStates[i],_TRUNCATE);
+        if(char* at=std::strchr(cut,'@')) { if(char* end=std::strchr(at+1,'@')) *end=0; }
+        strncat_s(states,cut,_TRUNCATE);
+    }
+    Log("TUMBLE on frames=%llu engaged=%llu bodyTurnMax=%.0fdeg viewTurnMax=%.0fdeg now=%.0f/%.0f states=[%s]",
+        g_tumbleFrames,g_tumbleEngaged,g_tumbleAngleMax,g_tumbleAppliedMax,g_bodyTumble.angle,g_bodyTumble.applied,states);
+    g_tumbleAngleMax=0; g_tumbleAppliedMax=0;
+}
+float WeaponRightTrim() noexcept { return edf6vr::g_openxr.HandSwap()?-g_weaponRight:g_weaponRight; }
+// Left-handed mode is on while a Ranger, Wing Diver or Air Raider is on foot in
+// VR; a Fencer (a weapon in each hand already), a vehicle and the menus keep the
+// ordinary hands.
+void UpdateLeftHanded(void* soldier) noexcept {
+    const char* role=nullptr;
+    if(g_leftHanded && g_vrEnabled && !g_vehicleMounted && soldier && edf6vr::IsSupportedSoldier(g_image,soldier)) {
+        if(edf6vr::HasType(g_image,soldier,".?AVAssultSoldier@@")) role="Ranger";
+        else if(edf6vr::HasType(g_image,soldier,".?AVPaleWing@@")) role="Wing Diver";
+        else if(edf6vr::HasType(g_image,soldier,".?AVEngineer@@")) role="Air Raider";
+    }
+    const bool want=role!=nullptr;
+    if(edf6vr::g_openxr.HandSwap()!=want) {
+        edf6vr::g_openxr.SetHandSwap(want);
+        Log("LEFTHANDED gun hand %s%s%s; sticks %s",want?"LEFT (":"right",want?role:"",want?")":"",
+            want&&g_leftHandedSticks?"swapped too":"as they are");
+    }
+}
 #include "presentation_trace.h"
 void AfterUpdate(void* camera) noexcept {
     g_holdCommand={}; g_leftHoldCommand={}; // stale tracking/mission/weapon commands cannot survive this update
@@ -4393,6 +4502,7 @@ void AfterUpdate(void* camera) noexcept {
             if(edf6vr::Readable(nativeMatrix,sizeof(*nativeMatrix),true))
                 vehicleApplied=ApplyVehicleCamera(camera,source,soldier,*nativeMatrix,pose,mountDetected);
             g_vehicleMounted=mountDetected;
+            UpdateLeftHanded(soldier);
             if(!mountDetected) {
                 static ULONGLONG mountReport=0;
                 void* owner=edf6vr::IsSupportedSoldier(g_image,soldier)?soldier:g_vrSoldier;
@@ -4477,6 +4587,8 @@ void AfterUpdate(void* camera) noexcept {
                             g_headWobble=std::sqrt(square);
                             g_headWobblePeak=std::max(g_headWobblePeak,g_headWobble);
                         }
+                        // Turning with the body: the eye goes where the head goes.
+                        if(g_viewFollowsBody && g_bodyTumbling) for(int j=0;j<3;++j) pose.eye[j]=raw[j];
                         if(g_previousMove.have && std::fabs(g_previousMove.inX)<.001f && std::fabs(g_previousMove.inZ)<.001f
                            && g_lastRoomInput[0]==0 && g_lastRoomInput[1]==0) {
                             ++g_idleRootSamples;
@@ -4608,6 +4720,7 @@ void AfterUpdate(void* camera) noexcept {
                                 if(edf6vr::RollCameraToUp(fps,g_hmdUpWorld,rolled,roll)) fps=rolled;
                                 else roll=0;
                             }
+                            if(g_vrEnabled && g_viewFollowsBody) ApplyBodyTumble(soldier,fps);
                             // The eye translation must follow the FINAL rolled
                             // right axis, just like the second native eye.
                             if(g_vrEnabled && edf6vr::NativeWorldEnabled() && g_stereoMode>=4 && !g_swapEyes)
@@ -4840,9 +4953,9 @@ void AfterUpdate(void* camera) noexcept {
                                      g_eyeWorld[1]+offset.y,
                                      g_eyeWorld[2]+offset.z};
                 const float rootAt[3]={
-                    palm[0]+ahead[0]*g_weaponAhead+sideways[0]*g_weaponRight+upward[0]*g_weaponUp,
-                    palm[1]+ahead[1]*g_weaponAhead+sideways[1]*g_weaponRight+upward[1]*g_weaponUp,
-                    palm[2]+ahead[2]*g_weaponAhead+sideways[2]*g_weaponRight+upward[2]*g_weaponUp};
+                    palm[0]+ahead[0]*g_weaponAhead+sideways[0]*WeaponRightTrim()+upward[0]*g_weaponUp,
+                    palm[1]+ahead[1]*g_weaponAhead+sideways[1]*WeaponRightTrim()+upward[1]*g_weaponUp,
+                    palm[2]+ahead[2]*g_weaponAhead+sideways[2]*WeaponRightTrim()+upward[2]*g_weaponUp};
                 // The slot being aimed is the one whose fire direction agrees
                 // with the angles; the other is holstered.
                 // The weapon in hand is the one that was in hand.
@@ -5242,6 +5355,7 @@ void AfterUpdate(void* camera) noexcept {
             {
                 const auto stateNow=GetTickCount64();
                 const auto age=[&](ULONGLONG stamp) { return stamp?static_cast<long long>(stateNow-stamp):-1LL; };
+                ReportBodyTumble();
                 Log("STATE sinceInputMs=%lld sinceCameraWriteMs=%lld sinceCameraUpdateMs=%lld "
                     "sinceBodyDrawMs=%lld sceneAgeMs=%llu moveBasis=%d force=%d "
                     "camera=%s soldier=%s display=%s headSteady=%.2f wobble=%.1fcm peak=%.1fcm keptByCamera=%llu",
@@ -6478,13 +6592,14 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("INI %s", g_iniMerge.failed?"defaults could not be applied (read-only or missing resource); code defaults used for missing keys"
             :(g_iniMerge.created?"created from the shipped defaults":(g_iniMerge.added?"updated: new settings added with their defaults, your values kept":"up to date")));
     if(g_iniMerge.added) Log("INI added %u new key(s)",g_iniMerge.added);
+    if(g_iniMerge.sections) Log("INI added %u new section(s) whole, where the shipped file has them",g_iniMerge.sections);
     if(g_iniReset.reset)
         Log("INI replaced with the defaults of settings revision %d (the file was revision %d); the old one is "
             "EDF6VR.ini.v%d.bak%s",kSettingsRevision,g_iniReset.from,g_iniReset.from<1?1:g_iniReset.from,
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 2.1.1 cockpit loading, with EDF6MultiSlot 1.5.12. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 2.1.2 cockpit loading, with EDF6MultiSlot 1.5.12. Fencer weapons aim the barrel itself; no dead band on the aim.");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
     if(_wcsicmp(slash?slash+1:host,L"EDF6.exe")) { Log("REFUSED: process is not EDF6.exe"); return false; }

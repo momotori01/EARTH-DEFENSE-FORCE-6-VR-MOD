@@ -56,6 +56,8 @@ bool ReadPlayerPose(const ImageProfile&,void* soldier,NodeLookup,const EyeSettin
 // same name lookup that finds arms_r, and whichever bone sits where the bullet
 // appears is the one to move.
 bool ReadNamedBone(void* soldier,NodeLookup,const wchar_t* name,float world[3]) noexcept;
+// The bone's world axes (rows 0-2 of its matrix) and position.
+bool ReadNamedBoneFrame(void* soldier,NodeLookup,const wchar_t* name,float rows[3][3],float world[3]) noexcept;
 // The node itself, so it can be written as well as read.
 //
 // Names come from the game's own soldier definition rather than from guesswork:
