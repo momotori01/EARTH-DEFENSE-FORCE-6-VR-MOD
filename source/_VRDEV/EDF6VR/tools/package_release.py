@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.1.0'
+VERSION = '2.1.1'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.12.zip'
@@ -29,7 +29,9 @@ MULTISLOT_DLL_SHA = '9DCB03DA6301202A8C834326F067EAF22B25E51A29FD3AADEC9217747DB
 # rest poses not learned while down; EDF6VR.log lines appended atomically; with
 # EDF6MultiSlot 1.5.12 (its menu line announces a newer EDF6VR). Each change
 # hardware-checked on 2026-09-29.
-VERIFIED_VR_SHA = '6A65DD39A71E3B1DF1EC39C72D9320C452FC8AC05559FFD0121A0A6713823C4D'
+# 2.1.1: the cockpit session's cockpit and texture update (CC0 atlases, trucks,
+# Barga), same EDF6MultiSlot 1.5.12.
+VERIFIED_VR_SHA = 'C668985567BC1B5BEE5BAD00180D0CE581191CD159562EA2A40141C64DB64070'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

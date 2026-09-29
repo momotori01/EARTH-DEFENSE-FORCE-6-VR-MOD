@@ -10,8 +10,8 @@ This folder holds the source of every compiled file in the EDF6VR package:
 | `_VRDEV/EDFModLoader-src` | nothing: `PluginAPI.h` from EDFModLoader (BlueAmulet, MIT), used by the three plugins | - |
 
 The folders keep the layout they have next to the game, because the builds read two files of the
-installed game: `Root.cpk` (to generate two data files that are the game's own work, so they are not
-in this repository) and `EDF.dll` (for the tests).
+installed game: `Root.cpk` (to generate EDF6MultiSlot's menu layout, which is the game's own work, so it
+is not in this repository) and `EDF.dll` (for the tests).
 
 ## Requirements
 
@@ -36,8 +36,8 @@ python tools\prepare_native_cockpit_materials.py
 build.cmd
 ```
 
-The first command writes the cockpit material atlases (`assets/cockpit/textures/native_v1`) from your
-`Root.cpk`: paint and normal details cropped from the game's Nix textures. `build.cmd` configures with
+The first command writes the cockpit material atlases (`assets/cockpit/textures/native_v1`) from the
+CC0 textures in `assets/cockpit/textures/cc0` (ambientCG). `build.cmd` configures with
 CMake, builds `dist\EDF6VR.dll` and runs the tests. Some tests read the game's `EDF.dll`; the ones that
 need the developer's research captures are skipped when those are absent.
 

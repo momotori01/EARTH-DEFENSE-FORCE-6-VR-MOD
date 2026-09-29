@@ -41,6 +41,8 @@ bool FaceVehicleForward(const VehicleSeat&,Matrix& camera) noexcept;
 // Nix and Depth Crawler, primary seat only. Eye is INSIDE the chest, attached to body,
 // independently of the HMD. Rig is cached by the caller; all engine reads guarded.
 bool PlaceVehicleCockpit(const ImageProfile&,const VehicleSeat&,NodeLookup,Matrix& cabin,CockpitRig&) noexcept;
+// The Barga cockpit's last forward shift from its chest's lean (metres; + forward).
+float BargaChestLean() noexcept;
 bool ValidateCockpitModel(const ImageProfile&,void* liveModel,const CockpitRig&) noexcept;
 // Recenter heading only. Looking up/down while boarding must not become the
 // seat's pitch/roll zero, or lowering the head afterwards tilts the whole cabin.

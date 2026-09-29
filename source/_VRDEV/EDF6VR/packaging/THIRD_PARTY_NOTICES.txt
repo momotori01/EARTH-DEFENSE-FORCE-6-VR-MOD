@@ -66,10 +66,10 @@ EDF6MultiSlot's menu layout (LYT_MAINFRAME.SGO) is the game's own layout with on
 added text field. Its build generates it from the builder's installed Root.cpk
 (tools/make_menu_label.py); the source repository does not contain it.
 
-EDF6VR.dll embeds four cockpit material atlases. Paint/scuff and normal details
-were cropped from EDF6's v612_newnixblack_df.DDS and v612_newnix_nm.DDS
-(Root.cpk, OBJECT/V612_NIX_BLACK.MRAB), tinted and combined with authored cockpit
-materials. These game-derived material samples are not original or CC0 artwork;
+EDF6VR.dll embeds four cockpit material atlases: authored colours and finish
+levels, with the grain and relief (normal maps) of ambientCG's PaintedMetal002 and
+Scratches004 (https://ambientcg.com, CC0 1.0 Universal; tools/
+prepare_native_cockpit_materials.py). No game texture is read or embedded.
 EARTH DEFENSE FORCE and all game content remain with their respective owners.
 Original DDS files, game executable, EDF.dll, Umbra, Steam/EOS libraries, original
 game models, CPK archives, saves and debug captures are NOT included.

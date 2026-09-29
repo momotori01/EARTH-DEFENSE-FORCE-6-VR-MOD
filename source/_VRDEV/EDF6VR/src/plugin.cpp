@@ -4307,6 +4307,8 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
             Log("TRUCK driver=%d riderHead=%s(%.2f,%.2f,%.2f) camera=%s(%.2f,%.2f,%.2f) vehicle-local; glass draws skipped %llu of %llu seen",
                 truckDriver?1:0,known?"":"unknown",head3[0],head3[1],head3[2],placed?"":"unknown",camera3[0],camera3[1],camera3[2],skipped,seen);
         }
+        if(cockpit&&g_cockpitRig.kind==edf6vr::CockpitKind::Barga)
+            Log("BARGA cockpit chest lean %+.2f m forward (upper body; waist-based otherwise)",edf6vr::BargaChestLean());
     }
     return true;
 }
@@ -6482,7 +6484,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 2.1.0 cockpit loading, with EDF6MultiSlot 1.5.12. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 2.1.1 cockpit loading, with EDF6MultiSlot 1.5.12. Fencer weapons aim the barrel itself; no dead band on the aim.");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
     if(_wcsicmp(slash?slash+1:host,L"EDF6.exe")) { Log("REFUSED: process is not EDF6.exe"); return false; }

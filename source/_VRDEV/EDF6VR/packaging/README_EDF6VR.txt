@@ -1,5 +1,8 @@
-﻿EDF6VR 2.1.0
+﻿EDF6VR 2.1.1
 =============================
+
+CHANGES IN 2.1.1
+- Cockpit surfaces look better: new materials and textures.
 
 CHANGES IN 2.1.0
 - Update_EDF6VR.bat is included. Run it and it updates EDF6VR (with the
@@ -429,8 +432,7 @@ This package includes the mod
 loader (winmm.dll) but no ModLoader.ini, so existing loader settings are kept;
 without that file the loader uses its defaults. This bundle includes EDF6MultiSlot
 and EDF6ClearLoot as listed above. It includes no Patcher, game executable or CPK
-archives, and does not remove existing mods. The cockpit DLL contains adapted
-interior material samples from Nix; see EDF6VR/THIRD_PARTY_NOTICES.txt.
+archives, and does not remove existing mods.
 HD_Texture_2x.bat needs Redirect=True in ModLoader.ini and sets it if a
 ModLoader.ini says False; nothing else in that file is changed.
 

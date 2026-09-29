@@ -115,7 +115,7 @@ float3 decode(float3 c) {return lerp(pow((c+.055)/1.055,2.4),c/12.92,step(c,.040
 float3 encode(float3 c) {return lerp(1.055*pow(max(c,0),1.0/2.4)-.055,12.92*c,step(c,.0031308));}
 float3 surfaceUV(float2 uv,float surface) {
  uint tile=(uint)(surface+.5);float2 origin=float2(tile%4,tile/4)*.25;
- float2 repeated=(uv-origin)*96; // 13cm swatches: native scuffs stay fine at seated distance
+ float2 repeated=(uv-origin)*24; // 52 cm swatches: the CC0 scratch maps near their own scale
  return float3(origin+.0078125+frac(repeated)*.234375,0);
 }
 float3 lightSurface(float3 base,float metal,float rough,float3 n,float3 v,float3 l,float3 diffuse,float3 specular) {
@@ -201,10 +201,10 @@ float4 fragment(Output i):SV_Target {
    float finish=material>=22?.48:soft?.78:(steel?.24:.32),rough=finish+.03;
    if(materials.x>.5&&material<16){
      float2 uv=surfaceUV(i.uv,i.surface).xy;
-     float2 dx=ddx(i.uv)*22.5,dy=ddy(i.uv)*22.5;
-     // Native Nix paint and its aligned BC5 scuff normals, calibrated to the
-     // cockpit palette offline. Roughness is authored, not guessed from the
-     // unverified game's packed RGB material texture.
+     float2 dx=ddx(i.uv)*5.625,dy=ddy(i.uv)*5.625;   // 24 repeats x .234375 of the atlas per tile
+     // The cockpit's own atlas: authored colours with the grain and relief
+     // of CC0 textures (tools/prepare_native_cockpit_materials.py), authored
+     // roughness. No game texture.
      base=Base.SampleGrad(Smooth,uv,dx,dy).rgb;
      rough=Roughness.SampleGrad(Smooth,uv,dx,dy).r;
      detailNormal=Normal.SampleGrad(Smooth,uv,dx,dy).rgb*2-1;

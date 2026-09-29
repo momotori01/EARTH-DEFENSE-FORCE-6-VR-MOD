@@ -1,4 +1,5 @@
-// Local Nix source textures remapped by prepare_native_cockpit_materials.py.
+// The cockpit's material atlases: authored colours with the grain and relief of
+// CC0 textures (assets/cockpit/textures/cc0; tools/prepare_native_cockpit_materials.py).
 201 RCDATA "../assets/cockpit/textures/native_v1/NixInterior_BaseColor.png"
 202 RCDATA "../assets/cockpit/textures/native_v1/NixInterior_Emissive.png"
 203 RCDATA "../assets/cockpit/textures/native_v1/NixInterior_Roughness.png"

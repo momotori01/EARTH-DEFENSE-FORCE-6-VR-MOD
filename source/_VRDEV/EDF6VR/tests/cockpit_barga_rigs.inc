@@ -54,10 +54,36 @@ void BargaRigTest(const wchar_t* dll,const std::filesystem::path& folder) {
         }
         std::printf("Barga variant %u closed joint rays=%u leaks=%u\n",variant,sealRays,sealLeaks);CHECK(sealLeaks==0);
         const auto old=rig;const auto oldCabin=cabin;
-        // Punching chest/shoulder motion must not rotate or displace the cabin.
+        // Punching chest/shoulder motion must not rotate or displace the cabin:
+        // the chest twisting on its spine or leaning sideways (world rotations
+        // of its bind pose about a pivot, whatever the bone's own axes).
         const auto chest=static_cast<unsigned>(std::find(bargaBoneNames.begin(),bargaBoneNames.end(),L"mune")-bargaBoneNames.begin());
-        auto& chestPose=At<Matrix>(nodes+chest*0x110,0xB0);chestPose=Identity();
-        chestPose.m[0][0]=chestPose.m[2][2]=0;chestPose.m[0][2]=1;chestPose.m[2][0]=-1;chestPose.m[3][0]=4;
+        auto& chestPose=At<Matrix>(nodes+chest*0x110,0xB0);const auto chestRest=chestPose;
+        auto turned=[](const Matrix& rest,auto rotate,Point pivot,Point shift) {
+            Matrix m=rest;
+            for(int i=0;i<3;++i){const auto r=rotate(Point{rest.m[i][0],rest.m[i][1],rest.m[i][2]});for(int j=0;j<3;++j)m.m[i][j]=r[j];}
+            const auto r=rotate(Point{rest.m[3][0]-pivot[0],rest.m[3][1]-pivot[1],rest.m[3][2]-pivot[2]});
+            for(int j=0;j<3;++j)m.m[3][j]=pivot[j]+r[j]+shift[j];
+            return m;
+        };
+        const Point chestPivot{chestRest.m[3][0],chestRest.m[3][1],chestRest.m[3][2]};
+        auto twist=[](Point p){return Point{p[2],p[1],-p[0]};};
+        auto sideways=[](Point p){const float c=std::cos(.35f),s=std::sin(.35f);return Point{p[0]*c-p[1]*s,p[0]*s+p[1]*c,p[2]};};
+        for(const auto& pose:{turned(chestRest,twist,chestPivot,{}),turned(chestRest,sideways,chestPivot,{})}) {
+            chestPose=pose;CHECK(PlaceVehicleCockpit(image,seat,BargaLookup,cabin,rig));CHECK(!std::memcmp(&cabin,&oldCabin,sizeof(cabin)));
+        }
+        // Only its lean fore and aft moves the cabin, along the waist's forward,
+        // by the travel of a spine point 4.40 m over the chest's pivot (at the
+        // cabin's height); the waist keeps its orientation and height.
+        for(const float angle:{.5236f,-.5236f}) {
+            const float c=std::cos(angle),s=std::sin(angle);
+            chestPose=turned(chestRest,[&](Point p){return Point{p[0],p[1]*c-p[2]*s,p[1]*s+p[2]*c};},chestPivot,{});
+            CHECK(PlaceVehicleCockpit(image,seat,BargaLookup,cabin,rig));
+            CHECK(std::fabs(cabin.m[3][2]-(.10f+4.40f*s))<.001f&&std::fabs(cabin.m[3][1]-oldCabin.m[3][1])<.001f&&std::fabs(cabin.m[3][0]-oldCabin.m[3][0])<.001f);
+            CHECK(!std::memcmp(&cabin.m[0],&oldCabin.m[0],sizeof(float)*12));
+            CHECK(std::fabs(BargaChestLean()-4.40f*s)<.001f);
+        }
+        chestPose=turned(chestRest,twist,chestPivot,{});
         CHECK(PlaceVehicleCockpit(image,seat,BargaLookup,cabin,rig));CHECK(!std::memcmp(&cabin,&oldCabin,sizeof(cabin)));
         At<Matrix>(nodes+rig.capBones[0]*0x110,0xB0).m[3][2]+=2;
         CHECK(PlaceVehicleCockpit(image,seat,BargaLookup,cabin,rig));
@@ -65,14 +91,16 @@ void BargaRigTest(const wchar_t* dll,const std::filesystem::path& folder) {
         CockpitHistory history;CockpitPose pose{};pose.camera=eye;pose.cabin=oldCabin;pose.rig=old;pose.at=1000;history.Record(pose);
         pose.rig=rig;pose.camera.m[3][2]+=.10f;pose.at=1001;history.Record(pose);CockpitPose found{};
         CHECK(history.Match(Inverse(eye),1002,found));CHECK(found.rig.capFrames[0].m[3][2]==old.capFrames[0].m[3][2]);
-        // A whole lower-body turn and translation still carry the cabin.
+        // A whole-body turn and translation still carry the cabin (the chest,
+        // its child, turned with the pelvis).
         auto& pelvis=At<Matrix>(nodes+rig.capBones[2]*0x110,0xB0);const auto pelvisRest=pelvis;
         for(int i=0;i<4;++i){const float x=pelvis.m[i][0],z=pelvis.m[i][2];pelvis.m[i][0]=-z;pelvis.m[i][2]=x;}
         pelvis.m[3][0]+=3;pelvis.m[3][2]+=5;
+        chestPose=turned(chestRest,[](Point p){return Point{-p[2],p[1],p[0]};},Point{0,0,0},Point{3,0,5});
         CHECK(PlaceVehicleCockpit(image,seat,BargaLookup,cabin,rig));
         CHECK(std::fabs(cabin.m[3][0]-2.9f)<.001f&&std::fabs(cabin.m[3][1]-40.901319f)<.001f&&std::fabs(cabin.m[3][2]-5)<.001f);
         CHECK(std::fabs(cabin.m[0][2]-1)<.001f&&std::fabs(cabin.m[2][0]+1)<.001f);
-        pelvis=pelvisRest;
+        pelvis=pelvisRest;chestPose=chestRest;
         seat.seat=seats+0x340;CHECK(!PlaceVehicleCockpit(image,seat,BargaLookup,cabin,rig));seat.seat=seats;
         const auto good=rig;At<Matrix>(nodes+rig.capBones[0]*0x110,0xB0).m[0][0]=std::numeric_limits<float>::quiet_NaN();
         CHECK(!PlaceVehicleCockpit(image,seat,BargaLookup,cabin,rig));CHECK(!std::memcmp(&rig,&good,sizeof(rig)));

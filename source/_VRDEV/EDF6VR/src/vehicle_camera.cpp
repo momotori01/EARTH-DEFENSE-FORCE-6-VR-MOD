@@ -1,11 +1,14 @@
 #include "vehicle_camera.h"
 #include "cockpit_combat_shells.h"
 #include "cockpit_heli_shells.h"
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <cwchar>
 namespace edf6vr {
 namespace {
+// The Barga cockpit's last forward shift from its chest's lean (metres), for the log.
+std::atomic<float> bargaChestLean{0};
 template<class T> const T& At(const void* p,std::size_t o) noexcept {
     return *reinterpret_cast<const T*>(static_cast<const unsigned char*>(p)+o);
 }
@@ -631,6 +634,36 @@ bool PlaceVehicleCockpit(const ImageProfile& image,const VehicleSeat& seat,NodeL
         // the hidden belly and spine, 9 cm over the waist. At 7.65 the head's
         // underside hung 3 cm below the ceiling.
         for(int j=0;j<3;++j) next.m[3][j]+=(barga?12.64492f:crawler?1.16292f:gravis?.3392f:.867f)*next.m[1][j]+(barga?.10f:crawler?.05f:gravis?.10f:.15f)*next.m[2][j];
+        // The Barga's cockpit sits in its chest but rides the lower body, so
+        // the chest's punches never swing it. Only its place fore and aft
+        // follows the upper body (the user, 2026-09-29): a point on the spine
+        // at the cockpit's height (bind Y 40.9013, 4.40 m over the chest's
+        // pivot mune, 36.5013), as the chest carries it and as the waist
+        // would; of the difference only the part along the waist's forward.
+        // Bending over moves the cockpit forward; the chest's twist (arm
+        // swings) leaves a point on its own spine where it is; orientation,
+        // height and side stay the waist's (a fall still turns the view up).
+        // The V605's chest is permuted as its waist is (bone x up).
+        if(barga) {
+            float lean=0;
+            if(auto* chest=CabinNode(lookup,v+0xEE0,nodes,count,L"mune")) {
+                const Matrix m=At<Matrix>(chest,0xB0);
+                float forward[3]{},length=0;
+                for(int j=0;j<3;++j){forward[j]=next.m[2][j];length+=forward[j]*forward[j];}
+                length=std::sqrt(length);
+                if(ValidCamera(m)&&length>.5f) {
+                    float d=0;
+                    for(int j=0;j<3;++j) {
+                        const float up=alternate?m.m[0][j]:m.m[1][j];
+                        const float onChest=m.m[3][j]+4.40f*up,onWaist=next.m[3][j]-.10f*next.m[2][j];
+                        d+=(onChest-onWaist)*forward[j]/length;
+                    }
+                    lean=std::fmax(-6.f,std::fmin(6.f,d));
+                    for(int j=0;j<3;++j)next.m[3][j]+=lean*forward[j]/length;
+                }
+            }
+            bargaChestLean.store(lean,std::memory_order_relaxed);
+        }
         if(!ValidCamera(next))return false;
         if(rig.kind!=kind||rig.model!=v+0xE40||rig.nodes!=nodes||rig.resource!=resource||rig.nodeCount!=count) {
             CockpitRig selected{};selected.kind=kind;selected.model=v+0xE40;selected.resource=resource;selected.nodes=nodes;selected.nodeCount=static_cast<unsigned>(count);
@@ -808,4 +841,5 @@ bool VehicleStickYaw(const Matrix& nativeCamera,const Vec3& forward,float& yaw) 
     yaw=std::atan2((forward.x*lx+forward.z*lz)/left,(forward.x*fx+forward.z*fz)/ahead);
     return std::isfinite(yaw);
 }
+float BargaChestLean() noexcept {return bargaChestLean.load(std::memory_order_relaxed);}
 }

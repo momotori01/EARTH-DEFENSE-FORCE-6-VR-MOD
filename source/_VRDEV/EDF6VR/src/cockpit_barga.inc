@@ -136,13 +136,63 @@ std::vector<CockpitVertex> BargaInterior() {
     return v;
 }
 #include "cockpit_barga_caps.inc"
-void DishFinish(std::vector<CockpitVertex>& v,std::size_t first,bool rim=false) {
-    for(auto i=first;i<v.size();++i){v[i].surface=rim?23.f:22.f;for(auto& c:v[i].colour)c=rim?.065f:.090f;}
+// grey (linear) overrides the dish's own .090 / the rim's .065.
+void DishFinish(std::vector<CockpitVertex>& v,std::size_t first,bool rim=false,float grey=-1) {
+    for(auto i=first;i<v.size();++i){v[i].surface=rim?23.f:22.f;for(auto& c:v[i].colour)c=grey>=0?grey:rim?.065f:.090f;}
 }
-void BargaDish(std::vector<CockpitVertex>& v,const BargaDishProfile& d) {
+// joint: a Barga joint plate (dark collar with cooling fins, built first).
+void BargaDish(std::vector<CockpitVertex>& v,const BargaDishProfile& d,bool joint=false) {
     constexpr unsigned slices=96,rings=16;constexpr float thickness=.10f;
     auto radial=[&](float azimuth){return Add(Mul(d.right,std::cos(azimuth)),Mul(d.up,std::sin(azimuth)));};
     auto direction=[&](float theta,float azimuth){return Add(Mul(d.axis,std::cos(theta)),Mul(radial(azimuth),std::sin(theta)));};
+    auto collar=[&] {
+        // Closed return collar, seated 16cm inside the actual native opening.
+        // The old second curved skin left an air gap behind the rim, visible
+        // during punches. This skirt and its back now enclose the whole lip.
+        // A joint plate builds it first: those are drawn into the game's scene
+        // without writing depth, so what comes later covers what came before;
+        // the dish's face, nearer the pilot, comes after it (the user saw the
+        // dark collar through the dish). The other caps (tank barrels, gear,
+        // probe: own depth or the cabin's) keep their order and no fins, but
+        // their collar's side is dark grey too (.022; the user: better so).
+        auto seal=[&](P p){return Add(p,Mul(d.sealAxis,Dot(Sub(d.sealCentre,p),d.sealAxis)));};
+        const auto backCentre=seal(Add(d.centre,Mul(d.axis,(d.radius+thickness)*std::cos(d.angle))));
+        for(unsigned s=0;s<slices;++s) {
+            const float u=6.2831853f*s/slices,w=6.2831853f*(s+1)/slices;
+            const auto a=Add(d.centre,Mul(direction(d.angle,u),d.radius+thickness));
+            const auto b=Add(d.centre,Mul(direction(d.angle,w),d.radius+thickness));
+            const auto c=seal(b),e=seal(a);
+            auto sideNormal=[&](float angle){const auto tangent=Add(Mul(d.right,-std::sin(angle)),Mul(d.up,std::cos(angle)));
+                auto n=Unit(Cross(tangent,d.sealAxis));if(Dot(n,radial(angle))<0)n=Mul(n,-1);return n;};
+            const auto na=sideNormal(u),nb=sideNormal(w);const auto first=v.size();
+            // The collar's side in dark grey, a part of its own apart from the dish
+            // (the user); its back the dish's grey.
+            CurvedQuad(v,a,b,c,e,na,nb,nb,na,Hull);DishFinish(v,first,false,joint?.010f:.022f);
+            const auto back=v.size();
+            CurvedTriangle(v,backCentre,e,c,d.sealAxis,d.sealAxis,d.sealAxis,Hull);DishFinish(v,back);
+        }
+        if(!joint)return;
+        // Cooling fins round the collar (the user: its facets read as fins, too
+        // faint; make them stand out): one every ~22 cm of its round, 6 cm tall and
+        // 2.5 cm thick, from just behind the lip to the seal, rooted 5 mm into the
+        // collar, a shade lighter than it so their edges catch the light.
+        {
+            const float rim=(d.radius+thickness)*std::sin(d.angle);
+            const unsigned fins=std::max(24u,unsigned(6.2831853f*rim/.22f+.5f));
+            for(unsigned k=0;k<fins;++k) {
+                const float u=6.2831853f*(float(k)+.5f)/fins;
+                const auto a=Add(d.centre,Mul(direction(d.angle,u),d.radius+thickness)),c=seal(a);
+                const auto tangent=Add(Mul(d.right,-std::sin(u)),Mul(d.up,std::cos(u)));
+                auto out=Unit(Cross(tangent,d.sealAxis));if(Dot(out,radial(u))<0)out=Mul(out,-1);
+                const auto from=Add(a,Mul(Sub(c,a),.06f)),to=Add(a,Mul(Sub(c,a),.97f));
+                const auto side=Mul(tangent,-.0125f),root=Mul(out,-.005f),tip=Mul(out,.060f);
+                const auto start=v.size();
+                RoundedPrism(v,{Add(Add(from,side),root),Add(Add(to,side),root),Add(Add(to,side),tip),Add(Add(from,side),tip)},Mul(tangent,.025f),.006f,Hull);
+                DishFinish(v,start,false,.016f);
+            }
+        }
+    };
+    if(joint)collar();
     // Analytic normals give a continuous, shallow bowl. The
     // pilot-facing skin is concave, matching the enlarged panoramic sphere.
     {
@@ -171,22 +221,7 @@ void BargaDish(std::vector<CockpitVertex>& v,const BargaDishProfile& d) {
         P a,b,c,e,na,nb,nc,ne;edge(u,j,a,na);edge(w,j,b,nb);edge(w,j+1,c,nc);edge(u,j+1,e,ne);
         const auto start=v.size();CurvedQuad(v,a,b,c,e,na,nb,nc,ne,Hull);DishFinish(v,start,true);
     }
-    // Closed return collar, seated 16cm inside the actual native opening.
-    // The old second curved skin left an air gap behind the rim, visible
-    // during punches. This skirt and its back now enclose the whole lip.
-    auto seal=[&](P p){return Add(p,Mul(d.sealAxis,Dot(Sub(d.sealCentre,p),d.sealAxis)));};
-    const auto backCentre=seal(Add(d.centre,Mul(d.axis,(d.radius+thickness)*std::cos(d.angle))));
-    for(unsigned s=0;s<slices;++s) {
-        const float u=6.2831853f*s/slices,w=6.2831853f*(s+1)/slices;
-        const auto a=Add(d.centre,Mul(direction(d.angle,u),d.radius+thickness));
-        const auto b=Add(d.centre,Mul(direction(d.angle,w),d.radius+thickness));
-        const auto c=seal(b),e=seal(a);
-        auto sideNormal=[&](float angle){const auto tangent=Add(Mul(d.right,-std::sin(angle)),Mul(d.up,std::cos(angle)));
-            auto n=Unit(Cross(tangent,d.sealAxis));if(Dot(n,radial(angle))<0)n=Mul(n,-1);return n;};
-        const auto na=sideNormal(u),nb=sideNormal(w);const auto first=v.size();
-        CurvedQuad(v,a,b,c,e,na,nb,nb,na,Hull);
-        CurvedTriangle(v,backCentre,e,c,d.sealAxis,d.sealAxis,d.sealAxis,Hull);DishFinish(v,first);
-    }
+    if(!joint)collar();
     // Twin concentric guide channels sit in the spherical outer race. Their
     // recessed middle and raised lips read as a sliding bearing, not painted
     // concentric circles. All surfaces follow the same spherical curvature.
@@ -222,7 +257,7 @@ void BargaDish(std::vector<CockpitVertex>& v,const BargaDishProfile& d) {
 }
 std::vector<CockpitVertex> BuildBargaJointCap(unsigned variant,unsigned part) {
     std::vector<CockpitVertex> v;if(variant>1||part>=5)return v;
-    if(part<3){BargaDish(v,bargaDishes[variant][part]);return v;}
+    if(part<3){BargaDish(v,bargaDishes[variant][part],true);return v;}
     const auto& cap=bargaCaps[variant][part];P centre{};
     for(unsigned i=0;i<cap.count;++i)centre=Add(centre,Mul(cap.points[i],1.f/cap.count));
     for(unsigned i=0;i<cap.count;++i)Triangle(v,centre,cap.points[i],cap.points[(i+1)%cap.count],Dark);
