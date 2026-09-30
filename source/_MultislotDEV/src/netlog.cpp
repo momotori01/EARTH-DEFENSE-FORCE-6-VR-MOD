@@ -9,6 +9,7 @@
 #include "log.h"
 #include "identity.h"
 #include "joinlog.h"
+#include "traffic.h"
 
 namespace multislot {
 namespace {
@@ -98,6 +99,7 @@ SendPacketFn originalSendPacket = nullptr;
 ReceivePacketFn originalReceivePacket = nullptr;
 CloseConnectionFn originalCloseConnection = nullptr;
 std::uintptr_t gameAddress = 0;
+std::atomic<bool> reliableGameTraffic{false};
 std::atomic<unsigned> handshakeLines{0};
 bool packetDiagnostics = true;
 bool handshakeRecovery = false;
@@ -196,6 +198,29 @@ EOS_EResult DispatchSendPacket(void* handle, const SendPacketOptions* options, s
         queued.AllowDelayedDelivery = 1;
         effective = &queued;
     }
+    // Reading the options and, when asked, handing EOS a copy with the reliability raised. One guarded
+    // block for both, because both touch memory the game owns; the summary line is written outside it.
+    std::uint8_t meterChannel = 0;
+    std::uint32_t meterBytes = 0;
+    const void* meterPeer = nullptr;
+    __try {
+        if (options) {
+            if (TrafficMeterOn()) {
+                meterChannel = options->Channel;
+                meterBytes = options->DataLengthBytes;
+                meterPeer = options->RemoteUserId;
+            }
+            if (reliableGameTraffic.load(std::memory_order_relaxed) && effective == options &&
+                options->ApiVersion >= 3 && options->Reliability == 0) {
+                queued = *options;
+                queued.Reliability = 1;  // EOS_PR_ReliableUnordered: delivered once, order not promised
+                effective = &queued;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        meterBytes = 0;
+    }
+    if (meterBytes) RecordSent(meterPeer, meterChannel, meterBytes, GetTickCount64());
     const auto result = originalSendPacket(handle, effective);
     if (finalHello) {
         ++activeHello->sends;
@@ -223,6 +248,8 @@ EOS_EResult HookReceivePacket(void* handle, const void* options, void** peer, So
                              std::uint8_t* channel, void* data, std::uint32_t* size) {
     const auto caller = GameRva(_ReturnAddress());
     const auto result = originalReceivePacket(handle, options, peer, socket, channel, data, size);
+    if (result == 0 && size && *size && TrafficMeterOn())
+        RecordReceived(peer ? *peer : nullptr, channel ? *channel : 0, *size, GetTickCount64());
     __try {
         if (result == 0 && size && IsHello(data, *size) && HandshakeBudget()) {
             char remote[40]{};
@@ -519,6 +546,8 @@ bool InstallExitMarker(HMODULE game) {
     return true;
 }
 
+void SetReliableGameTraffic(bool on) { reliableGameTraffic.store(on, std::memory_order_relaxed); }
+
 void FinalHelloHook(void* manager, const void* peer, const char* token) {
     HelloAttempt attempt{manager, peer};
     const bool eligible = handshakeRecovery && !activeHello && EligibleFinalHello(manager, peer);
@@ -538,7 +567,11 @@ void FinalHelloHook(void* manager, const void* peer, const char* token) {
     }
 }
 
+// Only ever called from the traffic meter's own once-a-window report, never per packet.
+void NamePeer(const void* peer, char* out, std::size_t size) { ProductUserIdText(peer, out, size); }
+
 int InstallNetLog(HMODULE game, bool diagnostics, bool recovery) {
+    SetPeerNameResolver(&NamePeer);
     gameAddress = reinterpret_cast<std::uintptr_t>(game);
     packetDiagnostics = diagnostics;
     handshakeRecovery = false;
@@ -569,7 +602,12 @@ int InstallNetLog(HMODULE game, bool diagnostics, bool recovery) {
     int redirected = 0;
     for (const auto& entry : entries) {
         const bool send = std::strcmp(entry.name, "EOS_P2P_SendPacket") == 0;
-        if (!diagnostics && !(recovery && send)) continue;
+        const bool receive = std::strcmp(entry.name, "EOS_P2P_ReceivePacket") == 0;
+        // The meter counts packets as they pass through these two wrappers, and the reliability upgrade
+        // rewrites the send, so either one needs its import redirected even with the detailed log off.
+        const bool metered = TrafficMeterOn() && (send || receive);
+        const bool upgraded = reliableGameTraffic.load(std::memory_order_relaxed) && send;
+        if (!diagnostics && !metered && !upgraded && !(recovery && send)) continue;
         if (RedirectImport(game, sdk, entry.name, entry.replacement, entry.original)) {
             ++redirected;
             if (send) handshakeRecovery = recovery;

@@ -32,11 +32,13 @@
 #include "smoothing.h"
 #include "updatecheck.h"
 #include "spawn.h"
+#include "traffic.h"
+#include "gaplog.h"
 
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.5.12";
+constexpr const char* kVersion = "1.5.32";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -136,16 +138,26 @@ struct SlotWrite {
 // All or nothing: a half-applied set could publish a 5-slot room that unmodded players can join,
 // read a capacity from a call that was never redirected, or page a member list the builder never sees.
 bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int ghosts, bool diagnostics, bool armor, bool recovery,
-           float smoothing, ThunkPage& thunks) {
+           bool desync, float smoothing, bool positions, bool facing, ThunkPage& thunks) {
     auto patches = GuestPatches();
     const auto sessionPatches = SessionPatches();
     patches.insert(patches.end(), sessionPatches.begin(), sessionPatches.end());
+    if (positions) {
+        const auto positionPatches = PositionPatches();
+        patches.insert(patches.end(), positionPatches.begin(), positionPatches.end());
+    }
+    if (facing) {
+        const auto facingPatches = FacingPatches();
+        patches.insert(patches.end(), facingPatches.begin(), facingPatches.end());
+    }
     std::vector<Hook> hooks;
     for (const auto& site : HostModeHooks()) hooks.push_back({site, HostModeHookHandler(site.rva)});
     if (armor)
         for (const auto& site : ArmorHooks()) hooks.push_back({site, ArmorHookHandler(site.rva)});
     if (diagnostics)
         for (const auto& site : DiagnosticHooks()) hooks.push_back({site, JoinLogHookHandler(site.rva)});
+    if (desync)
+        for (const auto& site : DesyncHooks()) hooks.push_back({site, DesyncHookHandler(site.rva)});
     if (mission) {
         const auto missionPatches = MissionPatches();
         patches.insert(patches.end(), missionPatches.begin(), missionPatches.end());
@@ -336,7 +348,13 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     info->name = "EDF6 MultiSlot";
     info->version = PLUG_VER(1, 5, 5, 0);
 
-    Log("==== EDF6MultiSlot %s ====", kVersion);
+    Log("==== EDF6MultiSlot %s%s ====", kVersion,
+#ifdef MULTISLOT_DIAGNOSTIC
+        " DIAGNOSTIC BUILD"
+#else
+        ""
+#endif
+    );
     const auto loader = GetModuleHandleW(L"winmm.dll");
     for (const auto name : {"timeBeginPeriod", "timeEndPeriod", "PlaySoundW"})
         Log("LOADER %s proxy=%s", name, LoaderProxyStyle(loader ? reinterpret_cast<const void*>(GetProcAddress(loader, name)) : nullptr));
@@ -367,6 +385,42 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     // On by default since 1.2.2, so reports from real rooms come with the lobby and P2P lines (the log caps itself).
     const bool netLog = GetPrivateProfileIntW(L"MultiSlot", L"NetLog", 1, iniPath) != 0;
     const bool recovery = GetPrivateProfileIntW(L"MultiSlot", L"HandshakeRecovery", 1, iniPath) != 0;
+    // Measurement first: EDF6 says itself that it holds routine sync under about 320 kbps and leaves the
+    // less important updates out near that, and an 8-player room carries up to 28 P2P links where 4
+    // carry 6. Nothing had measured whether the game reaches its own ceiling, which decides whether
+    // resending lost packets would help or hurt, so the meter is on by default and the upgrade is not.
+    const bool trafficMeter = GetPrivateProfileIntW(L"Sync", L"TrafficMeter", 1, iniPath) != 0;
+    const bool reliableTraffic = GetPrivateProfileIntW(L"Sync", L"ReliableGameTraffic", 0, iniPath) != 0;
+    // How far remote players are from where this machine draws them, in game units, read out of the
+    // game's own smoothing. Off by default: it hooks a per-frame function and writes a line a second.
+    // A diagnostic build defaults this on, so a machine helping with an investigation needs a file
+    // dropped in and nothing edited. An INI that mentions it still decides.
+#ifdef MULTISLOT_DIAGNOSTIC
+    constexpr int kDesyncDefault = 1;
+#else
+    constexpr int kDesyncDefault = 0;
+#endif
+    const bool desyncMeter = GetPrivateProfileIntW(L"Sync", L"DesyncMeter", kDesyncDefault, iniPath) != 0;
+    // Every packet sent for this machine's own player carries its position, instead of a sixth of the
+    // frames' packets of which the 90 ms timer usually sends none. On by default since 1.5.32, by the
+    // user's decision after two sessions showed it (2026-09-30: another player drawn a median 0.26 m off
+    // instead of 1.57 m, and facing 0 degrees off instead of 117). It is what vanilla sends whenever the
+    // cycle lines up, so receivers need nothing, and it helps only the people who see whoever has it - which
+    // is why it has to be on for everyone who installs the package rather than for those who find the key.
+    constexpr int kPositionDefault = 1;
+    const bool positionEveryPacket =
+        GetPrivateProfileIntW(L"Sync", L"PositionEveryPacket", kPositionDefault, iniPath) != 0;
+    // The same for the angles that say which way the player faces, which the same timer locks out. Its own
+    // key, so a session can tell the two apart if one of them turns out to cost something.
+    const bool facingEveryPacket =
+        GetPrivateProfileIntW(L"Sync", L"FacingEveryPacket", kPositionDefault, iniPath) != 0;
+    SetTrafficMeter(trafficMeter);
+    SetReliableGameTraffic(reliableTraffic);
+    const bool clearLatch = GetPrivateProfileIntW(L"Sync", L"ClearSyncLatch", 0, iniPath) != 0;
+    SetDesyncMeter(desyncMeter);
+    const int toleranceUnits = GetPrivateProfileIntW(L"Sync", L"SyncTolerance", 0, iniPath);
+    SetClearSyncLatch(clearLatch && desyncMeter);
+    SetSyncTolerance(desyncMeter && toleranceUnits > 0 ? static_cast<float>(toleranceUnits) : 0.0f);
     SetDetailLog(netLog);
     if (!enabled) {
         Log("Enabled=0: game left untouched, plugin unloaded");
@@ -504,8 +558,10 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     InitJoinLog(base);
     InitArmor(base, copyArmorKey, copyArmorPad, copyArmorHint, copyArmorIgnore, copyArmorCaps);
     InitHostMode(base, iniPath, eightPlayers, hostModeKey, hostModePad, hostModeHint);
+    // The patch only takes when a percentage was asked for and it differs from the stock 0.05.
+    InitDesyncMeter(base, smoothing > 0.0f ? smoothing : kVanillaSmoothing);
     if (!Apply(base, roomView.dummies, mission, spawns, ghosts, netLog, copyArmorKey || copyArmorPad, recovery,
-               smoothing, thunks)) {
+               desyncMeter, smoothing, positionEveryPacket, facingEveryPacket, thunks)) {
         KeepMenuLayout(false);
         return false;
     }
@@ -547,15 +603,65 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("Mission: Extend=0, mission code untouched (only rooms of up to four players can start safely)");
     if (ghosts > 0)
         Log("Test: GhostPlayers=%d - a mission started alone online gets %d idle copies of you as extra players", ghosts, ghosts);
-    if (netLog || recovery) {
+    if (netLog || recovery || trafficMeter || reliableTraffic) {
         const int imports = InstallNetLog(game, netLog, recovery);
         if (netLog)
             Log("Net log: %d EOS imports redirected (NetLog=0 turns the detailed log off; the log file keeps its newest 2 MB)", imports);
         else
-            Log("Recovery transport: %d EOS import redirected; detailed network logging off", imports);
+            Log("EOS imports redirected: %d, for the recovery send, the traffic meter and the reliability "
+                "setting as configured; detailed network logging off", imports);
     } else {
         Log("HandshakeRecovery=0: off");
     }
+    if (trafficMeter)
+        Log("Traffic meter: on; one line per minute says how much the game sends and receives per channel, "
+            "against the roughly 320 kbps EDF6 keeps its routine sync under (Sync/TrafficMeter=0 turns it "
+            "off). Counting only - no packet is changed");
+    else
+        Log("Sync/TrafficMeter=0: the game's own bandwidth is not measured");
+    if (reliableTraffic)
+        Log("Sync/ReliableGameTraffic=1: EDF6's UnreliableUnordered game packets are sent as "
+            "ReliableUnordered, so EOS resends the ones that are lost. EXPERIMENT: a resent packet arrives "
+            "after the one that replaced it and the game applies packets in arrival order, so this can "
+            "also make other players jump. Compare a session with it against one without");
+    else
+        Log("Sync/ReliableGameTraffic=0: packets are sent exactly as the game asked (vanilla)");
+    if (desyncMeter)
+        Log("Desync meter: on; once a second, how far each remote player is from where you see them, in "
+            "game units, and how fast they were really moving. Read out of the game's own 5%%-per-frame "
+            "smoothing at EDF+596383 (Sync/DesyncMeter=0 turns it off). Counting only");
+    else
+        Log("Sync/DesyncMeter=0: the distance between where remote players are and where you see them is "
+            "not measured");
+    if (positionEveryPacket)
+        Log("Sync/PositionEveryPacket=1: every packet this machine sends for its own player carries its "
+            "position (EDF+59FB7E, 59FBD9). The game puts it in the packets of one frame in six and a 90 ms "
+            "timer sends only the latest packet, so at 60 fps other players got it in every packet or in "
+            "none for seconds at a time. Six bytes a packet; everyone reads it as usual");
+    else
+        Log("Sync/PositionEveryPacket=0: this machine sends its player's position as the game does, in the "
+            "packets of one frame in six");
+    if (facingEveryPacket)
+        Log("Sync/FacingEveryPacket=1: every packet this machine sends for its own player carries which way it "
+            "faces (EDF+59FB9A). The game sends it one frame in six on the same cycle as the position, so it was "
+            "locked out the same way: others drew you turned by 100 degrees and more for minutes");
+    else
+        Log("Sync/FacingEveryPacket=0: this machine sends which way its player faces as the game does, in the "
+            "packets of one frame in six");
+    if (clearLatch && desyncMeter)
+        Log("Sync/ClearSyncLatch=1: when EDF6's sync checker gives up on a remote player it latches itself "
+            "off and hands them to local guesswork (measured: up to 89 seconds); this puts that latch back "
+            "to zero so it keeps correcting. EXPERIMENT, and the only setting here that writes to the game");
+    else if (clearLatch)
+        Log("Sync/ClearSyncLatch=1 ignored: it needs DesyncMeter=1, which is the hook it rides on");
+    else
+        Log("Sync/ClearSyncLatch=0: the game's sync checker is left exactly as it is");
+    if (desyncMeter && toleranceUnits > 0)
+        Log("Sync/SyncTolerance=%d: EDF6 stops smoothing a remote player and gives up once they are more "
+            "than 20 game units out; this raises that to %d, so it keeps correcting instead. EXPERIMENT, "
+            "and it writes to the game", toleranceUnits, toleranceUnits);
+    else if (toleranceUnits > 0)
+        Log("Sync/SyncTolerance=%d ignored: it needs DesyncMeter=1", toleranceUnits);
     if (smoothing > 0.0f && smoothing != kVanillaSmoothing)
         Log("Remote players: their drawn position closes %d%% of the gap per update instead of %d%%, so a "
             "correction shrinks to a tenth in about %d ms instead of %d ms. Display only - nothing sent "

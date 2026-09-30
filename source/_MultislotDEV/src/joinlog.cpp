@@ -247,7 +247,7 @@ bool ReadUserSlots(const void* users, UserSlotsSnapshot& out) {
         const auto* vector = static_cast<const std::uintptr_t*>(users);
         const auto begin = vector[0], end = vector[1], allocatedEnd = vector[2];
         if (!begin || end < begin || allocatedEnd < end || (end - begin) % 16 ||
-            (end - begin) / 16 > 8) return false;
+            (end - begin) / 16 > static_cast<std::uintptr_t>(kMaxPlayers)) return false;
         UserSlotsSnapshot snapshot{};
         snapshot.capacity = (end - begin) / 16;
         for (std::size_t i = 0; i < snapshot.capacity; ++i) {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EDF6MultiSlot VERSION 1.5.12 LANGUAGES CXX)
+project(EDF6MultiSlot VERSION 1.5.32 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -21,10 +21,18 @@ string(REGEX REPLACE "(${BYTE}${BYTE}${BYTE}${BYTE}${BYTE}${BYTE}${BYTE}${BYTE}$
 configure_file(src/menu_layout.h.in "${CMAKE_BINARY_DIR}/generated/menu_layout.h" @ONLY)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/EDF6MultiSlot.ini" "${MENU_LAYOUT}")
 
+# A build for helping with an investigation: diagnostic settings default on, so no INI editing is
+# needed on a machine that is only lending a log. Off for everything shipped.
+option(MULTISLOT_DIAGNOSTIC "Default the diagnostic settings to on" OFF)
+
 add_library(EDF6MultiSlot SHARED
     src/plugin.cpp src/patches.cpp src/rooms.cpp src/roomview.cpp src/fakemembers.cpp src/hostmode.cpp src/menulayout.cpp
     src/mission.cpp src/spawn.cpp src/joinlog.cpp src/armor.cpp src/midhook.cpp src/code.cpp src/crashlog.cpp src/log.cpp
-    src/netlog.cpp src/identity.cpp src/smoothing.cpp src/updatecheck.cpp)
+    src/netlog.cpp src/identity.cpp src/smoothing.cpp src/updatecheck.cpp src/traffic.cpp src/gaplog.cpp)
+
+if(MULTISLOT_DIAGNOSTIC)
+    target_compile_definitions(EDF6MultiSlot PRIVATE MULTISLOT_DIAGNOSTIC)
+endif()
 target_link_libraries(EDF6MultiSlot PRIVATE winhttp)
 target_include_directories(EDF6MultiSlot PRIVATE ${MODLOADER_INCLUDE} "${CMAKE_BINARY_DIR}/generated")
 target_compile_options(EDF6MultiSlot PRIVATE ${WARNINGS})
@@ -51,12 +59,14 @@ add_test(NAME LoaderProxyRace COMMAND LoaderProxyTests
 add_executable(HandshakeTests tests/handshake_test.cpp src/joinlog.cpp src/identity.cpp src/log.cpp)
 target_compile_options(HandshakeTests PRIVATE ${WARNINGS})
 add_test(NAME HandshakeUserSnapshots COMMAND HandshakeTests "${CMAKE_BINARY_DIR}/handshake-diagnostics-test.log")
-add_executable(NetLogForwardTests tests/netlog_forward_test.cpp src/joinlog.cpp src/identity.cpp src/log.cpp)
+add_executable(NetLogForwardTests tests/netlog_forward_test.cpp src/joinlog.cpp src/identity.cpp src/log.cpp
+    src/traffic.cpp)
 target_compile_options(NetLogForwardTests PRIVATE ${WARNINGS})
 add_test(NAME NetworkImportForwarding COMMAND NetLogForwardTests)
 set(EDF_DLL "${CMAKE_SOURCE_DIR}/../EDF.dll")
 
-add_executable(MultiSlotTests tests/tests.cpp src/patches.cpp src/rooms.cpp src/mission.cpp src/midhook.cpp src/code.cpp src/log.cpp src/smoothing.cpp)
+add_executable(MultiSlotTests tests/tests.cpp src/patches.cpp src/rooms.cpp src/mission.cpp src/midhook.cpp src/code.cpp src/log.cpp src/smoothing.cpp
+    src/gaplog.cpp)
 target_compile_options(MultiSlotTests PRIVATE ${WARNINGS})
 add_test(NAME PatchTablesMatchEDF COMMAND MultiSlotTests "${EDF_DLL}")
 
@@ -106,11 +116,16 @@ add_executable(CrashDumpTests tests/crashdump_test.cpp src/crashlog.cpp src/log.
 target_compile_options(CrashDumpTests PRIVATE ${WARNINGS})
 add_test(NAME CrashDump COMMAND CrashDumpTests "${CMAKE_BINARY_DIR}/crashdumptest")
 
-add_executable(MultiSlotLoadTest tests/load_test.cpp src/patches.cpp src/midhook.cpp src/code.cpp)
+add_executable(TrafficTests tests/traffic_test.cpp src/traffic.cpp src/log.cpp)
+target_compile_options(TrafficTests PRIVATE ${WARNINGS})
+add_test(NAME TrafficMeter COMMAND TrafficTests "${CMAKE_BINARY_DIR}/traffictest")
+
+add_executable(MultiSlotLoadTest tests/load_test.cpp src/patches.cpp src/midhook.cpp src/code.cpp
+    src/gaplog.cpp src/log.cpp)
 target_include_directories(MultiSlotLoadTest PRIVATE ${MODLOADER_INCLUDE} "${CMAKE_BINARY_DIR}/generated")
 target_compile_options(MultiSlotLoadTest PRIVATE ${WARNINGS})
 add_dependencies(MultiSlotLoadTest EDF6MultiSlot)
-foreach(mode off host4 host8 fresh nomission recoveryoff quiet smooth)
+foreach(mode off host4 host8 fresh nomission recoveryoff quiet smooth reliable desync latch nolatch position facing sendall sendoff)
     add_test(NAME PluginLoad_${mode} COMMAND MultiSlotLoadTest "${EDF_DLL}" "$<TARGET_FILE:EDF6MultiSlot>"
              "${CMAKE_BINARY_DIR}/loadtest" ${mode})
 endforeach()

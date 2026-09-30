@@ -1,5 +1,12 @@
-﻿EDF6VR 2.1.5
+﻿EDF6VR 2.1.6
 =============================
+
+CHANGES IN 2.1.6
+- Online: other players are shown where they really are. The base game put a
+  player's position and facing into only some of the updates it sends, and at
+  60 fps those were often skipped for seconds, so others could look metres off
+  or face the wrong way. EDF6MultiSlot 1.5.32 sends them in every update. You
+  can still play with people who do not have the mod.
 
 CHANGES IN 2.1.5
 - EDF6 VR setting.exe: one window for everything you set outside the game.

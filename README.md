@@ -30,6 +30,8 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
   You can also match your armour to the lowest player of your
   own class in the room -- the lowest in the room if nobody else is on it --
   so playing alongside a beginner does not leave you far behind in health.
+  Other players are also shown where they really are: the base game often
+  skipped sending positions for seconds, so people could look metres off.
 - **HD textures** (2x), built from your own game files.
 - Compact HUD: radar, armour and weapons sit together at the corner of your view, or on the inside of a wrist.
 - Menus float in the room; subtitles and messages sit on a panel in front of you. Other players' nameplates float over their heads and show through walls.
@@ -125,7 +127,7 @@ Press **F2**, or click the left stick, on the menu screen **outside a room** to 
 - Hosting with it **ON**, only players who have the 8P mod can join your room; with it **OFF** you make an ordinary room and play with anyone.
 - **It also filters the room search.** With it **ON**, only 8-player rooms are listed; with it **OFF**, ordinary and 8-player rooms are both listed and you can join either. To look for an ordinary 4-player room, switch it OFF. Switching while the room list is open searches again straight away.
 - Up to 4 players nothing changes. From the 5th on there are more enemies (x1.2, x1.4, x1.6, x1.8 for 5 to 8 players), and their durability, damage and speed stay exactly as they are with four.
-- Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later; the bundled 1.5.12 is recommended for all.
+- Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later; the bundled 1.5.32 is recommended for all.
 
 ### Matching armour
 In a room, press **F4** or click the left stick to turn armour matching on or off (shown at the bottom left). It is for playing alongside a beginner, or on a class you rarely use, without being far behind in health.

@@ -370,6 +370,39 @@ std::vector<CallSite> GhostCalls() {
     return {{"ghost player object", 0x1DC525, 0x591130}};
 }
 
+std::vector<Patch> PositionPatches() {
+    // SoldierBase slot 92 (59FB10) picks the fields of this frame's state packet; bit 0 is the position
+    // (59FDB0 writes +0x90 as three halves, 592180 reads it only when the bit is set). For a player it is
+    // `counter % 6 == 3`, the counter at +0x1820 counting builds (5781B0, from 59FA80) - ten a second at
+    // 60 fps, as intended. What arrives is not that: a remote player's packets carried it in every packet
+    // or in none, for seconds at a time (2026-09-30: 15.5% overall, none for 24% of the seconds, runs of
+    // ten), while AI soldiers, whose packets are built every sixth frame, arrived at exactly 2 a second.
+    // That is what a packet built every frame and sent only as the latest one when a 90 ms timer fires
+    // (every sixth frame at 60 fps) produces: the frame that is sent keeps its place in the six-frame
+    // cycle until a slow frame moves it (research/desync-20260930/SEND_SIDE_JA.md). `sete bl` becomes
+    // `mov bl, 1; nop`, so every packet carries it - what vanilla already sends whenever that cycle
+    // happens to line up, so every receiver, with or without this plugin, reads it as usual. Six bytes
+    // a packet. AI soldiers take the other branch (a packet every sixth frame, the position every 30th),
+    // which the timer never splits, and are left alone.
+    return {
+        {"player packet: position in every one", 0x59FB7E, {0x0F, 0x94, 0xC3}, {0xB3, 0x01, 0x90}},
+        // The same choice while +0x1550 holds a live link or +0x2E8 is set, which sends no movement.
+        {"player packet: position in every one (no movement)", 0x59FBD9, {0x0F, 0x94, 0xC3}, {0xB3, 0x01, 0x90}},
+    };
+}
+
+std::vector<Patch> FacingPatches() {
+    // Bit 1 of the same packet: two of the angles at +0x1230, the only absolute orientation it carries
+    // (the movement in bit 0x10 is already turned into world space). A player gets it when
+    // `counter % 6 == 0` (every frame while +0x1E41 is set), so the 90 ms timer locks it out the same way
+    // as the position - and never lets the two through together. Measured 2026-09-30 with the position
+    // fixed: 11 seconds of 167 carried it, a Wing Diver was drawn 100-130 degrees off her real facing the
+    // whole time, and the one moment it arrived she turned about 120 degrees while standing still.
+    // `or ax, 2` has already put the bit in; `cmovne ax, bx` takes it back out on the other frames, and
+    // becomes a four-byte nop. The branch that sends no movement never sends the angles and is left alone.
+    return {{"player packet: facing in every one", 0x59FB9A, {0x66, 0x0F, 0x45, 0xC3}, {0x0F, 0x1F, 0x40, 0x00}}};
+}
+
 bool Matches(const std::uint8_t* at, const Patch& patch) {
     return at && patch.original.size() == patch.replacement.size() &&
            std::memcmp(at, patch.original.data(), patch.original.size()) == 0;

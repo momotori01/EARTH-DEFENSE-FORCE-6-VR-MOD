@@ -120,6 +120,13 @@ std::vector<CallSite> RecoveryCalls();
 std::vector<MidSite> GhostHooks();
 std::vector<CallSite> GhostCalls();
 
+// [Sync] PositionEveryPacket: the packets this machine sends for its own player all carry the position,
+// where the game puts it in a sixth of the frames and a 90 ms timer sends only the latest frame's packet.
+// Sender side only; receivers need nothing new.
+std::vector<Patch> PositionPatches();
+// [Sync] FacingEveryPacket: likewise for bit 1, the angles that say which way the player faces.
+std::vector<Patch> FacingPatches();
+
 bool Matches(const std::uint8_t* at, const Patch& patch);
 bool CallTargets(const std::uint8_t* at, std::uint32_t siteRva, std::uint32_t targetRva);
 bool SlotTargets(const std::uint8_t* at, std::uint64_t imageBase, std::uint32_t targetRva);

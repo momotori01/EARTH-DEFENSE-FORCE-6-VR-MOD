@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.1.5'
+VERSION = '2.1.6'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.12.zip'
-MULTISLOT_SHA = '9A0B35F48E588DC84C0062E046A5C7D3957E6D3B4B0AE78488B495D3957DD528'
-MULTISLOT_DLL_SHA = '9DCB03DA6301202A8C834326F067EAF22B25E51A29FD3AADEC9217747DBE733C'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.32.zip'
+MULTISLOT_SHA = 'BBB538ED161CB95E9D83ECBA36756A515FF61A2EEC2B6CED5D14EB1FE2101D92'
+MULTISLOT_DLL_SHA = '6621591FBF3BE5745D349F97579AD03125A6EB21B8AE747832AEB243FA99C719'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -41,8 +41,11 @@ MULTISLOT_DLL_SHA = '9DCB03DA6301202A8C834326F067EAF22B25E51A29FD3AADEC9217747DB
 # update of a fake 2.1.1 folder, VR mode, HD delete/make); stereo diagnostics in
 # the log (GPU, EYECHECK, XRVIEWS; first run here: stereo looks right). Same
 # EDF6MultiSlot 1.5.12.
-VERIFIED_VR_SHA = 'E20069F77EE9F3B6B751C1F385B175453DFE29CA9D29372BF80490C52CB68E13'
-VERIFIED_SETTINGS_SHA = '9DF40494B0C943E1CC656FEF65AF0758A850FA561D8D538A64FC6D2C9DF350A9'
+# 2.1.6: EDF6MultiSlot 1.5.32 (other players' position and facing sent in every
+# update; the multi session's release ZIP, hashes checked on 2026-09-30); the
+# stereo check's up/down verdict no longer fires on walls or a tilted head.
+VERIFIED_VR_SHA = '1BF2FF8836110B0C854637CA337DE96B0418490308BD0BF9F50857B8D8A8AD75'
+VERIFIED_SETTINGS_SHA = '7B8CFA7AFD9CF4B0D798C9F6BB672B75F14C1AF7D835C6F051045F566752A3A7'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

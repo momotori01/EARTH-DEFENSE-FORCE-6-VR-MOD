@@ -15,6 +15,7 @@
 
 #include "../src/mission.h"
 #include "../src/patches.h"
+#include "../src/gaplog.h"
 #include "../src/smoothing.h"
 #include "../src/rooms.h"
 #include "../src/joinlog.h"
@@ -454,7 +455,166 @@ int main(int argc, char** argv) {
         const Patch verify{hook.name, hook.rva, hook.original, hook.original};
         Check(Matches(image.At(hook.rva, hook.original.size()), verify), hook.name, hook.rva);
     }
+    // The desync meter samples the field the 5% smoothing writes. Its seven bytes end exactly where the
+    // subtract begins, so it must not reach the RIP-relative multiply three bytes later - that operand
+    // could not be copied into a thunk, and it is the one [Smoothing] retargets.
+    const auto desyncHooks = DesyncHooks();
+    Check(desyncHooks.size() == 5, "five desync hooks");
+    for (const auto& hook : desyncHooks) {
+        const Patch verify{hook.name, hook.rva, hook.original, hook.original};
+        Check(Matches(image.At(hook.rva, hook.original.size()), verify), hook.name, hook.rva);
+        Check(DesyncHookHandler(hook.rva) != nullptr, "and a handler for it", hook.rva);
+        if (hook.rva == 0x59637C) {
+            Check(hook.displacedSize == 7 && hook.rva + hook.displacedSize <= kSmoothingSite,
+                  "it stops before the multiply it must not displace", hook.rva);
+            // Displaced bytes are copied verbatim, so nothing RIP-relative may be among them.
+            Check(hook.original[0] == 0x0F && hook.original[1] == 0x10 && hook.original[2] == 0x87,
+                  "and addresses the player off rdi, not off rip", hook.rva);
+        } else {
+            // 77AC60 writes the arriving position into the checker and re-arms it; 77AB40 is the one
+            // that takes this machine's own position instead, and is what arrivals are counted against.
+            Check(hook.rva == 0x77AC60 || hook.rva == 0x77AB40 || hook.rva == 0x77AB00 ||
+                      hook.rva == 0x592180,
+                  "the others trace where a position comes from", hook.rva);
+            if (hook.rva == 0x592180) {
+                // The gate that decides whether a packet carries a position at all.
+                const std::uint8_t gate[] = {0x41, 0xF6, 0xC0, 0x01, 0x74, 0x0C};  // 5921A7 test r8b,1 / je
+                Check(std::memcmp(image.At(0x5921A7, sizeof(gate)), gate, sizeof(gate)) == 0,
+                      "the position bit is still what admits one", 0x5921A7);
+            }
+            if (hook.rva == 0x77AB00) {
+                const std::uint8_t store[] = {0x0F, 0x11, 0x43, 0x10};  // 77AB30 movups [rbx+0x10], xmm0
+                Check(std::memcmp(image.At(0x77AB30, sizeof(store)), store, sizeof(store)) == 0,
+                      "and it still lands at the checker's +0x10", 0x77AB30);
+            }
+            if (hook.rva == 0x77AC60) {
+                const std::uint8_t arm[] = {0x66, 0xC7, 0x43, 0x21, 0x01, 0x01};  // 77AC78
+                Check(hook.displacedSize == 6 &&
+                          std::memcmp(image.At(0x77AC78, sizeof(arm)), arm, sizeof(arm)) == 0,
+                      "and it still re-arms the checker", 0x77AC78);
+            } else if (hook.rva == 0x77AB40) {
+                const std::uint8_t adopt[] = {0x0F, 0x10, 0x8F, 0x90, 0x00, 0x00, 0x00};  // 77AB64
+                Check(hook.displacedSize == 5 &&
+                          std::memcmp(image.At(0x77AB64, sizeof(adopt)), adopt, sizeof(adopt)) == 0,
+                      "and it still adopts the player's own position", 0x77AB64);
+            }
+        }
+    }
+    // The subtract between them is what makes the sampled field recoverable: it is still the game's own
+    // "where they really are, minus where we draw them".
+    const std::uint8_t subps[] = {0x0F, 0x5C, 0xF0};  // subps xmm6, xmm0 at 596383
+    Check(std::memcmp(image.At(0x596383, sizeof(subps)), subps, sizeof(subps)) == 0,
+          "the gap is still computed where the meter assumes", 0x596383);
+    // Which calls are worth measuring is read from +0x1900: cleared at the top of every call, set to 1
+    // only on the branch that puts the incoming position in xmm6. Without it the four objects an offline
+    // mission carries report a gap of zero, because the early exit leaves xmm6 holding a constant.
+    const std::uint8_t clearFlag[] = {0xC6, 0x87, 0x00, 0x19, 0x00, 0x00, 0x00};  // 596194
+    const std::uint8_t setFlag[] = {0xC6, 0x87, 0x00, 0x19, 0x00, 0x00, 0x01};    // 59636A
+    Check(std::memcmp(image.At(0x596194, sizeof(clearFlag)), clearFlag, sizeof(clearFlag)) == 0,
+          "every call still starts by clearing the interpolated flag", 0x596194);
+    Check(std::memcmp(image.At(0x59636A, sizeof(setFlag)), setFlag, sizeof(setFlag)) == 0,
+          "and only the real branch still sets it, before the hook reads it", 0x59636A);
+    // The early exit lands between the flag write and the hook, so the hook sees both paths.
+    const std::uint8_t earlyExit[] = {0xF6, 0x87, 0x28, 0x01, 0x00, 0x00, 0x01};  // test byte [rdi+0x128], 1
+    Check(std::memcmp(image.At(0x59619D, sizeof(earlyExit)), earlyExit, sizeof(earlyExit)) == 0,
+          "the early exit that makes the flag necessary is still there", 0x59619D);
+    // The gate diagnostic reads four things at the hook; each offset comes from one instruction, so each
+    // instruction is checked. 596130 is SoldierBase::NetworkUpdate - named by the RTTI of the checkers it
+    // builds at 17D2E58 (PlayerCtrlSyncChecker) and 17D2E70 (AICtrlSyncChecker).
+    const std::uint8_t zeroFlags[] = {0x40, 0x88, 0x75, 0xF0};  // 59624B mov byte [rbp-0x10], sil
+    Check(std::memcmp(image.At(0x59624B, sizeof(zeroFlags)), zeroFlags, sizeof(zeroFlags)) == 0,
+          "the checker's output flags are still zeroed at [rbp-0x10] before the call", 0x59624B);
+    const std::uint8_t checkerAt[] = {0x48, 0x8D, 0x8F, 0x30, 0x18, 0x00, 0x00};  // 59621F lea rcx,[rdi+0x1830]
+    Check(std::memcmp(image.At(0x59621F, sizeof(checkerAt)), checkerAt, sizeof(checkerAt)) == 0,
+          "the sync checker still lives at +0x1830 on the player", 0x59621F);
+    const std::uint8_t bit1[] = {0x80, 0xE1, 0x02};  // 596328 and cl, 2
+    Check(std::memcmp(image.At(0x596328, sizeof(bit1)), bit1, sizeof(bit1)) == 0,
+          "the correction is still flag bit 1", 0x596328);
+    const std::uint8_t tailGate[] = {0x84, 0xC9, 0x74, 0x0A};  // 596366 test cl,cl / je 596374
+    Check(std::memcmp(image.At(0x596366, sizeof(tailGate)), tailGate, sizeof(tailGate)) == 0,
+          "and that bit is still what decides whether the target is real", 0x596366);
+    // Inside the checker runner: the two bail-outs whose inputs the diagnostic names.
+    const std::uint8_t offCheck[] = {0x80, 0x39, 0x00};  // 77AD84 cmp byte [rcx], 0
+    Check(std::memcmp(image.At(0x77AD84, sizeof(offCheck)), offCheck, sizeof(offCheck)) == 0,
+          "the checker still bails when its own byte 0 is zero", 0x77AD84);
+    const std::uint8_t stateCheck[] = {0x80, 0x79, 0x20, 0x00};  // 77ADA1 cmp byte [rcx+0x20], 0
+    Check(std::memcmp(image.At(0x77ADA1, sizeof(stateCheck)), stateCheck, sizeof(stateCheck)) == 0,
+          "and when its +0x20 is set", 0x77ADA1);
+
+    // And it lands on the tail, ahead of the hook, so both paths reach the sample point.
+    std::int32_t exitTo = 0;
+    std::memcpy(&exitTo, image.At(0x5961A4 + 2, 4), 4);
+    Check(image.At(0x5961A4, 2)[0] == 0x0F && image.At(0x5961A4, 2)[1] == 0x84 &&
+              static_cast<std::uint32_t>(0x5961A4 + 6 + exitTo) == 0x596374,
+          "the early exit still jumps into the smoothing tail", 0x5961A4);
     for (const auto& call : GhostCalls()) Check(CallTargets(image.At(call.rva, 5), call.rva, call.target), call.name, call.rva);
+
+    // [Sync] PositionEveryPacket: two `sete bl` in SoldierBase slot 92, the function that picks which
+    // fields a player's packet carries. Each is the whole of bit 0 (the position), so each must still sit
+    // between the `cmp` of the six-frame cycle and the `add` that lays the always-sent fields on top.
+    const auto positionPatches = PositionPatches();
+    Check(positionPatches.size() == 2, "two position patches");
+    for (const auto& patch : positionPatches) {
+        Check(Matches(image.At(patch.rva, patch.original.size()), patch), patch.name, patch.rva);
+        const std::uint8_t sete[] = {0x0F, 0x94, 0xC3};  // sete bl
+        const std::uint8_t mov[] = {0xB3, 0x01, 0x90};   // mov bl, 1; nop - leaves the flags alone
+        Check(patch.original.size() == 3 && std::memcmp(patch.original.data(), sete, 3) == 0 &&
+                  std::memcmp(patch.replacement.data(), mov, 3) == 0,
+              "sete bl becomes mov bl, 1", patch.rva);
+    }
+    const std::uint8_t cycleMain[] = {0x83, 0xFA, 0x03};         // 59FB7B cmp edx, 3  (counter % 6)
+    const std::uint8_t fieldsMain[] = {0x66, 0x83, 0xC3, 0x58};  // 59FB81 add bx, 0x58
+    const std::uint8_t cycleIdle[] = {0x83, 0xF9, 0x03};         // 59FBD6 cmp ecx, 3
+    const std::uint8_t fieldsIdle[] = {0x66, 0x83, 0xC3, 0x48};  // 59FBDC add bx, 0x48
+    Check(std::memcmp(image.At(0x59FB7B, 3), cycleMain, 3) == 0 && std::memcmp(image.At(0x59FB81, 4), fieldsMain, 4) == 0,
+          "the moving player's position bit is still `counter % 6 == 3` under the other fields", 0x59FB7E);
+    Check(std::memcmp(image.At(0x59FBD6, 3), cycleIdle, 3) == 0 && std::memcmp(image.At(0x59FBDC, 4), fieldsIdle, 4) == 0,
+          "and so is the one that sends no movement", 0x59FBD9);
+    // bl is a whole byte only because ebx starts at zero, and both branches are the player's side of the
+    // vtable+0x108 test (550890: +0x340 or +0x1ED0 set); the AI branch at 59FC3A is left as it is.
+    const std::uint8_t start[] = {0x33, 0xDB, 0xFF, 0x90, 0x08, 0x01, 0x00, 0x00};  // xor ebx,ebx; call [rax+0x108]
+    Check(std::memcmp(image.At(0x59FB20, sizeof(start)), start, sizeof(start)) == 0,
+          "59FB10 starts from ebx = 0 and asks slot +0x108 which side it is on", 0x59FB20);
+    for (const std::uint32_t vtable : {0x17D24D8u, 0x17CDF28u, 0x17CF100u, 0x17CF5B8u})
+        Check(SlotTargets(image.At(vtable + 0x2E0, 8), image.nt->OptionalHeader.ImageBase, 0x59FB10) &&
+                  SlotTargets(image.At(vtable + 0x108, 8), image.nt->OptionalHeader.ImageBase, 0x550890),
+              "SoldierBase, Ranger, Air Raider and Fencer pick their fields with 59FB10", vtable);
+    // Wing Diver adds her own field on top of the same function.
+    Check(SlotTargets(image.At(0x17D0FF8 + 0x2E0, 8), image.nt->OptionalHeader.ImageBase, 0x582DF0) &&
+              CallTargets(image.At(0x582DFD, 5), 0x582DFD, 0x59FB10),
+          "Wing Diver's slot 92 calls 59FB10 first", 0x582DFD);
+    // Where those fields go: 59FA80 counts the build (5781B0: inc [NetworkObject+0x1700] = player+0x1820),
+    // asks slot 92, writes the flags and calls slot 52, whose bit 0 writes the player's +0x90.
+    Check(CallTargets(image.At(0x59FA95, 5), 0x59FA95, 0x5781B0) &&
+              std::memcmp(image.At(0x5781B0, 6), "\xFF\x81\x00\x17\x00\x00", 6) == 0,
+          "each packet build counts itself at player+0x1820", 0x59FA95);
+    Check(std::memcmp(image.At(0x59FAAC, 6), "\xFF\x90\xE0\x02\x00\x00", 6) == 0 &&
+              std::memcmp(image.At(0x59FADA, 7), "\x41\xFF\x91\xA0\x01\x00\x00", 7) == 0,
+          "and asks slot 92 for the fields, then slot 52 to write them", 0x59FAAC);
+    Check(std::memcmp(image.At(0x59FDEA, 6), "\x41\xF6\xC0\x01\x74\x0F", 6) == 0 &&
+              CallTargets(image.At(0x59FDFA, 5), 0x59FDFA, 0x77AD00) &&
+              std::memcmp(image.At(0x77AD03, 7), "\x49\x8D\x90\x90\x00\x00\x00", 7) == 0,
+          "bit 0 is what writes the player's position (+0x90) into the packet", 0x59FDEA);
+
+    // [Sync] FacingEveryPacket: bit 1 (the angles) is put in by `or ax, 2` and taken back out by the
+    // `cmovne ax, bx` that follows the `counter % 6` (or % 2) division; that cmov becomes a nop.
+    const auto facingPatches = FacingPatches();
+    Check(facingPatches.size() == 1, "one facing patch");
+    for (const auto& patch : facingPatches) {
+        Check(Matches(image.At(patch.rva, patch.original.size()), patch), patch.name, patch.rva);
+        const std::uint8_t cmov[] = {0x66, 0x0F, 0x45, 0xC3};  // cmovne ax, bx
+        const std::uint8_t nop4[] = {0x0F, 0x1F, 0x40, 0x00};  // nop dword [rax+0]
+        Check(patch.original.size() == 4 && std::memcmp(patch.original.data(), cmov, 4) == 0 &&
+                  std::memcmp(patch.replacement.data(), nop4, 4) == 0,
+              "cmovne ax, bx becomes a four-byte nop", patch.rva);
+    }
+    const std::uint8_t anglesIn[] = {0x0F, 0xB7, 0xC3, 0x66, 0x83, 0xC8, 0x02, 0x85, 0xD2};  // 59FB91
+    const std::uint8_t anglesKept[] = {0x0F, 0xB7, 0xD8};                                    // 59FB9E movzx ebx, ax
+    Check(std::memcmp(image.At(0x59FB91, sizeof(anglesIn)), anglesIn, sizeof(anglesIn)) == 0 &&
+              std::memcmp(image.At(0x59FB9E, sizeof(anglesKept)), anglesKept, sizeof(anglesKept)) == 0,
+          "movzx eax,bx; or ax,2; test edx,edx still surround it, and ebx takes ax after", 0x59FB9A);
+    Check(std::memcmp(image.At(0x59FB8F, 2), "\xF7\xF9", 2) == 0,
+          "and edx is the remainder of the idiv just before", 0x59FB8F);
 
     std::vector<CallSite> allCalls = calls;
     allCalls.insert(allCalls.end(), missionCalls.begin(), missionCalls.end());
@@ -471,6 +631,7 @@ int main(int argc, char** argv) {
     allHooks.insert(allHooks.end(), armorHooks.begin(), armorHooks.end());
     const auto ghostHooks = GhostHooks();
     allHooks.insert(allHooks.end(), ghostHooks.begin(), ghostHooks.end());
+    allHooks.insert(allHooks.end(), desyncHooks.begin(), desyncHooks.end());
     // 8Player MOD (hostmode.cpp): the sites it replaces, and the game functions it calls from the menu frame.
     const auto hostHooks = HostModeHooks();
     Check(hostHooks.size() == 11, "host mode hook table size");
@@ -531,6 +692,8 @@ int main(int argc, char** argv) {
     auto all = guest;
     all.insert(all.end(), sessions.begin(), sessions.end());
     all.insert(all.end(), missionPatches.begin(), missionPatches.end());
+    all.insert(all.end(), positionPatches.begin(), positionPatches.end());
+    all.insert(all.end(), facingPatches.begin(), facingPatches.end());
     allHooks.insert(allHooks.end(), hostHooks.begin(), hostHooks.end());
     auto spans = WriteSpans(all, allCalls, allHooks);
     // The remote-player correction factor is built at load (its operand depends on where the constant

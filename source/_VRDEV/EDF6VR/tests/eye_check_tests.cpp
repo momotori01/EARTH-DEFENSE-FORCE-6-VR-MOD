@@ -16,9 +16,11 @@ static float Picture(int x,int y,int frame) {
 }
 // Both eyes of one frame. The right eye sees what the left sees at x+dx, y+dy
 // (dx > 0: the right way round, nearer content further right in the left eye).
-static void Fill(EyeStrips& e,unsigned width,unsigned height,int dx,int dy,int frame,bool flat=false,int rightFrame=-1) {
+static void Fill(EyeStrips& e,unsigned width,unsigned height,int dx,int dy,int frame,bool flat=false,int rightFrame=-1,
+                 const int* stripDx=nullptr,const int* stripDy=nullptr) {
     if(rightFrame<0) rightFrame=frame;
     for(unsigned s=0;s<kEyeStrips;++s) {
+        if(stripDx) { dx=stripDx[s]; dy=stripDy[s]; }   // each strip its own shift (a tilted head)
         unsigned x=0,y=0;
         e.valid[s]=EyeStripOrigin(s,width,height,x,y);
         if(!e.valid[s]) continue;
@@ -65,6 +67,14 @@ int main() {
     r=AnalyzeEyes(*previous,*now);
     CHECK(r.dx[2]==4 && r.dy[2]==3 && r.vertical==9);
     CHECK(!std::strncmp(r.verdict,"VERTICAL",8));
+    // A tilted head: up/down in proportion to the sideways shift (about 5 degrees)
+    // is a sound pair, not an offset between the eyes (tilt ~3.5 deg; up/down stays in the +-4 px search).
+    int tiltDx[kEyeStrips],tiltDy[kEyeStrips];
+    for(unsigned s=0;s<kEyeStrips;++s) { tiltDx[s]=10+6*static_cast<int>(s); tiltDy[s]=static_cast<int>(tiltDx[s]*.06+.5); }
+    Fill(*previous,w,h,0,0,0,false,-1,tiltDx,tiltDy); Fill(*now,w,h,0,0,1,false,-1,tiltDx,tiltDy);
+    r=AnalyzeEyes(*previous,*now);
+    CHECK(r.dx[8]==58 && r.dy[8]==3 && r.positive==9);
+    CHECK(r.vertical==0 && !std::strcmp(r.verdict,"stereo looks right"));
     Fill(*previous,w,h,6,1,0); Fill(*now,w,h,6,1,1);   // one pixel up/down alone is not called vertical
     r=AnalyzeEyes(*previous,*now);
     CHECK(r.dy[4]==1 && r.vertical==0 && !std::strcmp(r.verdict,"stereo looks right"));

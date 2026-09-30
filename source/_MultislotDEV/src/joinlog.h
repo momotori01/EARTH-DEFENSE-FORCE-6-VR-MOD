@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "midhook.h"
+#include "patches.h"  // kMaxPlayers: the slot snapshot is as wide as the build makes the room
 
 namespace multislot {
 
@@ -20,7 +21,10 @@ struct UserSlotState {
 };
 struct UserSlotsSnapshot {
     std::size_t capacity = 0, occupied = 0, ready = 0;
-    UserSlotState slots[8]{};
+    // As many as the build widens the room to, not a literal 8: at 10 or 12 the read used to refuse the
+    // vector as too long, which made EligibleFinalHello fail and switched HandshakeRecovery off without
+    // saying so. Found in hajisensai/edf-coop-stable 1.5.13, which fixed the same thing.
+    UserSlotState slots[kMaxPlayers]{};
 };
 bool ReadUserSlots(const void* users, UserSlotsSnapshot& out);
 // Active RoomImpl, not its eos::lobby::Room base (whose vtable is installed during teardown).

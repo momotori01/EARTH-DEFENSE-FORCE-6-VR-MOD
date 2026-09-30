@@ -121,7 +121,7 @@ inline EyeCheckResult AnalyzeEyes(const EyeStrips& previous,const EyeStrips& now
     using namespace eye_check_detail;
     EyeCheckResult r{};
     // Only strips with detail count: a clear sky is the same in both eyes anyway.
-    bool detailed[kEyeStrips]{};
+    bool detailed[kEyeStrips]{},upDown[kEyeStrips]{};
     for(unsigned s=0;s<kEyeStrips;++s) if(now.valid[s] && Texture(now,s)>.004f) { detailed[s]=true; ++r.detailed; }
     r.lr=Differs(now,false,now,true,detailed);
     r.lrPrevious=Differs(now,false,previous,true,detailed);
@@ -148,8 +148,19 @@ inline EyeCheckResult AnalyzeEyes(const EyeStrips& previous,const EyeStrips& now
         r.dx[s]=-bestX; r.dy[s]=-bestY;
         if(!r.judged[s]) continue;
         if(r.dx[s]>0) ++r.positive; else if(r.dx[s]<0) ++r.negative; else ++r.level;
-        if(std::abs(r.dy[s])>=2) ++r.vertical;            // a pixel either way is texture noise (seen on a sound pair)
+        // Up/down only counts when it clearly beats the level match at the same
+        // sideways shift. Vertical edges (walls) match about as well at any height,
+        // and a pixel either way is texture noise (both seen on a sound pair).
+        upDown[s]=std::abs(r.dy[s])>=2 && best<.8f*Sad(now,s,bestX,0);
     }
+    // A tilted head turns part of each shift into up/down, in proportion to it:
+    // near things move up/down more. Take that tilt out (fitted over the strips,
+    // at most about 11 degrees); what is left is a real offset between the eyes.
+    // (Hardware, 2026-09-29: +50/+4 and +56/-4 on a sound pair.)
+    double across=0,cross=0;
+    for(unsigned s=0;s<kEyeStrips;++s) if(r.judged[s]) { across+=double(r.dx[s])*r.dx[s]; cross+=double(r.dx[s])*r.dy[s]; }
+    const double tilt=across>0?(std::max)(-.2,(std::min)(.2,cross/across)):0.0;
+    for(unsigned s=0;s<kEyeStrips;++s) if(upDown[s] && std::fabs(r.dy[s]-tilt*r.dx[s])>=2.0) ++r.vertical;
     const int judged=r.positive+r.negative+r.level;
     if(!r.strips) r.verdict="no strips (picture too small)";
     else if(r.detailed<2) r.verdict="no detail to judge (sky, dark or menu)";

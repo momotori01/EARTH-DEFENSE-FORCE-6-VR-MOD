@@ -19,7 +19,7 @@ The setting is saved immediately to EDF6ClearLoot.ini and persists after restart
 F1 is not processed at the title screen or in menus without soldier updates.
 EDF6VR's previous F1 anti-aliasing shortcut has been removed to avoid conflicts.
 
-VR_Play.bat ONLY enables/disables EDF6VR. Clear Loot retains its own setting even
+VR mode in EDF6 VR setting.exe ONLY enables/disables EDF6VR. Clear Loot retains its own setting even
 when playing without VR. To remove it, close the game and remove EDF6ClearLoot.dll.
 
 In-game verified: F1 toggle and confirmation sound, remaining drops collected near
