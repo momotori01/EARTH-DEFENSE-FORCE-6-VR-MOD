@@ -2,6 +2,10 @@
 
 VR mod for the Steam version of EARTH DEFENSE FORCE 6, bundled with an 8-player co-op mod, HD textures and a few quality-of-life extras.
 
+> **Supported: SteamVR and Virtual Desktop.** Meta Quest Link / Air Link may work too, but it has not been tested in detail.
+>
+> **Meta Quest: seeing double?** Use SteamVR. In SteamVR, open **Settings → OpenXR** and press **Set SteamVR as OpenXR runtime**, then play through SteamVR (Steam Link, or Quest Link with SteamVR).
+
 ## Download
 
 Download the latest **EDF6VR ZIP** under **Assets** on the [Releases](https://github.com/momotori01/EARTH-DEFENSE-FORCE-6-VR-MOD/releases) page (not the automatically generated source code archives).
@@ -45,10 +49,6 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
 2. VR is on as installed. To play on the monitor instead, open **EDF6 VR setting.exe** (next to `EDF6.exe`), choose **Normal** under **VR mode** and press **Apply**.
 3. Start the game from Steam as usual.
 4. **The first VR run may be heavy.** The mod measures your headset's field of view on the first run and saves it; until then it renders a wider picture than needed. Close the game once and start it again -- from the second run on, the picture is fitted to your headset and runs lighter. (Do the same once after changing headsets.)
-
-> **Supported: SteamVR and Virtual Desktop.** Meta Quest Link / Air Link may work too, but it has not been tested in detail.
->
-> **Meta Quest: seeing double?** Use SteamVR. In SteamVR, open **Settings → OpenXR** and press **Set SteamVR as OpenXR runtime**, then play through SteamVR (Steam Link, or Quest Link with SteamVR).
 
 ## Updating
 
