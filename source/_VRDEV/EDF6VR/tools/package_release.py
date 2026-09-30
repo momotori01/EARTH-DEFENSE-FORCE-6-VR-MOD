@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.1.6'
+VERSION = '2.1.7'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.32.zip'
@@ -44,8 +44,13 @@ MULTISLOT_DLL_SHA = '6621591FBF3BE5745D349F97579AD03125A6EB21B8AE747832AEB243FA9
 # 2.1.6: EDF6MultiSlot 1.5.32 (other players' position and facing sent in every
 # update; the multi session's release ZIP, hashes checked on 2026-09-30); the
 # stereo check's up/down verdict no longer fires on walls or a tilted head.
-VERIFIED_VR_SHA = '1BF2FF8836110B0C854637CA337DE96B0418490308BD0BF9F50857B8D8A8AD75'
-VERIFIED_SETTINGS_SHA = '7B8CFA7AFD9CF4B0D798C9F6BB672B75F14C1AF7D835C6F051045F566752A3A7'
+# 2.1.7: a runtime that keeps each eye's own field of view (fovMutable false:
+# Meta's PC runtime, double vision on Quest Link) gets that field and the part of
+# the picture over it (eye_crop.h). On SteamVR the same crop, forced with
+# EyeFovCrop=1 and toggled live, looked the same as before (2026-09-30); on Meta's
+# runtime it is untested. Same EDF6MultiSlot 1.5.32.
+VERIFIED_VR_SHA = 'C6BA517B4C9572BF611C5EC37FDD37F3F240A21B585BBE31D92A643C9BC3DE31'
+VERIFIED_SETTINGS_SHA = '0CAC1572211E1F5DC41F6F5952E93949E471E5AF2078057B1FD7F09BFB455FDF'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

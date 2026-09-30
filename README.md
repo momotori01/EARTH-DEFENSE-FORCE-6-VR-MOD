@@ -46,6 +46,10 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
 3. Start the game from Steam as usual.
 4. **The first VR run may be heavy.** The mod measures your headset's field of view on the first run and saves it; until then it renders a wider picture than needed. Close the game once and start it again -- from the second run on, the picture is fitted to your headset and runs lighter. (Do the same once after changing headsets.)
 
+> **Supported: SteamVR and Virtual Desktop.** Meta Quest Link / Air Link may work too, but it has not been tested in detail.
+>
+> **Meta Quest: seeing double?** Use SteamVR. In SteamVR, open **Settings → OpenXR** and press **Set SteamVR as OpenXR runtime**, then play through SteamVR (Steam Link, or Quest Link with SteamVR).
+
 ## Updating
 
 Close the game, open **EDF6 VR setting.exe** and press **Update now**. It downloads the newest release, checks it and replaces only the files that changed. Your settings (weapon and hand position, resolution, panel size, ...) are kept, and settings added in the new version are filled in automatically. HD textures stay as they are.
@@ -145,6 +149,7 @@ More settings are described in `Mods/Plugins/EDF6VR.ini` (created on first start
 - EARTH DEFENSE FORCE 6 (Steam).
 - An OpenXR-compatible VR headset with motion controllers.
 - An OpenXR runtime such as SteamVR or VDXR (Virtual Desktop).
+- **Supported: SteamVR and Virtual Desktop (VDXR).** Meta Quest Link / Air Link (Meta's own runtime) may work too from 2.1.7, but it has not been tested in detail; if it shows double, switch to SteamVR as above.
 
 Tested with Bigscreen Beyond 2 + Index controllers, PSVR2 (SteamVR), and Quest via Virtual Desktop.
 

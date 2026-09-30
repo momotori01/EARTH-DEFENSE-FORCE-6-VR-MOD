@@ -204,6 +204,9 @@ public:
     // view, where it runs past the edges of sight.
     void SetUiLayer(bool on,float widthMetres,float distanceMetres) noexcept;
     void SetDesktopMirror(bool on) noexcept;
+    // Crop each eye to its own field of view even where the runtime would take a
+    // wider one (test of the path Meta's runtime needs; eye_crop.h).
+    void SetEyeFovCrop(bool always) noexcept;
     void SetDesktopMirrorFov(float horizontalDegrees) noexcept;
     std::uint64_t UiLayers() const noexcept;
     void ReadAlpha(int& low,int& high) const noexcept;

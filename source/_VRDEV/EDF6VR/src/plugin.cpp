@@ -2050,6 +2050,9 @@ void Settings() noexcept {
     g_uiLayer=GetPrivateProfileIntW(L"Render",L"UiPanel",0,path)!=0;
     g_uiRedirect=GetPrivateProfileIntW(L"Render",L"UiRedirect",1,path)!=0;
     edf6vr::g_openxr.SetDesktopMirror(GetPrivateProfileIntW(L"Render",L"DesktopMirror",1,path)!=0);
+    // Not in the shipped INI: 1 crops every eye to its own field of view on any
+    // runtime, to try on SteamVR what Meta's runtime gets anyway (eye_crop.h).
+    edf6vr::g_openxr.SetEyeFovCrop(GetPrivateProfileIntW(L"Render",L"EyeFovCrop",0,path)!=0);
     edf6vr::g_openxr.SetDesktopMirrorFov(ReadFloat(path,L"DesktopMirrorFov",90.f,0.f,140.f,L"Render"));
     edf6vr::SetDesktopMirrorUiScale(ReadFloat(path,L"DesktopMirrorUiScale",1.8f,0.5f,2.5f,L"Render"));
     g_headDamping=ReadFloat(path,L"HeadSteady",0.85f,0.0f,1.0f,L"FirstPerson");
@@ -3869,6 +3872,15 @@ void ReloadTunables() noexcept {
     edf6vr::g_openxr.SetBoard(ReadFloat(g_iniPath,L"BoardWidthMetres",2.6f,0.3f,10.0f,L"Render"),
                              ReadFloat(g_iniPath,L"BoardDistanceMetres",2.0f,0.3f,20.0f,L"Render"));
     const float reticleScale=ReadFloat(g_iniPath,L"ReticleScale",g_reticleScale,0.05f,4.0f,L"Render");
+    // Live too, so the two ways of handing each eye its picture can be compared
+    // on the spot, looking at the same thing (eye_crop.h).
+    static int eyeFovCrop=-1;
+    const int crop=GetPrivateProfileIntW(L"Render",L"EyeFovCrop",0,g_iniPath)!=0?1:0;
+    if(crop!=eyeFovCrop) {
+        edf6vr::g_openxr.SetEyeFovCrop(crop!=0);
+        if(eyeFovCrop>=0) Log("INI reloaded: EyeFovCrop=%d (%s)",crop,crop?"each eye cut to its own field":"whole picture, wider field declared");
+        eyeFovCrop=crop;
+    }
     const bool changed=stereo!=g_stereoMode || steps!=g_warpSteps || nearest!=g_warpNearest
                        || easeFrom!=g_nearKnee || easeFloor!=g_nearScale
                        || keepUi!=g_warpHudless || alternate!=g_warpAlternate || debug!=g_warpDebug
@@ -6599,7 +6611,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 2.1.6 cockpit loading, with EDF6MultiSlot 1.5.32. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 2.1.7 cockpit loading, with EDF6MultiSlot 1.5.32. Fencer weapons aim the barrel itself; no dead band on the aim.");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
     if(_wcsicmp(slash?slash+1:host,L"EDF6.exe")) { Log("REFUSED: process is not EDF6.exe"); return false; }

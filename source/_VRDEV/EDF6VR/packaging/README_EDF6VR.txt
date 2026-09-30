@@ -1,5 +1,15 @@
-﻿EDF6VR 2.1.6
+﻿EDF6VR 2.1.7
 =============================
+
+CHANGES IN 2.1.7
+- Meta Quest over Quest Link / Air Link: double vision fix. Meta's own runtime
+  shows each eye's picture only over that eye's field of view, and the wider
+  picture was squeezed into it, shifted the opposite way in each eye. Each eye
+  now gets exactly the part of the picture that covers its field of view.
+  SteamVR and other runtimes are unchanged. Supported: SteamVR and Virtual
+  Desktop. Meta Link may work too, but it has not been tested in detail. If
+  you still see double, use SteamVR: in SteamVR, Settings -> OpenXR -> Set
+  SteamVR as OpenXR runtime.
 
 CHANGES IN 2.1.6
 - Online: other players are shown where they really are. The base game put a
@@ -534,6 +544,12 @@ headsets you intend to wear. Choose the runtime for your current connection once
 - Quest through Steam Link / SteamVR: use SteamVR as the active OpenXR runtime.
 - Quest Link / Air Link: connect Link first and select Meta Quest Link's OpenXR
   runtime, or use SteamVR. Meta's runtime is not the Virtual Desktop route.
+  Supported: SteamVR and Virtual Desktop. Meta Link may work too, but it has
+  not been tested in detail.
+  SEEING DOUBLE on Meta Quest? Use SteamVR: in SteamVR, open Settings -> OpenXR
+  and press "Set SteamVR as OpenXR runtime", then play through SteamVR (Steam
+  Link, or Quest Link with SteamVR). EDF6VR.log names the runtime it used on the
+  "runtime negotiated" line.
 
 The runtime selects the controller bindings: Valve Index or Oculus/Quest Touch.
 Touch-compatible profiles are used for Quest controllers; no hand-tracking-only

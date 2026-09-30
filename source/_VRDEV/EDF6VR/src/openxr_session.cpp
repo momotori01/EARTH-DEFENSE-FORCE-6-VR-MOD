@@ -21,6 +21,7 @@
 #include "ui_capture.h"
 #include "ui_world_composite.h"
 #include "eye_check_sampler.h"
+#include "eye_crop.h"
 
 #include <unknwn.h>
 #include <d3d11.h>
@@ -210,6 +211,11 @@ SRWLOCK g_clusterLock=SRWLOCK_INIT;
 std::atomic<unsigned long long> g_clusterComposites{0},g_clusterFailures{0};
 std::atomic<bool> g_uiLayer{true};
 std::atomic<bool> g_desktopMirror{true};
+// Whether a projection view may declare a field of view other than the eye's
+// own (XrViewConfigurationProperties::fovMutable; eye_crop.h). Assumed so until
+// the runtime says otherwise. [Render] EyeFovCrop=1 crops on every runtime (test).
+std::atomic<bool> g_fovMutable{true};
+std::atomic<bool> g_eyeFovCropAlways{false};
 std::atomic<float> g_desktopMirrorFov{90.f};
 std::atomic<float> g_uiWidth{1.6f}, g_uiDistance{1.4f};
 // The reticle. It is drawn at the middle of the HUD, which since the view was
@@ -1222,6 +1228,19 @@ bool CreateSession() noexcept {
                         budget[i].recommendedSwapchainSampleCount,budget[i].maxSwapchainSampleCount);
         }
     }
+    // Can a projection view declare a field of view of its own? Meta's PC runtime
+    // says no, and then shows every picture as covering exactly the eye (eye_crop.h).
+    g_fovMutable.store(true);
+    PFN_xrGetViewConfigurationProperties viewProperties=nullptr;
+    if(Load(viewProperties,"xrGetViewConfigurationProperties")) {
+        XrViewConfigurationProperties properties{XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
+        if(XR_SUCCEEDED(viewProperties(g_instance,g_system,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,&properties))) {
+            g_fovMutable.store(properties.fovMutable!=XR_FALSE);
+            SetStatus(properties.fovMutable!=XR_FALSE
+                ?"view field of view is mutable: the wider rendered frustum is declared as it is"
+                :"view field of view is FIXED by this runtime: each eye gets its own frustum and the part of the picture that covers it");
+        }
+    }
     PFN_xrGetD3D11GraphicsRequirementsKHR requirementsFn=nullptr;
     if(!Load(requirementsFn,"xrGetD3D11GraphicsRequirementsKHR")) { SetStatus("XR_KHR_D3D11_enable unavailable"); return false; }
     XrGraphicsRequirementsD3D11KHR requirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
@@ -2047,11 +2066,12 @@ void ReportViews(const XrView* runtime,const XrCompositionLayerProjectionView* s
     };
     auto deg=[](float radians) { return radians*57.29578f; };
     const auto& s0=submitted[0].pose.position; const auto& s1=submitted[1].pose.position;
-    char line[640]{};
+    char line[1024]{};
     std::snprintf(line,sizeof(line),
         "XRVIEWS eyes across (m, + = right) runtime %+.4f/%+.4f submitted %+.4f/%+.4f, submitted up %+.4f/%+.4f ahead %+.4f/%+.4f; "
         "submitted pair off the runtime's by %+.3f/%+.3f/%+.3f m (right/up/ahead, lag); turned %.1f/%.1f deg; "
-        "pictures L<-%s R<-%s; fov deg runtime L[%.1f %.1f %.1f %.1f] R[%.1f %.1f %.1f %.1f] submitted [%.1f %.1f %.1f %.1f]",
+        "pictures L<-%s R<-%s; fov deg runtime L[%.1f %.1f %.1f %.1f] R[%.1f %.1f %.1f %.1f] submitted [%.1f %.1f %.1f %.1f]; "
+        "picture part L=%d,%d %dx%d R=%d,%d %dx%d (%s)",
         along(runtime[0].pose.position,rm,right),along(runtime[1].pose.position,rm,right),
         along(s0,sm,right),along(s1,sm,right),along(s0,sm,up),along(s1,sm,up),-along(s0,sm,back),-along(s1,sm,back),
         along(sm,rm,right),along(sm,rm,up),-along(sm,rm,back),
@@ -2059,7 +2079,12 @@ void ReportViews(const XrView* runtime,const XrCompositionLayerProjectionView* s
         leftGetsRight?"right":"left",rightGetsRight?"right":"left",
         deg(runtime[0].fov.angleLeft),deg(runtime[0].fov.angleRight),deg(runtime[0].fov.angleUp),deg(runtime[0].fov.angleDown),
         deg(runtime[1].fov.angleLeft),deg(runtime[1].fov.angleRight),deg(runtime[1].fov.angleUp),deg(runtime[1].fov.angleDown),
-        deg(fov.angleLeft),deg(fov.angleRight),deg(fov.angleUp),deg(fov.angleDown));
+        deg(fov.angleLeft),deg(fov.angleRight),deg(fov.angleUp),deg(fov.angleDown),
+        submitted[0].subImage.imageRect.offset.x,submitted[0].subImage.imageRect.offset.y,
+        submitted[0].subImage.imageRect.extent.width,submitted[0].subImage.imageRect.extent.height,
+        submitted[1].subImage.imageRect.offset.x,submitted[1].subImage.imageRect.offset.y,
+        submitted[1].subImage.imageRect.extent.width,submitted[1].subImage.imageRect.extent.height,
+        !g_fovMutable.load()?"runtime keeps each eye's field: cropped":g_eyeFovCropAlways.load()?"cropped by EyeFovCrop=1":"whole picture, wider field declared");
     g_log(line);
 }
 
@@ -2452,6 +2477,27 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
                     projectionViews[i].subImage.imageRect.extent={
                         static_cast<int32_t>(width),static_cast<int32_t>(height)};
                     projectionViews[i].subImage.imageArrayIndex=0;
+                    // A runtime whose views keep their own field of view gets that
+                    // field, and the part of the picture drawn over it (eye_crop.h).
+                    if((!g_fovMutable.load(std::memory_order_relaxed) || g_eyeFovCropAlways.load(std::memory_order_relaxed))
+                       && viewCount>=2) {
+                        const XrFovf& eyeFov=views[i].fov;
+                        // Cut from the frustum the game really drew this picture over
+                        // (its projection matrix), not the one it was asked for.
+                        XrFovf drawn=fov;
+                        float l=0,r=0,u=0,d=0;
+                        if(native && FrustumFromProjection(nativeImages.projection[sourceEye].m,l,r,u,d)) {
+                            drawn.angleLeft=l; drawn.angleRight=r; drawn.angleUp=u; drawn.angleDown=d;
+                        }
+                        const EyeCrop crop=CropForEye(drawn.angleLeft,drawn.angleRight,drawn.angleUp,drawn.angleDown,
+                            eyeFov.angleLeft,eyeFov.angleRight,eyeFov.angleUp,eyeFov.angleDown,
+                            static_cast<int>(width),static_cast<int>(height));
+                        if(crop.width<static_cast<int>(width) || crop.height<static_cast<int>(height)) {
+                            projectionViews[i].fov=eyeFov;
+                            projectionViews[i].subImage.imageRect.offset={crop.x,crop.y};
+                            projectionViews[i].subImage.imageRect.extent={crop.width,crop.height};
+                        }
+                    }
                 }
                 projection.layerFlags=0;
                 projection.space=g_refSpace;
@@ -2462,6 +2508,20 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
                     nextViewsReport=GetTickCount64()+5000;
                     ReportViews(views,projectionViews,projectionViews[0].subImage.swapchain==g_swapchainRight,
                                 projectionViews[1].subImage.swapchain==g_swapchainRight,fov);
+                    // What the game really drew, against the field it was asked for:
+                    // the crop above is only as exact as the first.
+                    float d[2][4]{}; bool have[2]{};
+                    for(unsigned e=0;e<2 && native;++e)
+                        have[e]=FrustumFromProjection(nativeImages.projection[e].m,d[e][0],d[e][1],d[e][2],d[e][3]);
+                    if(have[0] && have[1] && g_log) {
+                        char line[256]{};
+                        const float k=57.29578f;
+                        std::snprintf(line,sizeof(line),"FRUSTUM drawn by the game L[%.2f %.2f %.2f %.2f] R[%.2f %.2f %.2f %.2f] "
+                            "assumed [%.2f %.2f %.2f %.2f] deg, picture %ux%u",
+                            d[0][0]*k,d[0][1]*k,d[0][2]*k,d[0][3]*k,d[1][0]*k,d[1][1]*k,d[1][2]*k,d[1][3]*k,
+                            fov.angleLeft*k,fov.angleRight*k,fov.angleUp*k,fov.angleDown*k,width,height);
+                        g_log(line);
+                    }
                 }
                 layers[0]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
                 layerCount=1;
@@ -3077,6 +3137,7 @@ void OpenXrRuntime::SetReticle(bool follows,int pixels,float distanceMetres,floa
 }
 
 void OpenXrRuntime::SetDesktopMirror(bool on) noexcept { g_desktopMirror.store(on); }
+void OpenXrRuntime::SetEyeFovCrop(bool always) noexcept { g_eyeFovCropAlways.store(always); }
 void OpenXrRuntime::SetDesktopMirrorFov(float degrees) noexcept {
     g_desktopMirrorFov.store(!std::isfinite(degrees)?90.f:(degrees<=0?0.f:std::fmin(140.f,std::fmax(45.f,degrees))));
 }
