@@ -6611,7 +6611,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 2.1.7 cockpit loading, with EDF6MultiSlot 1.5.32. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 2.1.8 cockpit loading, with EDF6MultiSlot 1.5.32. Fencer weapons aim the barrel itself; no dead band on the aim.");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
     if(_wcsicmp(slash?slash+1:host,L"EDF6.exe")) { Log("REFUSED: process is not EDF6.exe"); return false; }

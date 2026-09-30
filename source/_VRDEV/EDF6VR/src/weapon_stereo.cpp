@@ -2,8 +2,11 @@
 #include "cockpit_draw.h"
 #include "weapon_composite.h"
 #include "hand_draw.h"
+#include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <d3dcompiler.h>
+#include <dxgi.h>
 #include <wrl/client.h>
 #include <atomic>
 #include <cstdio>
@@ -66,6 +69,9 @@ ComPtr<ID3D11SamplerState> neutralAoSampler;
 ComPtr<ID3D11Texture2D> depth[2];
 ComPtr<ID3D11DepthStencilView> dsv[2];
 void Log(const char* s) noexcept { if(logger) logger(s); }
+void Logf(const char* format,...) noexcept {
+    char line[256]{}; va_list args; va_start(args,format); std::vsnprintf(line,sizeof(line),format,args); va_end(args); Log(line);
+}
 void Release() noexcept {
     for(auto& n:native) n.Reset();
     for(auto& eye:targets) for(auto& t:eye) t=Image{};
@@ -109,6 +115,18 @@ cbuffer Eye:register(b0) { float dx; float anchored; float2 padding; float3 orig
  if(i>=16 && i<19) v+=delta[i-16]*asfloat(src[19]);
  dst[i]=asuint(v);                           // inverse(P V')
 })";
+// How much the layers may take. A fixed 1 GiB held the Picture size to 1.25: at 1.5
+// (3488x3240) live needs about 1.2 GiB, and the hands and weapon fell back to the
+// game's own drawing, unlit and shaking (hardware 2026-09-30, RTX 4080). A sixth
+// of the card's own memory, between 1 and 3 GiB: 16 GB cards reach 1.5 and more,
+// an 8 GB card stays where it was.
+std::uint64_t LayerBudget(ID3D11Device* d) noexcept {
+    constexpr std::uint64_t gib=1024ull*1024*1024;
+    ComPtr<IDXGIDevice> dxgi; ComPtr<IDXGIAdapter> adapter; DXGI_ADAPTER_DESC desc{};
+    if(!d || FAILED(d->QueryInterface(IID_PPV_ARGS(&dxgi))) || FAILED(dxgi->GetAdapter(&adapter))
+       || FAILED(adapter->GetDesc(&desc))) return gib;
+    return std::clamp<std::uint64_t>(desc.DedicatedVideoMemory/6,gib,3*gib);
+}
 bool Create() noexcept {
     // Capture peaks at 1012.5 MiB at 4K. Live keeps seven MRTs per eye,
     // two lit outputs and private depth, no staging: about 822.7 MiB.
@@ -130,7 +148,13 @@ bool Create() noexcept {
         formats[t]=rv.Format;
         bytes+=std::uint64_t(width)*height*PixelBytes(rv.Format)*(!liveMode && (t==0 || t==2)?4:2);
     }
-    if(bytes>1024ull*1024*1024) return false;
+    const std::uint64_t budget=LayerBudget(device.Get());
+    if(bytes>budget) {
+        Logf("WEAPONSTEREO needs %.0f MiB at %ux%u, over its %.0f MiB (a sixth of the card, 1-3 GiB)",
+            bytes/1048576.0,width,height,budget/1048576.0);
+        return false;
+    }
+    Logf("WEAPONSTEREO layers %.0f MiB at %ux%u (may use %.0f MiB)",bytes/1048576.0,width,height,budget/1048576.0);
     for(unsigned eye=0;eye<2;++eye) {
         for(unsigned t=0;t<7;++t) {
             if(!wantLighting && t!=0 && t!=2) continue;
@@ -296,9 +320,11 @@ bool BeginWeaponStereoCapture(ID3D11DeviceContext* ctx,int pass,unsigned w,unsig
         }
     }
     UINT count=1; D3D11_VIEWPORT vp{}; ctx->RSGetViewports(&count,&vp);
-    if(!w || !h || !native[0] || !native[2] || count!=1 || vp.TopLeftX!=0 || vp.TopLeftY!=0 ||
-       vp.Width!=float(w) || vp.Height!=float(h) || vp.MinDepth!=0 || vp.MaxDepth!=1 ||
-       (!(liveMode && targets[0][0].gpu) && !Create())) {
+    const bool sceneFits=w && h && native[0] && native[2] && count==1 && vp.TopLeftX==0 && vp.TopLeftY==0 &&
+       vp.Width==float(w) && vp.Height==float(h) && vp.MinDepth==0 && vp.MaxDepth==1;
+    if(!sceneFits) Logf("WEAPONSTEREO scene not supported: %ux%u targets=%d/%d viewports=%u at %.0f,%.0f %.0fx%.0f",
+                       w,h,native[0]?1:0,native[2]?1:0,count,vp.TopLeftX,vp.TopLeftY,vp.Width,vp.Height);
+    if(!sceneFits || (!(liveMode && targets[0][0].gpu) && !Create())) {
         Log("WEAPONSTEREO refused unsupported scene or allocation; native rendering unchanged");
         Release(); state.store(Done); return false;
     }

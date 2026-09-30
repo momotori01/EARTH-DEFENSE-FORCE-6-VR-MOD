@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.1.7'
+VERSION = '2.1.8'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.32.zip'
@@ -49,8 +49,11 @@ MULTISLOT_DLL_SHA = '6621591FBF3BE5745D349F97579AD03125A6EB21B8AE747832AEB243FA9
 # the picture over it (eye_crop.h). On SteamVR the same crop, forced with
 # EyeFovCrop=1 and toggled live, looked the same as before (2026-09-30); on Meta's
 # runtime it is untested. Same EDF6MultiSlot 1.5.32.
-VERIFIED_VR_SHA = 'C6BA517B4C9572BF611C5EC37FDD37F3F240A21B585BBE31D92A643C9BC3DE31'
-VERIFIED_SETTINGS_SHA = '0CAC1572211E1F5DC41F6F5952E93949E471E5AF2078057B1FD7F09BFB455FDF'
+# 2.1.8: the hand/weapon layers may use a sixth of the card's memory (1-3 GiB)
+# instead of a fixed 1 GiB: Picture size 1.5 needs 1121 MiB, and was refused, so
+# the hands turned grey and shook (fixed and confirmed on hardware 2026-09-30).
+VERIFIED_VR_SHA = '255CD1A2B1A92D927F6AF958BE5BE54134C27AADCD1327AA1CCA52E650D19AA6'
+VERIFIED_SETTINGS_SHA = '192A9F5C38D245B092AF4E7B34CE2AB1459603FDB0CF683FAE8B90C3298CE6BD'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

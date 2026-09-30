@@ -1,5 +1,9 @@
-﻿EDF6VR 2.1.7
+﻿EDF6VR 2.1.8
 =============================
+
+CHANGES IN 2.1.8
+- Fixed: at a Picture size above 1.25, hands and weapons turned grey and
+  shook.
 
 CHANGES IN 2.1.7
 - Meta Quest over Quest Link / Air Link: double vision fix. Meta's own runtime
