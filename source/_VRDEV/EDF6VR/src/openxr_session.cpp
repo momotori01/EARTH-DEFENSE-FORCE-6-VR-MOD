@@ -2011,24 +2011,9 @@ bool BuildOtherEye(int drawnEye,PerfBatch& perf,float steps,bool antiAlias) noex
 // one, or on the Fencer's panel in front of the eyes. The picture is the
 // scope's own view (mode 1, eye 2 of the native loop) or a magnified crop of
 // this eye's picture (mode 2, the digital zoom).
-void CompositeScopeLens(ID3D11Texture2D* target,unsigned eye,const NativeWorldImages& images) noexcept {
-    const auto view=ReadScopeView();
-    const auto now=GetTickCount64();
-    if(!view.active || eye>1 || !images.ready || now-view.at>250) return;
-    ScopeLensFrame lens{};
-    if(view.kind==ScopeHoloPanel) {
-        // Held in front of the eyes: between the two eye cameras, along their
-        // forward, facing back, standing with the head.
-        const auto left=ScopeCameraOf(images.view[0]),right=ScopeCameraOf(images.view[1]);
-        for(int j=0;j<3;++j) {
-            lens.centre[j]=(left.m[3][j]+right.m[3][j])*.5f+left.m[2][j]*kScopePanelDistance;
-            lens.normal[j]=-left.m[2][j];lens.up[j]=left.m[1][j];
-        }
-        lens.radius=kScopePanelHalfHeight;lens.halfWidth=kScopePanelHalfWidth;lens.shape=1;lens.valid=true;
-    } else {
-        lens=ReadScopeLens();
-        if(!lens.valid || now-lens.at>250) return;
-    }
+// One surface of it (a weapon may carry several: the Laser Guide Kit's three panels).
+void CompositeScopeSurface(ID3D11Texture2D* target,unsigned eye,const NativeWorldImages& images,
+                           const ScopeView& view,const ScopeLensFrame& lens) noexcept {
     ScopeDrawInput in{};
     in.lens=lens;in.view=images.view[eye];in.projection=images.projection[eye];in.mode=view.mode;in.style=view.style;
     in.tanHalf=view.tanHalf;in.aspect=lens.shape && lens.radius>0?lens.halfWidth/lens.radius:1.f;
@@ -2073,6 +2058,28 @@ void CompositeScopeLens(ID3D11Texture2D* target,unsigned eye,const NativeWorldIm
     const float right[3]={forward[1]*up[2]-forward[2]*up[1],forward[2]*up[0]-forward[0]*up[2],forward[0]*up[1]-forward[1]*up[0]};   // forward x up
     for(int j=0;j<3;++j) {in.right[j]=right[j];in.up[j]=up[j];in.forward[j]=forward[j];}
     DrawScopeLens(g_context,target,in);
+}
+void CompositeScopeLens(ID3D11Texture2D* target,unsigned eye,const NativeWorldImages& images) noexcept {
+    const auto view=ReadScopeView();
+    const auto now=GetTickCount64();
+    if(!view.active || eye>1 || !images.ready || now-view.at>250) return;
+    ScopeLensFrame lenses[kScopeMaxSurfaces]{};
+    int count=0;
+    if(view.kind==ScopeHoloPanel) {
+        // Held in front of the eyes: between the two eye cameras, along their
+        // forward, facing back, standing with the head.
+        auto& lens=lenses[0];
+        const auto left=ScopeCameraOf(images.view[0]),right=ScopeCameraOf(images.view[1]);
+        for(int j=0;j<3;++j) {
+            lens.centre[j]=(left.m[3][j]+right.m[3][j])*.5f+left.m[2][j]*kScopePanelDistance;
+            lens.normal[j]=-left.m[2][j];lens.up[j]=left.m[1][j];
+        }
+        lens.radius=kScopePanelHalfHeight;lens.halfWidth=kScopePanelHalfWidth;lens.shape=1;lens.valid=true;
+        count=1;
+    } else count=ReadScopeLenses(lenses);
+    for(int i=0;i<count;++i)
+        if(lenses[i].valid && (view.kind==ScopeHoloPanel || now-lenses[i].at<=250))
+            CompositeScopeSurface(target,eye,images,view,lenses[i]);
 }
 bool CopyNativeRightEye(ID3D11Texture2D* image,PerfBatch& perf,bool antiAlias,const NativeWorldImages* images=nullptr) noexcept {
     uint32_t index=0;

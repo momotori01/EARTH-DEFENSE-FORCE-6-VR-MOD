@@ -466,6 +466,10 @@ struct WeaponHoldCommand {
     bool latch=true;     // false keeps the destination as published: the heavy aim's lag is the point
     int scopeLens=-1;    // the weapon's eyepiece (scope.h ScopeLensAt), -1 none
     int screenNode=-1;   // an Air Raider monitor gun's "screen" node, for SCOPESCREEN
+    // The picture's surfaces (scope.h ScopeLensSurfaces from scopeLens): each one's
+    // frame node (its spec's `frame`, or 0, the root), -1 when the model lacks it.
+    int surfaces=0;
+    int surfaceNodes[edf6vr::kScopeMaxSurfaces]{};
 };
 WeaponHoldCommand g_holdCommand{}; // g_lock protects the command, never a borrow.
 // Identity-only rejection for the millions of unrelated native model draws.
@@ -5261,6 +5265,12 @@ void AfterUpdate(void* camera) noexcept {
                         g_holdCommand.scopeLens=ScopeLensFor(held.weapon,held.model,held.nodes,static_cast<unsigned>(held.nodeCount));
                         g_scopeLensIndex=g_holdCommand.scopeLens;g_scopeLensAt=GetTickCount64();
                         g_holdCommand.screenNode=FencerNodeIndex(held.model,held.nodes,static_cast<unsigned>(held.nodeCount),L"screen");
+                        g_holdCommand.surfaces=g_holdCommand.scopeLens>=0?edf6vr::ScopeLensSurfaces(g_holdCommand.scopeLens):0;
+                        for(int s=0;s<g_holdCommand.surfaces;++s) {
+                            const auto* spec=edf6vr::ScopeLensAt(g_holdCommand.scopeLens+s);
+                            g_holdCommand.surfaceNodes[s]=spec && spec->frame
+                                ?FencerNodeIndex(held.model,held.nodes,static_cast<unsigned>(held.nodeCount),spec->frame):0;
+                        }
                         g_holdCommand.count=held.nodeCount;
                         g_holdCommand.serial=g_calls;
                         g_holdCommand.refreshed=GetTickCount64();
@@ -6647,17 +6657,25 @@ bool DrawHeldWeapon(void* model,void* renderContext,int pass,void* view) {
                     // The eyepiece, screen or holographic monitor where this draw
                     // puts it, for the picture (scope.h): a screen by its node's
                     // live pose (the zoom opens it), the rest by the root.
-                    if(!dual && !command.fencer)
-                        if(const auto* spec=command.scopeLens>=0?edf6vr::ScopeLensAt(command.scopeLens):&edf6vr::ScopeHoloSpec()) {
-                            const int frame=spec->frame?command.screenNode:0;
-                            edf6vr::ScopeLensFrame lens{};
-                            if(frame>=0 && static_cast<std::size_t>(frame)<paletteCount
+                    if(!dual && !command.fencer) {
+                        // Every surface of the weapon's picture (a monitor gun's panels).
+                        edf6vr::ScopeLensFrame lenses[edf6vr::kScopeMaxSurfaces]{};
+                        int published=0;
+                        const int surfaces=command.scopeLens>=0?command.surfaces:1;
+                        for(int s=0;s<surfaces && s<edf6vr::kScopeMaxSurfaces;++s) {
+                            const auto* spec=command.scopeLens>=0?edf6vr::ScopeLensAt(command.scopeLens+s):&edf6vr::ScopeHoloSpec();
+                            const int frame=command.scopeLens>=0?command.surfaceNodes[s]:0;
+                            auto& lens=lenses[published];
+                            if(spec && frame>=0 && static_cast<std::size_t>(frame)<paletteCount
                                && edf6vr::ScopeLensFrameFrom(wanted[frame],*spec,command.eyeWorld,g_scopeLensScale,lens)) {
                                 lens.anchored=liveCamera;lens.eyeHalf=eyeHalf;
                                 for(int j=0;j<3;++j) lens.eye[j]=command.eyeWorld[j];
-                                lens.at=GetTickCount64();edf6vr::PublishScopeLens(lens);
+                                lens.at=GetTickCount64();
+                                ++published;
                             }
                         }
+                        if(published) edf6vr::PublishScopeLenses(lenses,published);
+                    }
                 }
                 if(prepared) for(std::size_t b=0;b<paletteCount;++b) {
                     touched=static_cast<unsigned>(b)+1; // partial writes are restored too
@@ -6938,7 +6956,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.0.1 cockpit loading, with EDF6MultiSlot 1.5.33. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 3.0.2 cockpit loading, with EDF6MultiSlot 1.5.33. Fencer weapons aim the barrel itself; no dead band on the aim.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');

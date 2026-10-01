@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.0.1'
+VERSION = '3.0.2'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.33.zip'
@@ -74,8 +74,13 @@ MULTISLOT_DLL_SHA = '3C6D53BF111A031DE888836D6EE92B191AECAABD5B54FD7D5995C3EFFC4
 # walk carry (LASERSCOPE offset 0.02 m walking and rolling, was one step), the
 # scope reticle cants with the weapon. All checked on hardware 2026-10-01. Same
 # EDF6MultiSlot 1.5.33.
-VERIFIED_VR_SHA = '52B9C108F7BA7A3F6121C03A9F47AEB46A28A64235D40912F66E06F85858BCFE'
-VERIFIED_SETTINGS_SHA = '97E23CFAE29E048027ACB6941977EEEE612BE0205D27FED325B5D5EEA26D239E'
+# 3.0.2 (the user: "v302"): the scope picture placed right on several weapons
+# (launchers on their left lens, shoulder launchers never on top, small top
+# sights as lenses, the Laser Guide Kit's three panels), each checked by the
+# user on textured model previews (research/scope) on 2026-10-02 rather than on
+# hardware. Same EDF6MultiSlot 1.5.33.
+VERIFIED_VR_SHA = '768D7A2247799942464EBA2CB95F974244B88B4F809A757E6AABAFB992C28CE5'
+VERIFIED_SETTINGS_SHA = '9E5531F600129C6FEB3786DB3E269B0AAAF71DDB9EDB13FC95FCB759228C164F'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

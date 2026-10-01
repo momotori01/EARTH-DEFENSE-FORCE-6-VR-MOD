@@ -394,6 +394,24 @@ static void TestScope() {
     CHECK(approx(lens.radius,.02f,1e-6f) && approx(lens.halfWidth,.04f,1e-6f));
     // The generic holographic monitor and the table's own rows.
     CHECK(ScopeHoloSpec().holo && !ScopeHoloSpec().node && ScopeHoloSpec().shape==0);
+    // The Laser Guide Kit shows the picture on its three panels: three rows in a
+    // row, the centre one leading; a scope has one.
+    {
+        int guide=-1,sniper=-1;
+        for(int i=0;i<ScopeLensCount();++i) {
+            const auto* row=ScopeLensAt(i);
+            if(guide<0 && !std::wcscmp(row->node,L"e_targetmarker_normal01")) guide=i;
+            if(sniper<0 && !std::wcscmp(row->node,L"s_sniper_mmf01")) sniper=i;
+        }
+        CHECK(guide>=0 && ScopeLensSurfaces(guide)==3 && sniper>=0 && ScopeLensSurfaces(sniper)==1);
+        CHECK(guide>=0 && !std::wcscmp(ScopeLensAt(guide)->frame,L"screen") && !std::wcscmp(ScopeLensAt(guide+1)->frame,L"screen_l")
+              && !std::wcscmp(ScopeLensAt(guide+2)->frame,L"screen_r"));
+        ScopeLensFrame frames[2]{};frames[0].radius=1;frames[1].radius=2;
+        PublishScopeLenses(frames,2);
+        ScopeLensFrame back[kScopeMaxSurfaces]{};
+        CHECK(ReadScopeLenses(back)==2 && back[1].radius==2 && ReadScopeLens().radius==1);
+        PublishScopeLenses(nullptr,0);
+    }
     for(int i=0;i<ScopeLensCount();++i) {
         const auto* row=ScopeLensAt(i);
         CHECK(row && row->node && row->halfWidth>0 && row->halfHeight>0 && (!row->holo || row->shape==0));

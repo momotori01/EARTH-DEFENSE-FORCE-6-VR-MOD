@@ -1,5 +1,8 @@
-﻿EDF6VR 3.0.1
+﻿EDF6VR 3.0.2
 =============================
+
+CHANGES IN 3.0.2
+- Fixed: the scope picture's position on several weapons.
 
 CHANGES IN 3.0.1
 - Sight line thickness: laser sights, throw guides (grenades, turrets) and

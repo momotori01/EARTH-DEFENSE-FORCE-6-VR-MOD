@@ -36,6 +36,10 @@ struct ScopeLensSpec {
 };
 int ScopeLensCount() noexcept;
 const ScopeLensSpec* ScopeLensAt(int index) noexcept;
+// A weapon may show the picture on several surfaces (the Laser Guide Kit's three
+// panels): its rows follow one another in the table, the first one leading.
+constexpr int kScopeMaxSurfaces=3;
+int ScopeLensSurfaces(int first) noexcept;   // rows from `first` for the same weapon, 1..kScopeMaxSurfaces
 // A zoom weapon with no scope of its own (Ranger, Wing Diver, Air Raider): a
 // round holographic monitor popped up over the sights, in the weapon root's frame.
 const ScopeLensSpec& ScopeHoloSpec() noexcept;
@@ -85,8 +89,10 @@ struct ScopeLensFrame {
     float eyeHalf=0;
     std::uint64_t at=0;
 };
-void PublishScopeLens(const ScopeLensFrame&) noexcept;
-ScopeLensFrame ReadScopeLens() noexcept;
+void PublishScopeLens(const ScopeLensFrame&) noexcept;            // one surface
+ScopeLensFrame ReadScopeLens() noexcept;                            // the first (leading) surface
+void PublishScopeLenses(const ScopeLensFrame* frames,int count) noexcept;
+int ReadScopeLenses(ScopeLensFrame out[kScopeMaxSurfaces]) noexcept;
 
 // (lens radius / eye distance) / magnification, clamped to what a frustum takes.
 float ScopeTanHalf(float lensTan,float zoom) noexcept;
