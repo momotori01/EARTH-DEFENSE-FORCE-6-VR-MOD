@@ -55,6 +55,11 @@ struct ScopeView {
     int kind=ScopeInLens;
     int style=ScopeStyleLens;
     float origin[3]{};       // on the firing line (the shot's start)
+    // The camera position of the update that placed the origin (g_eyeWorld). The
+    // render may be drawing an earlier update's world, so the scope's camera is
+    // put at that frame's own camera plus (origin - eye), not at origin itself.
+    float eye[3]{};
+    bool eyeValid=false;
     float forward[3]{};      // along the aim, normalised
     float tanHalf=0;         // the lens's half field, vertical and horizontal
     float zoom=1;

@@ -24,13 +24,14 @@ struct Constants {
     float mode[4]{};        // mode, source sRGB, target sRGB, style
     float frame0[4]{};      // tanHalf, aspect, shape
     float frame1[4]{};      // mode 1: tan left, right, top, bottom
+    float reticle[4]{};     // the reticle's turn in the surface: cos, sin (the weapon's roll)
     float origin[4]{},right[4]{},up[4]{},forward[4]{};
     float cameraRight[4]{},cameraUp[4]{},cameraForward[4]{};
     float sourceClip[4][4]{};
 };
 constexpr char shader[]=R"(
 cbuffer Data:register(b0) {
- float4 corner[4];float4 mode;float4 frame0;float4 frame1;
+ float4 corner[4];float4 mode;float4 frame0;float4 frame1;float4 reticle;
  float4 origin;float4 rightW;float4 upW;float4 forwardW;
  float4 cameraRight;float4 cameraUp;float4 cameraForward;row_major float4x4 sourceClip;
 }
@@ -67,8 +68,10 @@ float4 fragment(V i):SV_Target {
   c=source.SampleLevel(linearClamp,float2(.5+.5*n.x,.5-.5*n.y),0).rgb;
  }
  if(mode.y>.5) c=Encode(c);                  // work in display-encoded values
- // Duplex reticle: hairlines through the centre, posts outside half the field.
- float2 a=abs(float2(i.uv.x*aspect,i.uv.y));float px=max(fwidth(a.y),1e-4);
+ // Duplex reticle: hairlines through the centre, posts outside half the field,
+ // turned with the weapon (the picture stays upright, as through a real scope).
+ float2 r=float2(dot(i.uv,float2(reticle.x,-reticle.y)),dot(i.uv,reticle.yx));
+ float2 a=abs(float2(r.x*aspect,r.y));float px=max(fwidth(a.y),1e-4);
  float reach=round?1:max(aspect,1);
  float hair=max((1-smoothstep(.004,.004+px,a.y))*step(a.x,reach),(1-smoothstep(.004,.004+px,a.x))*step(a.y,1));
  float post=max((1-smoothstep(.018,.018+px,a.y))*step(.5,a.x),(1-smoothstep(.018,.018+px,a.x))*step(.5,a.y));
@@ -161,6 +164,20 @@ bool DrawScopeLens(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,const ScopeD
     data.mode[0]=float(in.mode);data.mode[1]=Srgb(sourceFormat)?1.f:0.f;data.mode[2]=Srgb(targetFormat)?1.f:0.f;data.mode[3]=float(in.style);
     data.frame0[0]=in.tanHalf;data.frame0[1]=in.aspect;data.frame0[2]=float(L.shape);
     data.frame1[0]=in.tanLeft;data.frame1[1]=in.tanRight;data.frame1[2]=in.tanTop;data.frame1[3]=in.tanBottom;
+    // A round surface is laid out by the picture's up, which follows the head; its
+    // reticle is turned onto the weapon's own up (lens.up) in that plane. A
+    // rectangle already stands on the weapon's (or the panel's) own up.
+    data.reticle[0]=1;data.reticle[1]=0;
+    if(!L.shape) {
+        float w[3]={L.up[0],L.up[1],L.up[2]};
+        const float n=w[0]*L.normal[0]+w[1]*L.normal[1]+w[2]*L.normal[2];
+        for(int j=0;j<3;++j) w[j]-=L.normal[j]*n;
+        const float lw=std::sqrt(w[0]*w[0]+w[1]*w[1]+w[2]*w[2]);
+        if(lw>1e-4f) {
+            const float c=(w[0]*up[0]+w[1]*up[1]+w[2]*up[2])/lw,s=(w[0]*right[0]+w[1]*right[1]+w[2]*right[2])/lw;
+            if(std::isfinite(c) && std::isfinite(s)) {data.reticle[0]=c;data.reticle[1]=s;}
+        }
+    }
     Copy3(data.origin,in.origin);Copy3(data.right,in.right);Copy3(data.up,in.up);Copy3(data.forward,in.forward);
     Copy3(data.cameraRight,in.cameraRight);Copy3(data.cameraUp,in.cameraUp);Copy3(data.cameraForward,in.cameraForward);
     std::memcpy(data.sourceClip,in.sourceClip.m,sizeof(data.sourceClip));

@@ -54,6 +54,7 @@ enum : int {
     ID_CREW_MAKE, ID_CREW_DELETE,
     ID_SCOPE_VIEW, ID_SCOPE_DIGITAL, ID_SCOPE_OFF, ID_SCOPE_APPLY,
     ID_LIGHT_ON, ID_LIGHT_APPLY,
+    ID_SIGHT_APPLY,
 };
 // The hand aim's switches, one a kind of seat, as the mod reads them ([VR]),
 // with their defaults (the Depth Crawler and the Barga off).
@@ -62,6 +63,10 @@ constexpr HandAimKind kHandAimKinds[8]={{L"Nix","VehicleHandAimNix",true},{L"Dep
     "VehicleHandAimDepth",false},{L"Barga","VehicleHandAimBarga",false},{L"Tank","VehicleHandAimTank",true},
     {L"Combat","VehicleHandAimCombat",true},{L"Heli","VehicleHandAimHeli",true},{L"Gun seat","VehicleHandAimGunner",true},
     {L"Brute gun","VehicleHandAimBruteGunner",true}};
+// The sight lines' thickness, each a share of the game's own ([Render]; the defaults are the user's choice).
+struct SightKey { const wchar_t* label; const char* key; const char* fallback; };
+constexpr SightKey kSightKeys[3]={{L"Laser","LaserSightWidth","0.1"},{L"Throw","ThrowGuideWidth","0.2"},
+    {L"Vehicle","VehicleAimLineWidth","0.3"}};
 
 HINSTANCE g_instance=nullptr;
 HWND g_window=nullptr,g_tabs=nullptr,g_footer=nullptr;
@@ -292,12 +297,12 @@ std::vector<std::pair<HWND,COLORREF>> g_colours;
 std::vector<HWND> g_actions;               // disabled while the game runs or a task works
 int g_y=0,g_tab=0,g_shownTab=0;
 constexpr int kLeft=24,kRight=332,kApplyX=656,kRowHeight=78,kTop=46,kWidth=760;
-constexpr int kRows=9;   // the longer tab's rows: Extra VR settings
+constexpr int kRows=10;  // the longer tab's rows: Extra VR settings
 
 HWND g_stUpdate,g_btUpdate,g_stMode,g_rbVr,g_rbFlat,g_stSize,g_rbLow,g_rbNormal,g_rbHigh,g_rbCustom,g_edSize,
      g_stHd,g_pbHd,g_btHdMake,g_btHdDelete,g_stCrew,g_pbCrew,g_btCrewMake,g_btCrewDelete,g_stHand,g_cbRight,g_cbLeft,g_stLogs,g_btLogs,
      g_stCockpit,g_cbCockpit,g_stHandAim,g_cbHandAim[8],g_stHud,g_cbHud,g_rbCorner,g_rbRWrist,g_rbLWrist,g_stReticle,g_edReticle,g_stScope,g_rbScopeView,g_rbScopeDigital,g_rbScopeOff,
-     g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stLight,g_cbLight,g_btLight,g_stReset;
+     g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stLight,g_cbLight,g_btLight,g_stSight,g_edSight[3],g_stReset;
 
 void Colour(HWND h,COLORREF c) {
     for(auto& entry:g_colours) if(entry.first==h) { entry.second=c; InvalidateRect(h,nullptr,TRUE); return; }
@@ -593,6 +598,15 @@ void LoadAll() {
     SetCheck(g_cbHud,hud); Pick({g_rbCorner,g_rbRWrist,g_rbLWrist},place==1?g_rbRWrist:place==2?g_rbLWrist:g_rbCorner);
     const auto reticle=IniValue(ini,"Render","ReticleScale","0.5");
     Say(g_stReticle,L"Now: "+Wide(reticle)); SetWindowTextW(g_edReticle,Wide(reticle).c_str());
+    {
+        std::wstring now=L"Now:";
+        for(int i=0;i<3;++i) {
+            const auto v=IniValue(ini,"Render",kSightKeys[i].key,kSightKeys[i].fallback);
+            SetWindowTextW(g_edSight[i],Wide(v).c_str());
+            now+=std::wstring(i?L",":L"")+L" "+kSightKeys[i].label+L" "+Wide(v);
+        }
+        Say(g_stSight,now);
+    }
     const bool recoil=IniOn(ini,"VR","RecoilKick",true);
     Say(g_stRecoil,recoil?L"Now: On":L"Now: Off"); SetCheck(g_cbRecoil,recoil);
     const auto buzz=IniValue(ini,"VR","ShotBuzz","0.5");
@@ -871,6 +885,14 @@ void Build() {
     g_stReticle=BeginRow(L"Aim mark size",L"The size of the aim mark (reticle).\n0.5 is normal. Bigger number, bigger mark.\n照準の大きさ（0.5が標準）");
     g_edReticle=Edit(kRight,60); Button(L"Apply",ID_RETICLE_APPLY); EndRow();
 
+    g_stSight=BeginRow(L"Sight line thickness",L"Laser sights, throw guides and vehicle aim\nlines, each on its own. 1 = the game's own.\nレーザー・投擲ガイド・乗り物照準線の太さ");
+    for(int i=0;i<3;++i) {
+        const int x=kRight+i*100;
+        Part(L"STATIC",kSightKeys[i].label,SS_LEFT,x,g_y+29,46,20);
+        g_edSight[i]=Edit(x+46,46);
+    }
+    Button(L"Apply",ID_SIGHT_APPLY); EndRow();
+
     g_stRecoil=BeginRow(L"Recoil",L"The gun kicks back in your hand\nwhen you shoot.\n撃つと銃が反動で動きます");
     g_cbRecoil=Check(L"On",ID_RECOIL_ON,kRight,60,true); Button(L"Apply",ID_RECOIL_APPLY); EndRow();
 
@@ -917,6 +939,19 @@ void OnCommand(int id) {
         Save(g_stHud,{{"Render","UiCluster",Checked(g_cbHud)?"1":"0"},
                       {"Render","UiClusterPlace",Checked(g_rbRWrist)?"1":Checked(g_rbLWrist)?"2":"0"}}); break;
     case ID_RETICLE_APPLY: ApplyNumber(g_stReticle,g_edReticle,"Render","ReticleScale",0.05,4.0); break;
+    case ID_SIGHT_APPLY: {
+        std::vector<Setting> values;
+        for(int i=0;i<3;++i) {
+            double v=0;
+            if(!ParseNumber(Narrow(Text(g_edSight[i])),v) || v<0.1 || v>2.0) {
+                Say(g_stSight,std::wstring(kSightKeys[i].label)+L": type a number from 0.1 to 2.",true);
+                return;
+            }
+            values.push_back({"Render",kSightKeys[i].key,Number(v)});
+        }
+        Save(g_stSight,values);
+        break;
+    }
     case ID_RECOIL_APPLY: Save(g_stRecoil,{{"VR","RecoilKick",Checked(g_cbRecoil)?"1":"0"}}); break;
     case ID_BUZZ_APPLY: ApplyNumber(g_stBuzz,g_edBuzz,"VR","ShotBuzz",0.0,1.0); break;
     case ID_MIRROR_APPLY: Save(g_stMirror,{{"Render","DesktopMirror",Checked(g_cbMirror)?"1":"0"}}); break;

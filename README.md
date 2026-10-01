@@ -90,6 +90,7 @@ Everything outside the game is set in **EDF6 VR setting.exe**, next to `EDF6.exe
 | **Vehicle hand aim** | Aim vehicles by pointing your gun hand, on or off for each kind of vehicle. |
 | **Compact HUD** | On or off, and where: the corner of your view, or the right or left wrist. |
 | **Aim mark size** | The reticle's size (0.5 is normal). |
+| **Sight line thickness** | The thickness of laser sights, throw guides and vehicle aim lines, each on its own (1 is the game's own width; defaults 0.1, 0.2 and 0.3). |
 | **Recoil** / **Shot vibration** | The gun kicking back when you shoot; how strongly the controller shakes (0 = off, 1 = strong). |
 | **Desktop mirror** | Also shows the game on your monitor, for recording and streaming. |
 | **Lighter Kurul shots** | The Kurul's shotgun pellets without their swelling ring. On by default. It is made from your game files when the window opens. |

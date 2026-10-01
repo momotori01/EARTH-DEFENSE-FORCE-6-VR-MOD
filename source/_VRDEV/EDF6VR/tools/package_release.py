@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.0.0'
+VERSION = '3.0.1'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.33.zip'
@@ -68,8 +68,14 @@ MULTISLOT_DLL_SHA = '3C6D53BF111A031DE888836D6EE92B191AECAABD5B54FD7D5995C3EFFC4
 # drops the stuck pellet's ring; made by the settings program, on by default,
 # toggled live there on 2026-10-01). The settings window scrolls when taller
 # than the work area. Same EDF6MultiSlot 1.5.33.
-VERIFIED_VR_SHA = '2CDABABC0D7956A98E470F7524362AF510C57C67DE06CF58FEAC562860CAE728'
-VERIFIED_SETTINGS_SHA = '9FBDE5E5ACB87CDEBBB8747DC31E2B9C081EBD9970ADDF37809E3EEB0B9C9B04'
+# 3.0.1 (the user: "v301"): sight line thickness per kind (laser sights, throw
+# guides, vehicle aim lines; [Render] *Width, defaults 0.1/0.2/0.3 = the user's
+# own settings; settings program row), the scope's camera takes the laser's own
+# walk carry (LASERSCOPE offset 0.02 m walking and rolling, was one step), the
+# scope reticle cants with the weapon. All checked on hardware 2026-10-01. Same
+# EDF6MultiSlot 1.5.33.
+VERIFIED_VR_SHA = '52B9C108F7BA7A3F6121C03A9F47AEB46A28A64235D40912F66E06F85858BCFE'
+VERIFIED_SETTINGS_SHA = '97E23CFAE29E048027ACB6941977EEEE612BE0205D27FED325B5D5EEA26D239E'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

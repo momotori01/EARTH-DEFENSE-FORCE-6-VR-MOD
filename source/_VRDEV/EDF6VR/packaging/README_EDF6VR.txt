@@ -1,5 +1,13 @@
-﻿EDF6VR 3.0.0
+﻿EDF6VR 3.0.1
 =============================
+
+CHANGES IN 3.0.1
+- Sight line thickness: laser sights, throw guides (grenades, turrets) and
+  vehicle aim lines are drawn thinner, at 0.1, 0.2 and 0.3 of the game's own
+  width. Each can be set under Extra VR settings, Sight line thickness (1 is
+  the game's own width).
+- Fixed: the laser sight seen in a scope slid away while walking or rolling.
+- Fixed: the scope crosshair tilted with your head; it now tilts with the gun.
 
 CHANGES IN 3.0.0
 New:
@@ -543,8 +551,9 @@ Main tab:
 Extra VR settings tab:
   VR cockpit, vehicle hand aim (on or off for each kind of vehicle), compact
   HUD (on or off, and where: the corner of your view or the right or left
-  wrist), aim mark size, recoil, shot vibration, desktop mirror, lighter Kurul
-  shots, and Reset: every VR setting back to how it came. Reset keeps your
+  wrist), aim mark size, sight line thickness (laser sights, throw guides and
+  vehicle aim lines, each on its own), recoil, shot vibration, desktop mirror,
+  lighter Kurul shots, and Reset: every VR setting back to how it came. Reset keeps your
   picture size and gun hand, and keeps the old file as
   Mods/Plugins/EDF6VR.ini.reset-<date>-<time>.bak.
   The window scrolls when it is taller than your screen.

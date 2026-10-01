@@ -76,8 +76,30 @@ bool ScopeResolve(void* camera) noexcept {
     UmbraLatest latest{};
     const auto view=edf6vr::ReadScopeView();
     alignas(16) edf6vr::Matrix scope{};UmbraFrustumRaw narrow{};
-    if(!view.active || view.mode!=1 || !ReadUmbraLatest(camera,latest)
-       || !edf6vr::ScopeCamera(latest.matrix,view.origin,view.forward,scope)
+    const bool haveLatest=view.active && view.mode==1 && ReadUmbraLatest(camera,latest);
+    // Measured only: this frame's camera against the eye the origin was placed
+    // against. On hardware (2026-10-01) it read a constant 0.033 m standing and
+    // walking alike -- an offset of the camera this loop starts from, not a frame
+    // lag -- so the origin is used as published.
+    // On the weapon, the camera goes where the laser starts (ScopeLaserCarry).
+    float origin[3]={view.origin[0],view.origin[1],view.origin[2]};
+    if(view.kind!=edf6vr::ScopeHoloPanel) {
+        float carry[3]{};
+        if(ScopeLaserCarry(carry)) for(int j=0;j<3;++j) origin[j]+=carry[j];
+        g_scopeWalked.store(std::sqrt(carry[0]*carry[0]+carry[1]*carry[1]+carry[2]*carry[2]),std::memory_order_relaxed);
+    }
+    if(haveLatest && view.eyeValid) {
+        float skew=0;
+        for(int j=0;j<3;++j) {const float d=latest.matrix.m[3][j]-view.eye[j];skew+=d*d;}
+        skew=std::sqrt(skew);
+        if(std::isfinite(skew) && skew<2.f) {
+            g_scopeSkewLast.store(skew,std::memory_order_relaxed);
+            if(skew>g_scopeSkewPeak.load(std::memory_order_relaxed)) g_scopeSkewPeak.store(skew,std::memory_order_relaxed);
+            g_scopeFramed.fetch_add(1,std::memory_order_relaxed);
+        } else g_scopeUnframed.fetch_add(1,std::memory_order_relaxed);
+    }
+    if(!haveLatest
+       || !edf6vr::ScopeCamera(latest.matrix,origin,view.forward,scope)
        || !edf6vr::ScopeFrustum(latest.frustum.f,view.tanHalf,view.aspect,narrow.f)) {
         g_scopeResolveRefused.fetch_add(1,std::memory_order_relaxed);
         g_umbraResolve(camera);

@@ -23,6 +23,12 @@ struct LaserSightStats {
     // rigid property of the weapon: if it wanders, the two were not read from
     // the same pose and the carried origin cannot be trusted.
     float leverMin=1e30f,leverMax=0;
+    // The walk the last applied origin was carried by (soldier+0x90 less the
+    // frame's root), when, and for which weapon: the scope's camera takes the
+    // same carry, or the laser starts a step off it while moving (scope.h).
+    float walked[3]{};
+    ULONGLONG walkedAt=0;
+    void* walkedWeapon=nullptr;
 };
 // Identity and destination only. No weapon or bone coordinate is sampled on the
 // update thread: the origin itself is taken from the game at the instant it has

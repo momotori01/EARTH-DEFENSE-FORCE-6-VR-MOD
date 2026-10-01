@@ -1,6 +1,7 @@
 // Included by plugin.cpp after fencer_dual.h, inside its private namespace.
 //
-// NOTHING OF THE GAME'S IS WRITTEN anywhere in this file. It watches the two
+// Nothing of the game's is written in this file but the two sight widths
+// (HookLaserPrepare, ThinGuideLine). It watches the two
 // attachment classes that draw a weapon's sight, and it corrects the two calls
 // that consume the arc by rewriting only the CALLER'S OWN STACK buffers -- the
 // three vectors handed to the line builder, and the ray a landing marker is
@@ -575,21 +576,122 @@ bool InstallGuideCarry(bool& changed) noexcept {
                                     reinterpret_cast<void*>(&HookGuideRay),changed);
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+// The sight lines' thickness, each a share of the game's own ([Render]
+// LaserSightWidth, ThrowGuideWidth, VehicleAimLineWidth; the user asked for half,
+// 2026-10-01, and for each to be set on its own). These are the only writes in this file, and
+// both touch a width that nothing but the drawing reads:
+// - The laser's beam is a model that its draw preparation scales across by
+//   attachment+0xB0 (688A97..688AC0: rows 0 and 1 x +0xB0, row 2 x the length
+//   +0xB4, then 688B6A sets the model's matrix). The width is lent for that call
+//   and put back.
+// - The guide's arc is the line object at attachment+0x10 (WeaponAimLine,
+//   vtable 17E2418), whose width the guide's constructor sets once to 0.02
+//   (68785F: +0x134). That value is set to its share when the guide is prepared.
+// - A vehicle weapon's aim line is a WeaponAimLine of its own (Weapon_VehicleShoot
+//   +0x1638, made at 6B3406), given 0.10 through the line's width setter 687CE0
+//   (movss [rcx+0x134],xmm1) from 6B34C7, the setter's only caller. That call is
+//   redirected to HookAimLineWidth, which passes the share on.
+constexpr float kGuideLineWidth=.02f;
+std::atomic<unsigned long long> g_sightLaserLent{0},g_sightGuideThinned{0},g_sightVehicleLines{0};
+std::atomic<float> g_sightLaserWidth{0},g_sightVehicleWidth{0};
+using AimLineWidth=void(__fastcall*)(void*,float);
+AimLineWidth g_aimLineWidthOriginal=nullptr;
+void __fastcall HookAimLineWidth(void* line,float width) {
+    if(std::isfinite(width) && width>0) {
+        g_sightVehicleWidth.store(width,std::memory_order_relaxed);
+        g_sightVehicleLines.fetch_add(1,std::memory_order_relaxed);
+        width*=g_vehicleLineScale;
+    }
+    g_aimLineWidthOriginal(line,width);
+}
+void ThinGuideLine(void* attachment) noexcept {
+    __try {
+        auto* line=*reinterpret_cast<unsigned char**>(static_cast<unsigned char*>(attachment)+0x10);
+        if(!line) return;
+        auto* width=reinterpret_cast<float*>(line+0x134);
+        const float want=kGuideLineWidth*g_guideWidthScale;
+        if(*width==kGuideLineWidth && want!=kGuideLineWidth) {
+            *width=want;
+            g_sightGuideThinned.fetch_add(1,std::memory_order_relaxed);
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+}
 void* __fastcall HookGuidePrepare(void* attachment,void* a,void* b,void* c) {
     void* weapon=nullptr;
     const auto previous=g_guideLine;
     g_guideLine={};
     if(GuideAttachmentWeapon(attachment,weapon)) GuideComputeDeltas(weapon,g_guideLine);
+    ThinGuideLine(attachment);
     void* result=nullptr;
     __try { result=g_guidePrepareOriginal(attachment,a,b,c); }
     __finally { g_guideLine=previous; GuideProbeSee(attachment,0,true); }
     return result;
 }
+// While the scope is up: the held weapon's laser against the scope's line, as
+// the game hands it to the draw (attachment+0x90 the start, +0xA0 the direction).
+// The angle shows a laser that sways with the body while the aim does not; the
+// offset, a start that wanders off the scope's camera. Peaks per report window,
+// with the soldier's step per update in the same window. Read only.
+std::atomic<float> g_laserScopeAnglePeak{0},g_laserScopeAngleLast{0},g_laserScopeOffsetPeak{0},g_laserScopeOffsetLast{0},
+    g_laserScopeStepPeak{0};
+std::atomic<unsigned long long> g_laserScopeSamples{0};
+void PeakStore(std::atomic<float>& peak,float v) noexcept { if(v>peak.load(std::memory_order_relaxed)) peak.store(v,std::memory_order_relaxed); }
+void LaserAgainstScope(void* attachment) noexcept {
+    const auto view=edf6vr::ReadScopeView();
+    if(!view.active || GetTickCount64()-view.at>250) return;
+    __try {
+        auto* bytes=static_cast<unsigned char*>(attachment);
+        if(*reinterpret_cast<void**>(bytes+8)!=g_holdCommand.weapon) return;
+        const auto* o=reinterpret_cast<const float*>(bytes+0x90);
+        const auto* d=reinterpret_cast<const float*>(bytes+0xA0);
+        const float length=std::sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
+        if(!(length>1e-6f) || !std::isfinite(length)) return;
+        const float* f=view.forward;
+        const float cosine=std::clamp((d[0]*f[0]+d[1]*f[1]+d[2]*f[2])/length,-1.f,1.f);
+        const float angle=std::acos(cosine)*57.2957795f;
+        float carry[3]{};
+        if(view.kind!=edf6vr::ScopeHoloPanel) ScopeLaserCarry(carry);   // the scope's camera takes it too
+        const float rel[3]={o[0]-view.origin[0]-carry[0],o[1]-view.origin[1]-carry[1],o[2]-view.origin[2]-carry[2]};
+        const float along=rel[0]*f[0]+rel[1]*f[1]+rel[2]*f[2];
+        float off=0;
+        for(int j=0;j<3;++j) {const float p=rel[j]-f[j]*along;off+=p*p;}
+        off=std::sqrt(off);
+        const float step=std::sqrt(g_soldierStep[0]*g_soldierStep[0]+g_soldierStep[2]*g_soldierStep[2]);
+        if(!std::isfinite(angle) || !std::isfinite(off)) return;
+        g_laserScopeAngleLast.store(angle,std::memory_order_relaxed);PeakStore(g_laserScopeAnglePeak,angle);
+        g_laserScopeOffsetLast.store(off,std::memory_order_relaxed);PeakStore(g_laserScopeOffsetPeak,off);
+        if(std::isfinite(step)) PeakStore(g_laserScopeStepPeak,step);
+        g_laserScopeSamples.fetch_add(1,std::memory_order_relaxed);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+}
 void* __fastcall HookLaserPrepare(void* attachment,void* a,void* b,void* c) {
+    LaserAgainstScope(attachment);
+    float* width=nullptr;float kept=0;
+    __try {
+        width=reinterpret_cast<float*>(static_cast<unsigned char*>(attachment)+0xB0);
+        kept=*width;
+        if(std::isfinite(kept) && kept>0 && g_laserWidthScale!=1.f) {
+            *width=kept*g_laserWidthScale;
+            g_sightLaserWidth.store(kept,std::memory_order_relaxed);
+            g_sightLaserLent.fetch_add(1,std::memory_order_relaxed);
+        } else width=nullptr;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { width=nullptr; }
     void* result=nullptr;
     __try { result=g_laserPrepareOriginal(attachment,a,b,c); }
-    __finally { GuideProbeSee(attachment,1,true); }
+    __finally { if(width) *width=kept; GuideProbeSee(attachment,1,true); }
     return result;
+}
+// The vehicle aim line's width (see HookAimLineWidth): the setter's bytes and the
+// one call to it are checked against the shipped code first.
+bool InstallAimLineWidth(bool& changed) noexcept {
+    changed=false;
+    __try {
+        constexpr unsigned char setter[]={0xF3,0x0F,0x11,0x89,0x34,0x01,0x00,0x00,0xC3};
+        if(std::memcmp(g_image.base+0x687CE0,setter,sizeof(setter))) return false;
+        g_aimLineWidthOriginal=reinterpret_cast<AimLineWidth>(g_image.base+0x687CE0);
+        return edf6vr::RedirectCall(g_image.base+0x6B34C7,reinterpret_cast<void*>(g_aimLineWidthOriginal),
+                                    reinterpret_cast<void*>(&HookAimLineWidth),changed);
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 bool InstallGuideProbe(bool& changed) noexcept {
     changed=false;
@@ -613,6 +715,12 @@ void ReportGuideProbe() noexcept {
         g_guideProbe[i].touched=false;
     }
     ReleaseSRWLockExclusive(&g_guideProbeLock);
+    Log("LASERSCOPE samples=%llu angle peak=%.2fdeg last=%.2fdeg offset peak=%.3fm last=%.3fm step peak=%.3fm",
+        g_laserScopeSamples.load(),g_laserScopeAnglePeak.exchange(0.f),g_laserScopeAngleLast.load(),
+        g_laserScopeOffsetPeak.exchange(0.f),g_laserScopeOffsetLast.load(),g_laserScopeStepPeak.exchange(0.f));
+    Log("SIGHTLINE laser x%.2f lent=%llu width=%.4f guide x%.2f thinned=%llu (0.02 -> %.4f) vehicle x%.2f lines=%llu width=%.3f",
+        g_laserWidthScale,g_sightLaserLent.load(),g_sightLaserWidth.load(),g_guideWidthScale,g_sightGuideThinned.load(),
+        kGuideLineWidth*g_guideWidthScale,g_vehicleLineScale,g_sightVehicleLines.load(),g_sightVehicleWidth.load());
     Log("GUIDEPROBE updates=%llu draws=%llu dropped=%llu dual=%d right=%p left=%p soldier=%p",
         g_guideProbeUpdates.load(),g_guideProbeDraws.load(),g_guideProbeDropped.load(),
         g_dualActive.load()?1:0,g_holdCommand.weapon,g_leftHoldCommand.weapon,g_vrSoldier);

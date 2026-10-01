@@ -1453,6 +1453,8 @@ float g_nativeZoom=1, g_renderZoom=1;
 // Weapon scopes (scope.h): [VR] ScopeMode 0 off, 1 the rendered view, 2 digital zoom.
 int g_scopeMode=1;
 float g_scopeLensScale=1;
+// Sight line thickness, each a share of the game's own ([Render], guide_probe.h).
+float g_laserWidthScale=.1f,g_guideWidthScale=.2f,g_vehicleLineScale=.3f;   // the user's choice, 2026-10-01
 int g_scopeLensIndex=-1; ULONGLONG g_scopeLensAt=0;   // the tracked weapon's eyepiece (update thread)
 float g_scopeAim[2]{}; ULONGLONG g_scopeAimAt=0;        // the aim written this update (pitch, yaw)
 bool g_scopeActive=false;
@@ -2261,6 +2263,26 @@ int ScopeLensFor(void* weapon,void* model,const void* nodes,unsigned count) noex
     memo[next]={weapon,model,index}; next=(next+1)%8;
     return index;
 }
+// The walk the held weapon's laser was last carried by (laser_sight.cpp: the
+// soldier's position at the laser's update less the hold command's root). The
+// scope's camera sits on the muzzle placed at the hold command; the laser starts
+// that far further on. Measured on hardware 2026-10-01: the laser's start was off
+// the scope's line by one update's step exactly (0.10 m walking, 0.39 m rolling,
+// 0.02 m standing), so the scope's camera takes the same carry. Zero when there is
+// no fresh laser on the held weapon (nothing near then shows the step).
+bool ScopeLaserCarry(float out[3]) noexcept {
+    out[0]=out[1]=out[2]=0;
+    const auto s=edf6vr::ReadLaserSightStats();
+    if(!s.walkedWeapon || s.walkedWeapon!=g_holdCommand.weapon || GetTickCount64()-s.walkedAt>100) return false;
+    float square=0;
+    for(int j=0;j<3;++j) square+=s.walked[j]*s.walked[j];
+    if(!std::isfinite(square) || square>4) return false;
+    for(int j=0;j<3;++j) out[j]=s.walked[j];
+    return true;
+}
+std::atomic<float> g_scopeWalked{0};   // the carry ScopeResolve last added, for the SCOPE line
+std::atomic<float> g_scopeSkewPeak{0},g_scopeSkewLast{0};   // ScopeResolve: frame camera vs published eye
+std::atomic<unsigned long long> g_scopeFramed{0},g_scopeUnframed{0};
 void ReadScopeSettings() noexcept {
     g_scopeMode=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"VR",L"ScopeMode",1,g_iniPath)),0,2);
     g_scopeLensScale=ReadFloat(g_iniPath,L"ScopeLensScale",1.f,.5f,3.f,L"VR");
@@ -2299,10 +2321,13 @@ void UpdateScopeView() noexcept {
             if(lens.valid && now-lens.at<500) lensTan=lens.lensTan;
             view.aspect=spec->shape && spec->halfHeight>0?spec->halfWidth/spec->halfHeight:1.f;
             view.style=kind==edf6vr::ScopeHoloOnWeapon?edf6vr::ScopeStyleHoloBlue:edf6vr::ScopeStyleLens;
+            // On the muzzle as the hold command placed it; ScopeResolve adds the
+            // laser's carry (ScopeLaserCarry) when it draws.
             for(int j=0;j<3;++j) view.origin[j]=g_muzzleWantValid?g_muzzleWant[j]:g_eyeWorld[j]+forward[j]*.5f;
         }
         view.tanHalf=edf6vr::ScopeTanHalf(lensTan,g_nativeZoom);
-        for(int j=0;j<3;++j) view.forward[j]=forward[j];
+        for(int j=0;j<3;++j) {view.forward[j]=forward[j];view.eye[j]=g_eyeWorld[j];}
+        view.eyeValid=g_eyeWorldValid;
         view.at=now;
     }
     if(want!=g_scopeActive) {
@@ -3989,6 +4014,9 @@ void ReloadTunables() noexcept {
     ReadVehicleHandAim(g_iniPath);
     ReadCrewFigureTest(g_iniPath);
     ReadScopeSettings();
+    g_laserWidthScale=ReadFloat(g_iniPath,L"LaserSightWidth",.1f,.1f,2.f,L"Render");
+    g_guideWidthScale=ReadFloat(g_iniPath,L"ThrowGuideWidth",.2f,.1f,2.f,L"Render");
+    g_vehicleLineScale=ReadFloat(g_iniPath,L"VehicleAimLineWidth",.3f,.1f,2.f,L"Render");
     edf6vr::EnableGpuSplit(GetPrivateProfileIntW(L"Diagnostics",L"GpuSplit",0,g_iniPath)!=0);
     g_devKeys=GetPrivateProfileIntW(L"Diagnostics",L"DevKeys",0,g_iniPath)!=0;
     g_worldNameplates=GetPrivateProfileIntW(L"Render",L"WorldNameplates",1,g_iniPath)!=0;
@@ -5493,9 +5521,15 @@ void AfterUpdate(void* camera) noexcept {
             {
                 const auto s=edf6vr::ReadScopeView();const auto l=edf6vr::ReadScopeLens();
                 const auto q=edf6vr::NativeWorldQueueStatistics();const auto d=edf6vr::ReadScopeDrawStats();
-                Log("SCOPE mode=%d active=%d lens=%d zoom=%.2f tanHalf=%.4f lensTan=%.4f lensR=%.3f lensAge=%llums loops=%llu resolves=%llu refused=%llu drawn=%llu refusedDraw=%llu (why %u) failed=%llu field drawn/asked=%.4f/%.4f",
+                Log("SCOPE mode=%d active=%d lens=%d zoom=%.2f tanHalf=%.4f lensTan=%.4f lensR=%.3f lensAge=%llums loops=%llu resolves=%llu refused=%llu drawn=%llu refusedDraw=%llu (why %u) failed=%llu field drawn/asked=%.4f/%.4f walked=%.3fm",
                     g_scopeMode,s.active,s.lens,s.zoom,s.tanHalf,l.lensTan,l.radius,l.at?GetTickCount64()-l.at:0ull,q.scopes,
-                    g_scopeResolves.load(),g_scopeResolveRefused.load(),d.drawn,d.refused,d.lastRefusal,d.failed,d.fieldTan,d.wantTan);
+                    g_scopeResolves.load(),g_scopeResolveRefused.load(),d.drawn,d.refused,d.lastRefusal,d.failed,d.fieldTan,d.wantTan,
+                    g_scopeWalked.load());
+                // Render frame against the published update: how far that frame's own
+                // camera stood from the eye the origin was placed against (peak and last
+                // in the window), and how many resolves used the frame's camera.
+                Log("SCOPESKEW peak=%.3fm last=%.3fm framed=%llu unframed=%llu",
+                    g_scopeSkewPeak.exchange(0.f),g_scopeSkewLast.load(),g_scopeFramed.load(),g_scopeUnframed.load());
             }
             Log("MUZZLEFLASH draws=%llu owned=%llu scaled=%llu scale=%.2f leftPrepared=%llu dualPassthrough=%llu efsUpdates=%llu efsLeftUpdates=%llu efsLeftCreates=%llu why=notOurs%llu/staleFrame%llu/class%llu/carried%llu/skeleton%llu/range%llu/carry%llu gapL=%.3f/%.3fm up%+.3f n%llu gapR=%.3f/%.3fm up%+.3f n%llu carryL kept=%llu lost=%llu by%.2fm carryR kept=%llu lost=%llu by%.2fm toPalm=%.3f/%.3f toRoot=%.3f/%.3f",g_flashDraws.load(),g_flashOwned.load(),g_flashScaled.load(),g_muzzleFlashScale.load(),g_flashLeftPrepared.load(),g_flashLeftRejected.load(),g_efsFlashUpdates.load(),g_efsFlashLeftUpdates.load(),g_efsFlashLeftCreates.load(),g_flashLeftWhy[0].load(),g_flashLeftWhy[1].load(),g_flashLeftWhy[2].load(),g_flashLeftWhy[3].load(),g_flashLeftWhy[4].load(),g_flashLeftWhy[5].load(),g_flashLeftWhy[6].load(),g_flashGapLast[0].load(),g_flashGapMax[0].load(),g_flashGapUp[0].load(),g_flashGapSamples[0].load(),g_flashGapLast[1].load(),g_flashGapMax[1].load(),g_flashGapUp[1].load(),g_flashGapSamples[1].load(),g_flashCarryKept[0].load(),g_flashCarryLost[0].load(),g_flashCarryLostBy[0].load(),g_flashCarryKept[1].load(),g_flashCarryLost[1].load(),g_flashCarryLostBy[1].load(),g_flashToPalm[0].load(),g_flashToPalm[1].load(),g_flashToRoot[0].load(),g_flashToRoot[1].load());
             Log("CASING calls=%llu candidates=%llu applied=%llu passthrough=%llu stage=%u",
@@ -6904,7 +6938,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.0.0 cockpit loading, with EDF6MultiSlot 1.5.33. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 3.0.1 cockpit loading, with EDF6MultiSlot 1.5.33. Fencer weapons aim the barrel itself; no dead band on the aim.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7191,12 +7225,16 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("FENCERGUARD block test 5957C0 on the shield's own aim: %u/4 sites",InstallFencerGuardHooks());
         changed=false;
         const bool probeOK=InstallGuideProbe(changed);
-        Log("GUIDEPROBE hooks ready=%d changed=%d prepare guide=17E2498+18/688680 laser=17E2458+18/688970 (read-only)",probeOK,changed);
+        Log("GUIDEPROBE hooks ready=%d changed=%d prepare guide=17E2498+18/688680 laser=17E2458+18/688970 (sight widths: laser x%.2f guide x%.2f)",probeOK,changed,g_laserWidthScale,g_guideWidthScale);
         if(changed && !probeOK) g_faulted=true;
         changed=false;
         const bool carryOK=InstallGuideCarry(changed);
         Log("GUIDECARRY hooks ready=%d changed=%d arc=6888D9->6899F0 rays=688FFD->11BD380 (caller stack only; no weapon matrix is written)",carryOK,changed);
         if(changed && !carryOK) g_faulted=true;
+        changed=false;
+        const bool aimLineOK=InstallAimLineWidth(changed);
+        Log("SIGHTLINE vehicle aim line width hook ready=%d changed=%d call=6B34C7->687CE0",aimLineOK,changed);
+        if(changed && !aimLineOK) g_faulted=true;
         g_casingFollowsWeapon=GetPrivateProfileIntW(L"VR",L"ShellCaseFollowsWeapon",1,g_iniPath)!=0;
         changed=false;
         const bool casingOK=!g_casingFollowsWeapon || InstallCasingOrigin(changed);

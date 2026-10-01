@@ -95,9 +95,10 @@ bool ApplyLaserMuzzle(void* attachment,ULONGLONG now) noexcept {
             // The soldier has walked on since the destination was measured.
             // Carry the hand with him rather than leave the origin behind.
             const auto walked=reinterpret_cast<const float*>(soldier+0x90);
-            float travel=0,lever=0;
+            float travel=0,lever=0,carry[3]{};
             for(int j=0;j<3;++j) {
                 const float moved=walked[j]-frame.root[j];
+                carry[j]=moved;
                 const float arm=origin[j]-root.m[3][j];
                 travel+=moved*moved; lever+=arm*arm;
                 hand.palm[j]+=moved;
@@ -138,6 +139,8 @@ bool ApplyLaserMuzzle(void* attachment,ULONGLONG now) noexcept {
                         ++stats.aimed;
                     }
                     std::memcpy(stats.muzzle,carried,sizeof(stats.muzzle));
+                    std::memcpy(stats.walked,carry,sizeof(stats.walked));
+                    stats.walkedAt=now; stats.walkedWeapon=frame.weapon;
                     ++stats.applied; applied=true;
                 }
             }
