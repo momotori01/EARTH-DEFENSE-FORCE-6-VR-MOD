@@ -1,10 +1,17 @@
 #include "vehicle_camera.h"
 #include "cockpit_combat_shells.h"
 #include "cockpit_heli_shells.h"
+#include "crew_figures.h"
+#include <algorithm>
+#include <cctype>
+#include <cwctype>
+#include <unordered_set>
+#include <vector>
 #include <atomic>
 #include <cmath>
 #include <cstring>
 #include <cwchar>
+#include <iterator>
 namespace edf6vr {
 namespace {
 // The Barga cockpit's last forward shift from its chest's lean (metres), for the log.
@@ -225,6 +232,70 @@ bool MissionTruckRider(const ImageProfile& image,const VehicleSeat& seat,NodeLoo
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+namespace {
+bool PointerShaped(std::uint64_t p) noexcept {return p>=0x10000&&p<0x7FFFFFFF0000ull&&!(p&7);}
+// A player soldier's class at p (0: none), its whole object readable.
+unsigned CrewSoldierAt(const ImageProfile& image,std::uint64_t p) noexcept {
+    auto* object=reinterpret_cast<void*>(p);
+    if(!PointerShaped(p)||!Readable(object,8))return 0;
+    const unsigned kind=SoldierClassOf(image,object);
+    return kind&&Readable(object,0x1558)?kind:0;
+}
+void NoteCrewRef(CrewScan& out,unsigned seat,unsigned offset,unsigned inner,std::uint64_t soldier) noexcept {
+    if(out.refCount<std::size(out.refs))out.refs[out.refCount++]={seat,offset,inner,reinterpret_cast<void*>(soldier)};
+}
+void NoteCrewSoldier(CrewScan& out,std::uint64_t soldier) noexcept {
+    for(unsigned i=0;i<out.soldierCount;++i)if(out.soldiers[i].soldier==reinterpret_cast<void*>(soldier))return;
+    if(out.soldierCount<std::size(out.soldiers))out.soldiers[out.soldierCount++].soldier=reinterpret_cast<void*>(soldier);
+}
+}
+bool ScanVehicleCrew(const ImageProfile& image,const VehicleSeat& seat,const void* self,CrewScan& out,bool deep) noexcept {
+    out={};
+    __try {
+        auto* v=static_cast<unsigned char*>(seat.vehicle);
+        if(!Readable(v,0xF08))return false;
+        auto* seats=At<unsigned char*>(v,0x608);const auto count=At<std::uint64_t>(v,0x618);
+        if(!count||count>16||!Readable(seats,count*0x340))return false;
+        out.seatCount=static_cast<unsigned>(count<8?count:8);
+        for(unsigned s=0;s<out.seatCount;++s) {
+            auto* ride=seats+s*0x340;out.rideInfo[s]=ride;out.cameraOwner[s]=At<void*>(ride,8);
+            if(!deep) {
+                const auto p=At<std::uint64_t>(ride,kRideInfoRider);
+                if(CrewSoldierAt(image,p)){NoteCrewRef(out,s,kRideInfoRider,~0u,p);NoteCrewSoldier(out,p);}
+                continue;
+            }
+            for(unsigned offset=0;offset<0x340;offset+=8) {
+                const auto p=At<std::uint64_t>(ride,offset);
+                if(CrewSoldierAt(image,p)){NoteCrewRef(out,s,offset,~0u,p);NoteCrewSoldier(out,p);continue;}
+                if(!PointerShaped(p)||!Readable(reinterpret_cast<void*>(p),0x20))continue;
+                for(unsigned inner=0;inner<0x20;inner+=8) {
+                    const auto q=At<std::uint64_t>(reinterpret_cast<void*>(p),inner);
+                    if(CrewSoldierAt(image,q)){NoteCrewRef(out,s,offset,inner,q);NoteCrewSoldier(out,q);}
+                }
+            }
+        }
+        for(unsigned offset=0;deep&&offset<0xF00;offset+=8) {
+            const auto p=At<std::uint64_t>(v,offset);
+            if(CrewSoldierAt(image,p)){NoteCrewRef(out,~0u,offset,~0u,p);NoteCrewSoldier(out,p);}
+        }
+        if(CrewSoldierAt(image,reinterpret_cast<std::uint64_t>(self)))NoteCrewSoldier(out,reinterpret_cast<std::uint64_t>(self));
+        for(unsigned i=0;i<out.soldierCount;++i) {
+            auto& c=out.soldiers[i];auto* s=static_cast<unsigned char*>(c.soldier);
+            c.kind=SoldierClassOf(image,s);c.self=s==self;
+            c.rideInfo=At<void*>(s,0x1540);c.vehicle=At<void*>(s,0x1548);c.id=At<std::uint32_t>(s,0x314);
+            auto* control=At<unsigned char*>(s,0x1550);
+            if(control&&Readable(control,12))c.mount=At<unsigned>(control,8);
+            for(int k=0;k<3;++k)c.world[k]=At<float>(s,0x90+4*k);
+            c.placed=VehicleLocalPoint(seat,c.world,c.local);
+            const auto at=reinterpret_cast<std::uintptr_t>(c.rideInfo),first=reinterpret_cast<std::uintptr_t>(seats);
+            if(c.vehicle==v&&at>=first&&at<first+out.seatCount*0x340&&!((at-first)%0x340)) {
+                c.seat=static_cast<unsigned>((at-first)/0x340);
+                out.rider[c.seat]=s;out.riderKind[c.seat]=c.kind;
+            }
+        }
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { out={};return false; }
+}
 bool VehicleLocalPoint(const VehicleSeat& seat,const float world[3],float local[3]) noexcept {
     __try {
         if(!Readable(seat.vehicle,0xA0)) return false;
@@ -238,6 +309,94 @@ bool VehicleLocalPoint(const VehicleSeat& seat,const float world[3],float local[
         }
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+namespace {
+std::atomic<unsigned> g_crewFigureTest{0};   // kind | model<<4 | preset<<8 (SetCrewFigureTest)
+}
+namespace {
+// The body model's file name ("P605_RANGER" of "APP:\OBJECT\P605_RANGER.MRAB")
+// from one of the model's resource-name pointers; false when it is not one.
+bool CrewModelFile(const unsigned char* model,unsigned slot,wchar_t* name,std::size_t size) noexcept {
+    __try {
+        const auto p=*reinterpret_cast<const std::uint64_t*>(model+slot);
+        if(p<0x10000||p>=0x7FFFFFFF0000ull||!Readable(reinterpret_cast<const void*>(p),0x28))return false;
+        const auto q=*reinterpret_cast<const std::uint64_t*>(p+0x20);
+        if(q<0x10000||q>=0x7FFFFFFF0000ull||!Readable(reinterpret_cast<const void*>(q),192))return false;
+        const auto* text=reinterpret_cast<const wchar_t*>(q);
+        std::size_t start=0,end=0,n=0;
+        for(;n<96;++n){const wchar_t c=text[n];if(!c)break;if(c<32||c>126)return false;if(c==L'\\'||c==L':')start=n+1;if(c==L'.')end=n;}
+        if(end<=start||end-start+1>size)return false;
+        for(std::size_t i=start;i<end;++i)name[i-start]=text[i];
+        name[end-start]=0;return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+}
+int CrewLookOf(const void* soldier,unsigned kind) noexcept {
+    if(!soldier||!kind||kind>4)return -1;
+    const auto* model=static_cast<const unsigned char*>(soldier)+kBodyModelOffset;
+    const unsigned slots[]={0x88u,0x160u};
+    for(const unsigned slot:slots) {
+        wchar_t name[64]{};if(!CrewModelFile(model,slot,name,64))continue;
+        for(unsigned look=0;look<4;++look) {
+            const char* want=CrewModelName(kind,look);if(!want)continue;
+            std::size_t i=0;
+            for(;want[i]&&name[i];++i)if(std::towupper(name[i])!=static_cast<wchar_t>(std::toupper(static_cast<unsigned char>(want[i]))))break;
+            if(!want[i]&&!name[i])return static_cast<int>(look);
+        }
+    }
+    return -1;
+}
+void SetCrewFigureTest(unsigned kind,unsigned model,unsigned preset) noexcept {
+    g_crewFigureTest.store(kind>4?0u:(kind|(model&0xFu)<<4|(preset&0xFFu)<<8),std::memory_order_relaxed);
+}
+namespace {
+bool CrewCopy(std::uint64_t from,void* to,std::size_t n) noexcept {
+    if(from<0x10000||from>=0x7FFFFFFF0000ull)return false;
+    __try {std::memcpy(to,reinterpret_cast<const void*>(from),n);return true;} __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+std::uint64_t CrewPointerAt(std::uint64_t at) noexcept {
+    std::uint64_t p=0;if(!CrewCopy(at,&p,8)||p<0x10000||p>=0x7FFFFFFF0000ull||(p&7))return 0;return p;
+}
+// The colour block's content: (0.5,0.5,0.5,0), colour 1, colour 2 (4th 0.5).
+bool CrewColourBlock(std::uint64_t y,float main[4],float sub[4]) noexcept {
+    float c[12];if(!y||(y&3)||!CrewCopy(y,c,sizeof(c)))return false;
+    if(c[0]!=.5f||c[1]!=.5f||c[2]!=.5f||c[3]!=0||c[11]!=.5f)return false;
+    for(const int i:{4,5,6,8,9,10})if(!(c[i]>=0&&c[i]<=1.001f))return false;
+    for(int k=0;k<3;++k){main[k]=c[4+k];sub[k]=c[8+k];}
+    main[3]=sub[3]=1;return true;
+}
+struct CrewColourMemo { const void* soldier=nullptr; std::uint64_t block=0; ULONGLONG failedAt=0; int route=0; };
+thread_local CrewColourMemo crewColourMemo[8];thread_local unsigned crewColourNext=0;
+}
+bool CrewColoursOf(const void* soldier,float main[4],float sub[4],int* route) noexcept {
+    if(route)*route=0;
+    if(!soldier)return false;
+    try {
+        CrewColourMemo* memo=nullptr;
+        for(auto& m:crewColourMemo)if(m.soldier==soldier){memo=&m;break;}
+        if(memo&&memo->block&&CrewColourBlock(memo->block,main,sub)){if(route)*route=memo->route;return true;}
+        if(memo&&!memo->block&&GetTickCount64()-memo->failedAt<5000)return false;
+        if(!memo){memo=&crewColourMemo[crewColourNext++%8];*memo=CrewColourMemo{};memo->soldier=soldier;}
+        const auto s=reinterpret_cast<std::uint64_t>(soldier),model=s+kBodyModelOffset;
+        auto found=[&](std::uint64_t y,int r){if(!CrewColourBlock(y,main,sub))return false;memo->block=y;memo->route=r;if(route)*route=r;return true;};
+        // The routes seen so far.
+        if(const auto a=CrewPointerAt(model+0xF0))if(const auto b=CrewPointerAt(a+0x40))if(found(CrewPointerAt(b+0x30),1))return true;
+        if(const auto x=CrewPointerAt(model+0x458)){if(found(CrewPointerAt(x+0xF0),2))return true;if(found(CrewPointerAt(x+0x150),3))return true;}
+        // Else the soldier's pointers, three deep (0x200 an object), for the block.
+        std::vector<std::pair<std::uint64_t,unsigned>> queue{{s,0}};std::unordered_set<std::uint64_t> seen{s};
+        std::vector<std::uint64_t> words(0x2400/8);
+        for(std::size_t i=0;i<queue.size()&&queue.size()<30000;++i) {
+            const auto [at,depth]=queue[i];const std::size_t size=depth?0x200:0x2400;
+            if(!CrewCopy(at,words.data(),size))continue;
+            for(std::size_t w=0;w<size/8;++w) {
+                const auto p=words[w];
+                if(p<0x10000||p>=0x7FFFFFFF0000ull||(p&7)||!seen.insert(p).second)continue;
+                if(found(p,4))return true;
+                if(depth<2)queue.push_back({p,depth+1});
+            }
+        }
+        memo->block=0;memo->failedAt=GetTickCount64();return false;
+    } catch(...) {return false;}
 }
 namespace {
 bool UnitHull(const VehicleSeat& seat,Matrix& hull) noexcept {
@@ -357,6 +516,33 @@ bool PlaceVehicleCockpit(const ImageProfile& image,const VehicleSeat& seat,NodeL
                 for(unsigned i=0;i<count;++i)selected.limb[i]=1;
                 selected.limb[neckBone]=0;
                 rig=selected;
+            }
+            // Who sits in the other seat, drawn there as that soldier
+            // (crew_figures.h): the rider RideInfo+0x260 holds, when its own
+            // seat and vehicle say so too; its class.
+            {
+                auto* ride=seats+(seatIndex?0u:3u)*0x340;
+                auto* rider=At<unsigned char*>(ride,kRideInfoRider);unsigned kind=0;
+                if(rider&&Readable(rider,0x1558)&&At<void*>(rider,0x1540)==ride&&At<void*>(rider,0x1548)==v)kind=SoldierClassOf(image,rider);
+                unsigned model=0,preset=0xFF;bool colours=false;float colour[2][4]{};
+                // A real rider's own look (the file its body was loaded from) and colours.
+                if(kind) {
+                    if(const int look=CrewLookOf(rider,kind);look>=0)model=static_cast<unsigned>(look);
+                    colours=CrewColoursOf(rider,colour[0],colour[1]);
+                }
+                // No rider there and a solo test asked for: its figure there,
+                // in the player's own look and colours if asked.
+                if(!kind)if(const auto test=g_crewFigureTest.load(std::memory_order_relaxed);test&0xFu) {
+                    kind=test&0xFu;model=test>>4&0xFu;preset=test>>8&0xFFu;
+                    auto* ownRide=seats+seatIndex*0x340;auto* own=At<unsigned char*>(ownRide,kRideInfoRider);
+                    const bool self=own&&Readable(own,0x1558)&&At<void*>(own,0x1540)==ownRide&&At<void*>(own,0x1548)==v;
+                    if(model==kCrewTestOwn){const int look=self?CrewLookOf(own,SoldierClassOf(image,own)):-1;model=look>=0?static_cast<unsigned>(look):0u;}
+                    if(preset==kCrewTestOwnColours){preset=0xFF;colours=self&&CrewColoursOf(own,colour[0],colour[1]);}
+                    if(model>3)model=0;
+                }
+                rig.crewKind=static_cast<unsigned char>(kind);rig.crewModel=static_cast<unsigned char>(model);
+                rig.crewPreset=static_cast<unsigned char>(preset);rig.crewColours=colours;
+                std::memcpy(rig.crewColour,colour,sizeof(colour));
             }
             cabin=next;return true;
         }
@@ -774,6 +960,33 @@ void RebaseVehicleStick(float yaw,float& x,float& y) noexcept {
     x=c*x-s*y;y=s*oldX+c*y;
     const float peak=std::fmax(1.0f,std::fmax(std::fabs(x),std::fabs(y)));
     x/=peak;y/=peak;
+}
+bool HandAimStick(const Quat& reference,const Quat& aim,float level,float deadzone,float full,float& x,float& y,HandAimAngles* angles) noexcept {
+    x=y=0;
+    if(!NormalizedQuat(reference)||!NormalizedQuat(aim)||!std::isfinite(level)||!std::isfinite(deadzone)||!std::isfinite(full)||deadzone<0||full<=deadzone)return false;
+    // Both angles off the pointing direction's own components (asin), not a
+    // heading: steady even pointed straight up, where a heading spins.
+    const Vec3 ahead=QuatRotate(aim,{0,0,-1}),right=QuatRotate(reference,{1,0,0});
+    const float side=std::asin(std::clamp(ahead.x*right.x+ahead.y*right.y+ahead.z*right.z,-1.f,1.f));
+    const float up=std::asin(std::clamp(ahead.y,-1.f,1.f));
+    auto push=[&](float angle){const float off=std::fabs(angle)-deadzone;return off<=0?0.f:std::copysign(std::fmin(1.f,off/(full-deadzone)),angle);};
+    x=push(side);y=push(up-level);
+    if(angles){angles->right=side;angles->up=up;}
+    return true;
+}
+HandAimClass HandAimClassOf(CockpitKind kind) noexcept {
+    switch(kind) {
+    case CockpitKind::Nix: case CockpitKind::NixChest: return HandAimClass::Nix;
+    case CockpitKind::Crawler: return HandAimClass::Depth;
+    case CockpitKind::Barga: return HandAimClass::Barga;
+    case CockpitKind::Tank: return HandAimClass::Tank;
+    case CockpitKind::CombatNegling: case CockpitKind::CombatGrape: case CockpitKind::CombatCaliban: return HandAimClass::Combat;
+    case CockpitKind::HeliNereid: case CockpitKind::Heli602: case CockpitKind::Heli506: case CockpitKind::HeliBrute: return HandAimClass::Heli;
+    case CockpitKind::ProteusGunner: case CockpitKind::ProteusDriver: case CockpitKind::ProteusMissile: case CockpitKind::TitanGunner:
+        return HandAimClass::Gunner;
+    case CockpitKind::HeliBruteGunner: return HandAimClass::BruteGunner;
+    default: return HandAimClass::None;
+    }
 }
 bool VehicleStickForward(const ImageProfile& image,const VehicleSeat& seat,NodeLookup lookup,const Matrix& hull,Vec3& forward,WalkerProbe* probe) noexcept {
     __try {

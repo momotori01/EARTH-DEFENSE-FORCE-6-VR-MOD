@@ -18,8 +18,8 @@ std::atomic<unsigned> generation{0};
 NativeWorldLog logger=nullptr;
 struct View {Matrix view{},projection{};unsigned calls=0;bool sawView=false,sawProjection=false;};
 struct State {
-    ComPtr<ID3D11Texture2D> image[2];
-    View views[2][2]{}; // Main/Far; shadows retain their original view
+    ComPtr<ID3D11Texture2D> image[3];   // left, right, the scope's mono view
+    View views[3][2]{}; // Main/Far; shadows retain their original view
     AimHudSnapshot aim{};
     CockpitPose cockpit{};
     bool cockpitMatched=false;
@@ -31,8 +31,10 @@ struct State {
     float ipd=0,physicalIpd=0;
     int eye=-1,mode=-1;
     bool bad=false,attempted=false,copied[2]{};
+    // Eye 2, the scope: kept apart, so a scope that fails never costs the pair.
+    bool scopeCopied=false,scopeBad=false;
 } state;
-std::uint64_t pairs=0,rejected=0;
+std::uint64_t pairs=0,rejected=0,scopes=0;
 ULONGLONG nextReport=0;
 Matrix InverseRigid(const Matrix& m) {
     Matrix out{};out.m[3][3]=1;
@@ -65,7 +67,7 @@ bool Capture(unsigned eye,ID3D11DeviceContext* ctx,ID3D11Texture2D* source) {
     if(!ctx || !source || ctx->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE) return false;
     ComPtr<ID3D11Device> device,sourceDevice;ctx->GetDevice(&device);source->GetDevice(&sourceDevice);
     if(device.Get()!=sourceDevice.Get()) return false;
-    if(eye==1 && state.image[0]) {
+    if(eye>=1 && state.image[0]) {
         ComPtr<ID3D11Device> leftDevice;state.image[0]->GetDevice(&leftDevice);
         if(device.Get()!=leftDevice.Get()) return false;
     }
@@ -103,8 +105,17 @@ const CockpitPose* NativeWorldCockpit() noexcept {
 }
 std::uint64_t NativeWorldRenderFrame() noexcept {return state.eye>=0?state.frame:0;}
 void BeginNativeWorldEye(std::uint64_t frame,unsigned eye) noexcept {
-    if(eye>1 || !frame) return;
+    if(eye>2 || !frame) return;
+    if(eye==2) {
+        // After a complete pair only; it never marks the pair bad.
+        std::memset(state.views[2],0,sizeof(state.views[2]));
+        state.scopeCopied=false;
+        state.scopeBad=state.frame!=frame || !state.copied[1] || state.eye>=0;
+        state.eye=2;state.mode=-1;
+        return;
+    }
     if(!eye) {
+        state.scopeCopied=false;state.scopeBad=false;
         const bool unfinished=state.eye>=0;
         std::memset(state.views,0,sizeof(state.views));state.copied[0]=state.copied[1]=false;
         state.frame=frame;state.at=GetTickCount64();state.generation=generation.load();
@@ -119,7 +130,7 @@ void BeginNativeWorldView(unsigned mode,bool refresh) noexcept {
     state.mode=-1;
     if(state.eye<0 || mode>1) return;
     state.mode=static_cast<int>(mode);++state.views[state.eye][mode].calls;
-    if(!refresh) state.bad=true;
+    if(!refresh) {if(state.eye==2) state.scopeBad=true; else state.bad=true;}
 }
 void ObserveNativeWorldView(const Matrix& m) noexcept {
     if(state.eye<0 || state.mode<0) return;
@@ -132,6 +143,13 @@ void ObserveNativeWorldProjection(const Matrix& m) noexcept {
 }
 void EndNativeWorldView() noexcept {state.mode=-1;}
 void EndNativeWorldEye(std::uint64_t frame,unsigned eye,ID3D11DeviceContext* ctx,ID3D11Texture2D* source) noexcept {
+    if(eye==2) {
+        // The scope's view: copied as it is, nothing drawn into it.
+        state.scopeCopied=frame==state.frame && state.eye==2 && !state.scopeBad && Capture(2,ctx,source)
+            && state.views[2][0].sawView && state.views[2][0].sawProjection;
+        state.eye=-1;state.mode=-1;
+        return;
+    }
     if(frame!=state.frame || eye>1 || state.eye!=static_cast<int>(eye)) {state.bad=true;return;}
     state.copied[eye]=!state.bad && Capture(eye,ctx,source);
     if(state.copied[eye] && state.views[eye][0].sawView && state.views[eye][0].sawProjection) {
@@ -160,15 +178,19 @@ NativeWorldImages TakeNativeWorldImages(unsigned width,unsigned height) noexcept
         width==state.width && height==state.height && MatchingViews(measured);
     if(out.ready) {
         out.eye[0]=state.image[0];out.eye[1]=state.image[1];++pairs;
+        if(state.scopeCopied && state.image[2]) {
+            out.scope=state.image[2];out.scopeView=state.views[2][0].view;out.scopeProjection=state.views[2][0].projection;
+            out.scopeReady=true;++scopes;
+        }
         out.cockpitMatched=state.cockpitMatched&&CockpitEnabled();out.cockpit=state.cockpit;
         for(unsigned i=0;i<2;++i) {out.view[i]=state.views[i][0].view;out.projection[i]=state.views[i][0].projection;}
     }
     else if(out.attempted) ++rejected;
     if(out.attempted && logger && GetTickCount64()>=nextReport) {
         nextReport=GetTickCount64()+5000;char line[512]{};
-        std::snprintf(line,sizeof(line),"NATIVEWORLD frame=%llu ready=%d pairs=%llu rejected=%llu copied=%d/%d main=%u/%u far=%u/%u separation=%.5f/%.5fm size=%ux%u bad=%d path=%s",
+        std::snprintf(line,sizeof(line),"NATIVEWORLD frame=%llu ready=%d pairs=%llu rejected=%llu copied=%d/%d main=%u/%u far=%u/%u separation=%.5f/%.5fm size=%ux%u bad=%d path=%s scopes=%llu",
             out.frame,out.ready,pairs,rejected,state.copied[0],state.copied[1],state.views[0][0].calls,state.views[1][0].calls,
-            state.views[0][1].calls,state.views[1][1].calls,measured,state.ipd,width,height,state.bad,out.ready?"two-native-eyes":"board-fallback");logger(line);
+            state.views[0][1].calls,state.views[1][1].calls,measured,state.ipd,width,height,state.bad,out.ready?"two-native-eyes":"board-fallback",scopes);logger(line);
         if(CockpitEnabled()) {
             const auto s=ReadCockpitDrawStats();
             std::snprintf(line,sizeof(line),"COCKPIT matched=%d interiors=%llu instruments=%llu textured=%d ao=%d lights=%d environment=%d filtered=%llu pending=%llu unsupported=%llu meshes=%u kept=%u removed=%u init=%llu prepareMs=%llu ownDepthCaps=%llu lid=%u lidDraws=%llu",

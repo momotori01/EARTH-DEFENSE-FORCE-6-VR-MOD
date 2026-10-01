@@ -26,6 +26,7 @@
 #include "../src/midhook.h"
 #include "../src/patches.h"
 #include "../src/gaplog.h"
+#include "../src/packetsize.h"
 #include "../src/smoothing.h"
 #include "menu_layout.h"
 
@@ -567,10 +568,13 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (netLog) {
             Check(Contains(log, "Net log: 15 EOS imports redirected"), "NetLog=1 installs all EOS import wrappers");
+            for (const auto& hook : PacketSizeHooks()) Check(HookedInto(base, hook, plugin), "the packet size hook is installed with NetLog");
+            Check(Contains(log, "Packet sizes:"), "and says what it logs");
             for (const auto& hook : DiagnosticHooks()) Check(HookedInto(base, hook, plugin), hook.name);
             for (const auto& call : DiagnosticCalls()) Check(RedirectedInto(base + call.rva, plugin), call.name);
         } else {
             Check(!Contains(log, "Net log:"), "NetLog=0 leaves the net log off");
+            for (const auto& hook : PacketSizeHooks()) Check(SiteUntouched(base, hook), "no packet size hook without NetLog");
             for (const auto& hook : DiagnosticHooks()) Check(SiteUntouched(base, hook), "diagnostic sites untouched without NetLog");
             for (const auto& call : DiagnosticCalls()) Check(CallTargets(base + call.rva, call.rva, call.target), "diagnostic calls untouched without NetLog");
         }

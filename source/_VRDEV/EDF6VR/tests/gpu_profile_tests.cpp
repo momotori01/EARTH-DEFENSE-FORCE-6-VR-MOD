@@ -1,4 +1,5 @@
 #include "gpu_profile.h"
+#include "gpu_split.h"
 #include "warp_trial.h"
 #include <wrl/client.h>
 #include <cstdio>
@@ -53,6 +54,31 @@ int main() {
     BeginGpuFrame(device.Get(),context.Get(),true,128,128,64,0); EndGpuFrame();
     CHECK(DrainGpuProfile().phase[0].frames.count==0);
     ResetGpuProfile();
+    // The frame split: frames present to present, model runs by eye; off does nothing.
+    {
+        static int eye=-1;SetGpuSplitEyeSource([]() noexcept {return eye;});
+        EnableGpuSplit(false);GpuSplitPresent(device.Get(),context.Get());
+        { GpuSplitScope s(context.Get()); }
+        CHECK(DrainGpuSplit().frames==0);
+        EnableGpuSplit(true);
+        GpuSplitStats split{};
+        const auto until=GetTickCount64()+3000;
+        // Every frame alike: three model draws for each eye, then the rest.
+        do {
+            GpuSplitPresent(device.Get(),context.Get());
+            for(int e:{0,1}) { eye=e; for(int k=0;k<3;++k){ GpuSplitScope s(context.Get()); context->CopyResource(b.Get(),a.Get()); } }
+            eye=-1; context->CopyResource(b.Get(),a.Get());   // not a model draw: the rest
+            { GpuSplitScope other(nullptr); }                  // another context is not counted
+            context->Flush();
+            const auto s=DrainGpuSplit(); split.frames+=s.frames;
+            for(int e=0;e<3;++e){split.runs[e]+=s.runs[e];split.draws[e]+=s.draws[e];}
+            SwitchToThread();
+        } while(split.frames<20&&GetTickCount64()<until);
+        CHECK(split.frames>=20);
+        CHECK(split.runs[0]==split.frames&&split.runs[1]==split.frames&&split.runs[2]==0);   // one run an eye a frame
+        CHECK(split.draws[0]==3.0*split.frames&&split.draws[1]==3.0*split.frames);
+        EnableGpuSplit(false);
+    }
     printf("GPU timestamp/trial: %d failures, copy samples A=%llu B=%llu\n",failures,counts[0],counts[1]);
     return failures?1:0;
 }

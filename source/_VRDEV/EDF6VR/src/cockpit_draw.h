@@ -13,6 +13,10 @@ bool DrawNativeBargaCaps(ID3D11DeviceContext*,ID3D11Texture2D*,const Matrix& vie
 void DiscardCockpitFrame() noexcept;
 // Full release: device replacement or render-thread XR shutdown after GPU drain.
 void ReleaseCockpitDraw() noexcept;
+// Where tools/edf6/crew_figures.py wrote the crew figures (Mods/Plugins/EDF6VRCrew).
+void ConfigureCrewFigures(const wchar_t* folder) noexcept;
+struct CrewDrawStats { unsigned builds=0,failures=0; unsigned long long draws=0; char note[128]{}; };
+CrewDrawStats ReadCrewDrawStats() noexcept;   // render-thread counters, read for the log
 // Only inside the selected local vehicle's native AnimationModel draw. The
 // game's shader, material, animation and render camera remain in use.
 struct CockpitLimbScope {
@@ -37,6 +41,23 @@ private:
     bool previous;
 };
 bool TruckGlassIntercept(ID3D11DeviceContext*,UINT count) noexcept;
+// Research (2026-10-01, the other crew member of the Proteus's tandem cabin
+// drawn from the game's own model): inside a rider's body-model draw (slot 0-3,
+// the vehicle's seats), the DrawIndexed calls the game issues are counted, never
+// changed -- how many, their index counts, whether they write depth -- which a
+// replay of the rider inside the cockpit would have to repeat.
+struct CrewDrawScope {
+    explicit CrewDrawScope(unsigned slot) noexcept;
+    ~CrewDrawScope() noexcept;
+    CrewDrawScope(const CrewDrawScope&)=delete;
+    CrewDrawScope& operator=(const CrewDrawScope&)=delete;
+private:
+    int previous;
+};
+void CrewDrawNote(ID3D11DeviceContext*,UINT count) noexcept;
+struct CrewDrawCounts { std::uint64_t draws=0,indices=0,depthWrites=0; unsigned sizes[8]{}; };
+CrewDrawCounts ReadCrewDrawCounts(unsigned slot) noexcept;
+void ResetCrewDrawCounts(unsigned slot) noexcept;
 // Since load: draws inside the scope, and those left out.
 void TruckGlassCounts(std::uint64_t& seen,std::uint64_t& skipped) noexcept;
 struct CockpitDrawStats {

@@ -14,9 +14,11 @@ inline float FencerPursuitAxis(float error) noexcept {
     // Clear the standard right-stick dead zone. Full deflection from 5 degrees
     // off: a player holds the stick over until the aim is nearly there. At 30
     // degrees (until 2026-09-29) the last stretch of every turn and every small
-    // correction crept in far slower than the weapon can turn; the user would
-    // rather it overshoot a little and be quick. The game's own turn rate,
-    // inertia and weight still limit it: this only says how far to push.
+    // correction crept in far slower than the weapon can turn. Shorter ramps
+    // were tried on 2026-10-01 and dropped: full stick past the band never
+    // settled (each step a whole 2 degrees, past and back), and full at 3
+    // degrees stuttered with light weapons, which turn fastest. The game's own
+    // turn rate, inertia and weight still limit it: this only says how far to push.
     constexpr float span=0.06981317f;   // 4 degrees: full stick at 1 + 4
     const float value=0.28f+0.72f*std::clamp((magnitude-dead)/span,0.0f,1.0f);
     return std::copysign(value,error);

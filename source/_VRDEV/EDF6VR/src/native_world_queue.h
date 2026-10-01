@@ -15,6 +15,9 @@ struct NativeWorldQueueCallbacks {
     // Called before the eye's end marker; retain any native final output here.
     // scene is the original11978D0 scene (native nonvolatile RDI), not a queue.
     void (*producerEnd)(std::uint64_t frame,unsigned eye,void* scene) noexcept=nullptr;
+    // Asked after the right eye's loop: true runs the loop once more as eye 2,
+    // the weapon scope's mono view (scope.h). Same markers, same producer end.
+    bool (*allowScope)() noexcept=nullptr;
 };
 using NativeWorldQueueLog=void(*)(const char*,...);
 bool InstallNativeWorldQueue(const ImageProfile&,const NativeWorldQueueCallbacks&,
@@ -27,7 +30,7 @@ std::uint64_t NativeWorldProducerFrame() noexcept;
 // Check this before using images; still clear an obsolete matching scope at end.
 bool NativeWorldFrameValid(std::uint64_t frame) noexcept;
 struct NativeWorldQueueStats {
-    std::uint64_t pairs=0,loops=0,begins=0,ends=0,invalidMarkers=0;
+    std::uint64_t pairs=0,loops=0,begins=0,ends=0,invalidMarkers=0,scopes=0;
 };
 NativeWorldQueueStats NativeWorldQueueStatistics() noexcept;
 }

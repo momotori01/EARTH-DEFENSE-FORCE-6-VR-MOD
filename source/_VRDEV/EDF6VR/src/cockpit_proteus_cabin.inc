@@ -593,7 +593,9 @@ std::vector<CockpitVertex> ProteusCabinInterior(bool rear) {
         // The lever's guide plate sits in a console head; a pedestal from the
         // rear deck carries the head, its top buried in the head's underside.
         Panel base{{s*.330f,kCabinRearUp-.470f,kCabinRearBack+.125f},{1,0,0},{0,.16f,.987117f},0,0,0};
-        auto head=base;head.c=Point(base,0,0,-.048f);
+        // 4 mm below the guide's floor: their tops were one plane and fought
+        // in the open slot (the user: it flickered, as if doubled).
+        auto head=base;head.c=Point(base,0,0,-.052f);
         GripBody(v,head,.250f,.360f,.140f,Dark,.008f);
         const float x=s*.330f,z=kCabinRearBack+.125f;
         RoundedPrism(v,{{x-.090f,kCabinStep+.004f,z-.140f},{x+.090f,kCabinStep+.004f,z-.140f},

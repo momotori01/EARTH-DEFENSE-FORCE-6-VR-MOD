@@ -79,6 +79,11 @@ struct CockpitRig {
     // Combat vehicles: the model's paint, an index into kCombatPaints
     // (cockpit_combat_shells.h); 0xFF when there is none.
     unsigned char paint=0xFF;
+    // The Proteus's tandem cabin: who sits in the other seat (crew_figures.h):
+    // class 1-4 (0 nobody), look 0-3, colour preset (0xFF: the model's own),
+    // and that soldier's own two colours when read (CrewColoursOf), which win.
+    unsigned char crewKind=0,crewModel=0,crewPreset=0xFF;
+    bool crewColours=false;float crewColour[2][4]{};
 };
 struct CockpitPose {
     Matrix camera{},cabin{};

@@ -16,6 +16,7 @@
 #include "../src/mission.h"
 #include "../src/patches.h"
 #include "../src/gaplog.h"
+#include "../src/packetsize.h"
 #include "../src/smoothing.h"
 #include "../src/rooms.h"
 #include "../src/joinlog.h"
@@ -121,6 +122,8 @@ constexpr VrSite kVrSites[] = {
     {0x17E6080, 8}, {0x17E6148, 8}, {0x17E61F8, 8}, {0x17E6348, 8},
     {0x17E63F8, 8}, {0x17F6C20, 8}, {0x17F6CB0, 8}, {0x17F6E20, 8},
     {0x1AE5290, 8},
+    // Added by EDF6VR on 2026-10-01 (133 sites: the vehicle hand aim / crew work).
+    {0x59576A, 5}, {0x5957BA, 5}, {0x598459, 5}, {0x5996A9, 5},
     // Sites EDF6VR reported in earlier builds but not in the current list: kept so MultiSlot stays clear of
     // anything the VR mod has ever touched. 16 bytes each, which is more than any of them was.
     {0x18428, 16}, {0x2CBDF0, 16}, {0x56D709, 16}, {0x56DB5B, 16},
@@ -616,6 +619,36 @@ int main(int argc, char** argv) {
     Check(std::memcmp(image.At(0x59FB8F, 2), "\xF7\xF9", 2) == 0,
           "and edx is the remainder of the idiv just before", 0x59FB8F);
 
+    // Packet sizes (packetsize.h): the hook at 12CFFD0's entry, and the three facts the log lines state.
+    const auto packetHooks = PacketSizeHooks();
+    Check(packetHooks.size() == 1, "one packet size hook");
+    for (const auto& hook : packetHooks) {
+        const Patch verify{hook.name, hook.rva, hook.original, hook.original};
+        Check(Matches(image.At(hook.rva, hook.original.size()), verify), hook.name, hook.rva);
+        Check(PacketSizeHookHandler(hook.rva) != nullptr, "and a handler for it", hook.rva);
+    }
+    // 1. The game closes a packet at 1100 bytes and flushes before a message that would pass it - but the
+    //    message itself is copied whole whatever its length (no split).
+    Check(std::memcmp(image.At(0x12D0017, 7), "\x48\x81\xFA\x4C\x04\x00\x00", 7) == 0 &&
+              CallTargets(image.At(0x12D0020, 5), 0x12D0020, 0x12CEA10),
+          "12CFFD0 flushes at 1100 bytes (cmp rdx, 0x44C; call 12CEA10)", 0x12D0017);
+    // 2. The only data send reacts to EOS_NoConnection alone; every other result is ignored.
+    Check(RipTarget(0x12C8C54, 6) == 0x1755050 && std::memcmp(image.At(0x12C8C5A, 3), "\x83\xF8\x01", 3) == 0,
+          "12C8BC0 calls EOS_P2P_SendPacket and checks only for result 1", 0x12C8C54);
+    // 3. MissionSync_Res writes every member's loadout record into the message it sends.
+    Check(CallTargets(image.At(0x78D6FA, 5), 0x78D6FA, 0x773840) && InSyncFunctions(0x78D6FF) &&
+              !InSyncFunctions(0x78830B),
+          "MissionSync_Res (inside the sync range) writes records with 773840; the per-frame object loop is outside",
+          0x78D6FA);
+    // The stack walk's call test, on real return addresses and on ones that are not.
+    for (const std::uint32_t after : {0x12D0025u, 0x12C8C5Au, 0x78830Bu, 0x59FAE1u, 0x78D6FFu})
+        Check(FollowsCall(image.At(after - 7, 7)), "a real return address is recognised", after);
+    for (const std::uint32_t after : {0x12CFFDBu, 0x12D0017u, 0x12C8C5Du, 0x59FB7Eu})
+        Check(!FollowsCall(image.At(after - 7, 7)), "an address after no call is not", after);
+    Check(ClassifyMessage(1092) == MessageFit::Shares && ClassifyMessage(1093) == MessageFit::OwnPacket &&
+              ClassifyMessage(1162) == MessageFit::OwnPacket && ClassifyMessage(1163) == MessageFit::Dropped,
+          "message size classes: 1092 shares a packet, 1093-1162 need their own, 1163 and up are dropped");
+
     std::vector<CallSite> allCalls = calls;
     allCalls.insert(allCalls.end(), missionCalls.begin(), missionCalls.end());
     const auto ghostCalls = GhostCalls();
@@ -632,6 +665,7 @@ int main(int argc, char** argv) {
     const auto ghostHooks = GhostHooks();
     allHooks.insert(allHooks.end(), ghostHooks.begin(), ghostHooks.end());
     allHooks.insert(allHooks.end(), desyncHooks.begin(), desyncHooks.end());
+    allHooks.insert(allHooks.end(), packetHooks.begin(), packetHooks.end());
     // 8Player MOD (hostmode.cpp): the sites it replaces, and the game functions it calls from the menu frame.
     const auto hostHooks = HostModeHooks();
     Check(hostHooks.size() == 11, "host mode hook table size");

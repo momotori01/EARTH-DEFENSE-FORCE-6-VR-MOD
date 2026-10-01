@@ -2,6 +2,7 @@
 #include "cockpit_draw.h"
 #include "weapon_composite.h"
 #include "hand_draw.h"
+#include "gpu_split.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -417,6 +418,7 @@ unsigned long long WeaponSiteProbeCount(int pass) noexcept {
     return pass>=0 && pass<4?siteProbeCounts[pass].load(std::memory_order_relaxed):0;
 }
 void DrawWeaponStereo(ID3D11DeviceContext* ctx,UINT count,UINT start,INT base) noexcept {
+    GpuSplitScope gpuSplit(ctx);   // research timing of the model runs (gpu_split.h; off unless asked)
     if(siteProbePass>=0 && siteProbePass<4) siteProbeCounts[siteProbePass].fetch_add(1,std::memory_order_relaxed);
     if(CockpitLimbIntercept(ctx,count,start,base)) return;
     if(TruckGlassIntercept(ctx,count)) return;

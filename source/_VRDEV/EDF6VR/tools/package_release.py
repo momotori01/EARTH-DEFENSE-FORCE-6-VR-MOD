@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '2.1.8'
+VERSION = '3.0.0'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.32.zip'
-MULTISLOT_SHA = 'BBB538ED161CB95E9D83ECBA36756A515FF61A2EEC2B6CED5D14EB1FE2101D92'
-MULTISLOT_DLL_SHA = '6621591FBF3BE5745D349F97579AD03125A6EB21B8AE747832AEB243FA99C719'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.33.zip'
+MULTISLOT_SHA = 'A3B92B7D390514BE1289D1F831B4186A24EE2775A4DEEDF0C6E56CBEA30644A1'
+MULTISLOT_DLL_SHA = '3C6D53BF111A031DE888836D6EE92B191AECAABD5B54FD7D5995C3EFFC4231AF'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -52,8 +52,24 @@ MULTISLOT_DLL_SHA = '6621591FBF3BE5745D349F97579AD03125A6EB21B8AE747832AEB243FA9
 # 2.1.8: the hand/weapon layers may use a sixth of the card's memory (1-3 GiB)
 # instead of a fixed 1 GiB: Picture size 1.5 needs 1121 MiB, and was refused, so
 # the hands turned grey and shook (fixed and confirmed on hardware 2026-09-30).
-VERIFIED_VR_SHA = '255CD1A2B1A92D927F6AF958BE5BE54134C27AADCD1327AA1CCA52E650D19AA6'
-VERIFIED_SETTINGS_SHA = '192A9F5C38D245B092AF4E7B34CE2AB1459603FDB0CF683FAE8B90C3298CE6BD'
+# 2.2.0: vehicle aim by the gun hand (a box a kind of seat in the settings
+# program), the Proteus tandem's other rider drawn seated, slimmer palm levers,
+# Brute door gun no longer inverted (the cockpit session, hardware-checked
+# 2026-10-01); Fencer shield square in front of its controller when raised and
+# a left shield guarding where the left hand points (block test 5957C0 hooked,
+# guard on the left aim confirmed in the 2026-10-01 log); HD pack revision 3
+# (texture arrays and cube maps left alone; the 24 archives a revision-2 pack
+# got wrong are made again -- mission 65's ground confirmed). With
+# EDF6MultiSlot 1.5.33 (logging only; hashes checked on 2026-10-01).
+# 3.0.0 (the user: "v300", 2.2.0 never shipped): all of 2.2.0, plus scopes
+# (eyepiece, Air Raider screens, holographic monitors, the Fencer panel; Native,
+# Digital or Off from the settings program's Main tab; hardware-checked round by
+# round to "ズームOK" on 2026-10-01) and the lighter Kurul shots (light_effects.py
+# drops the stuck pellet's ring; made by the settings program, on by default,
+# toggled live there on 2026-10-01). The settings window scrolls when taller
+# than the work area. Same EDF6MultiSlot 1.5.33.
+VERIFIED_VR_SHA = '2CDABABC0D7956A98E470F7524362AF510C57C67DE06CF58FEAC562860CAE728'
+VERIFIED_SETTINGS_SHA = '9FBDE5E5ACB87CDEBBB8747DC31E2B9C081EBD9970ADDF37809E3EEB0B9C9B04'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

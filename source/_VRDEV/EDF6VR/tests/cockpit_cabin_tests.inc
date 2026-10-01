@@ -113,7 +113,7 @@ void CabinLayoutTest(bool baked=true) {
         for(float s:{-1.f,1.f})
             CHECK(MeshBlocked(mesh,{s*.15f,-.240f+up,.284f+back},{s*.55f,-.240f+up,.284f+back}));
         for(float s:{-1.f,1.f})
-            CHECK(MeshBlocked(mesh,{s*.20f,.27f+up,-1.00f+back},{s*.62f,.27f+up,-1.00f+back}));
+            CHECK(MeshBlocked(mesh,{s*.20f,.289f+up,-.886f+back},{s*.62f,.289f+up,-.886f+back}));   // its carriage forward
         for(float z:{0.f,kRearBack}) {
             const float deck=z<kRiser?kStep:kFloor;
             CHECK(MeshBlocked(mesh,{0,-.40f+(z<kRiser?kRearUp:0.f)+up,z+.05f+back},{0,deck-.20f+up,z+.05f+back}));

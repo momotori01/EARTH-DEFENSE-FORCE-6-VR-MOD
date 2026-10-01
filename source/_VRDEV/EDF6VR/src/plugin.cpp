@@ -31,6 +31,8 @@
 #include "camera_math.h"
 #include "first_person.h"
 #include "fencer_input.h"
+#include "scope.h"
+#include "scope_draw.h"
 #include "body_tumble.h"
 #include "gesture_input.h"
 #include "ranger_holster.h"
@@ -41,6 +43,7 @@
 #endif
 #include "vehicle_camera.h"
 #include "cockpit_draw.h"
+#include "crew_figures.h"
 #include "diagnostic_points.h"
 #include "weapon_hold.h"
 #include "vr_math.h"
@@ -53,6 +56,7 @@
 #include "xinput_bridge.h"
 #include "frame_profile.h"
 #include "gpu_profile.h"
+#include "gpu_split.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -60,6 +64,8 @@
 #include <cstring>
 #include <atomic>
 #include <thread>
+#include <array>
+#include <unordered_set>
 #include <Xinput.h>
 
 namespace {
@@ -458,6 +464,8 @@ struct WeaponHoldCommand {
     unsigned jointEnd=0;
     float jointTarget[3][3]{};
     bool latch=true;     // false keeps the destination as published: the heavy aim's lag is the point
+    int scopeLens=-1;    // the weapon's eyepiece (scope.h ScopeLensAt), -1 none
+    int screenNode=-1;   // an Air Raider monitor gun's "screen" node, for SCOPESCREEN
 };
 WeaponHoldCommand g_holdCommand{}; // g_lock protects the command, never a borrow.
 // Identity-only rejection for the millions of unrelated native model draws.
@@ -614,13 +622,39 @@ bool g_vehicleReady=false,g_requestPointReady=false;
 int g_testRequestPoints=0;
 edf6vr::RequestPointBudget g_requestBudget{};
 std::atomic<bool> g_vehicleMounted{false};
-// Set each camera update while the player sits at one of the Brute's door guns:
-// the user wants the barrel's up and down the other way round there.
+// Set each camera update while the player sits at one of the Brute's door guns
+// (AssistBruteGun). Its up and down were inverted from 2026-09-27 until the
+// user asked for them back the game's way (2026-10-01).
 std::atomic<ULONGLONG> g_bruteGunnerAt{0};
-// The right stick as read there, for AssistBruteGun, and whether a push is being
-// carried over the bottom (its pitch input turned over while held).
+// The right stick as sent there (hand aim included), for AssistBruteGun, and
+// whether a push is being carried over the bottom (its pitch input turned over
+// while held).
 std::atomic<float> g_gunStick[2]{};
 std::atomic<bool> g_gunPitchTurned{false};
+// The gun hand's pointing as the right stick in vehicles (HandAimStick): on or
+// off by kind of seat (HandAimClass; the Depth Crawler and the Barga off), the
+// elevation held as level, the deadzone and full-push angles (degrees), and
+// the hum on the gun hand while it pushes (amplitude, 0 off). The user's own
+// tuning from the 09:36 ride became the defaults: level 12, deadzone 10, full
+// 25, hum 0.03.
+// The user, 2026-10-01: level at the user's own hold -- 14 degrees up, measured
+// from the right-stick clicks they marked it with in the 09:20 ride -- a
+// deadzone of 10 and full at 15 (a soft follow is a strain), and a weak
+// buzz all the while it aims. The cabin's heading (VehicleHeadingReference's
+// yaw) is published by each vehicle camera update for the pad, which reads it
+// only while fresh.
+constexpr int kHandAimClasses=static_cast<int>(edf6vr::HandAimClass::Count);
+constexpr const wchar_t* kHandAimKeys[kHandAimClasses]={L"VehicleHandAimNix",L"VehicleHandAimDepth",L"VehicleHandAimBarga",
+    L"VehicleHandAimTank",L"VehicleHandAimCombat",L"VehicleHandAimHeli",L"VehicleHandAimGunner",L"VehicleHandAimBruteGunner"};
+constexpr const char* kHandAimNames[kHandAimClasses]={"nix","depth","barga","tank","combat","heli","gunner","brute-gunner"};
+constexpr bool kHandAimDefault[kHandAimClasses]={true,false,false,true,true,true,true,true};
+bool g_vehicleHandAimOn[kHandAimClasses]={true,false,false,true,true,true,true,true};
+float g_vehicleHandAimLevel=12.f,g_vehicleHandAimDead=10.f,g_vehicleHandAimFull=25.f,g_vehicleHandAimBuzz=.03f;
+// The seat's class (HandAimClass, -1 none), published with the cabin's heading.
+std::atomic<int> g_vehicleAimClass{-1};
+std::atomic<float> g_vehicleAimYaw{0};
+std::atomic<ULONGLONG> g_vehicleAimAt{0};
+ULONGLONG g_handAimLogAt=0,g_handAimBuzzAt=0;
 std::atomic<ULONGLONG> g_vehicleSeen{0};
 std::atomic<float> g_vehicleHeadYaw{0};
 std::atomic<float> g_moveStickRead[2]{};   // the left stick as read, for the WALKER log
@@ -1007,8 +1041,17 @@ bool Adjusting(const edf6vr::ControllerState& controls,bool handTracked,
 SRWLOCK g_fencerPadLock=SRWLOCK_INIT;
 edf6vr::FencerPadCommand g_fencerPad{};
 std::atomic<float> g_fencerTurn{0};
+// A big push one way straight after a big push the other: the aim going past
+// and being pushed back. The FENCER line counts them per axis (x yaw, y pitch).
+std::atomic<unsigned> g_fencerPadFlips[2]{};
 void PublishFencerPad(const edf6vr::FencerPadCommand& command) noexcept {
-    AcquireSRWLockExclusive(&g_fencerPadLock); g_fencerPad=command; ReleaseSRWLockExclusive(&g_fencerPadLock);
+    AcquireSRWLockExclusive(&g_fencerPadLock);
+    if(command.valid && g_fencerPad.valid) {
+        if(command.x*g_fencerPad.x<-0.25f) g_fencerPadFlips[0].fetch_add(1,std::memory_order_relaxed);
+        if(command.y*g_fencerPad.y<-0.25f) g_fencerPadFlips[1].fetch_add(1,std::memory_order_relaxed);
+    }
+    g_fencerPad=command;
+    ReleaseSRWLockExclusive(&g_fencerPadLock);
 }
 bool FencerOwnsWeaponPose(void* soldier) noexcept {
     return edf6vr::HasType(g_image,soldier,".?AVHeavyArmor@@");
@@ -1027,7 +1070,7 @@ bool WriteTrackedAim(void* soldier,float pitch,float yaw,bool tracked) noexcept 
 }
 void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
               const float headXr[3],const float rightHandXr[3],const float leftHandXr[3],
-              float headYaw=0,bool leftTracked=false) {
+              float headYaw=0,bool leftTracked=false,const float* handAim=nullptr) {
     // Left-handed: the input arrives with the hands swapped, sticks included;
     // LeftHandedSticks=0 sends the sticks back to their own hands.
     edf6vr::ControllerState controls=controlsIn;
@@ -1225,14 +1268,20 @@ void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
             if(controls.stick[1][1]>g_stickButtonEdge) pad.buttons|=kPadY;
             if(controls.stick[1][1]<-g_stickButtonEdge) pad.buttons|=kPadLeftThumb;
         } else {
-            // The Brute's door gun: up and down inverted (the user, 2026-09-27),
-            // and turned back over while a push is carried over the bottom
-            // (AssistBruteGun). The game's own aim, weight and all, moves it.
+            // In a vehicle the gun hand's pointing is added to the stick
+            // (HandAimStick, handAim: only while seated with the hand tracked).
+            float x=controls.stick[1][0],y=controls.stick[1][1];
+            if(handAim){x=std::clamp(x+handAim[0],-1.f,1.f);y=std::clamp(y+handAim[1],-1.f,1.f);}
+            pad.rightX=ToAxis(x);
+            // The Brute's door gun: the game's own up and down (the inversion
+            // of 2026-09-27 taken back, the user 2026-10-01), turned over only
+            // while a push is carried over the bottom (AssistBruteGun). The
+            // game's own aim, weight and all, moves it.
             const bool bruteGun=VehiclePadActive()&&GetTickCount64()-g_bruteGunnerAt.load(std::memory_order_relaxed)<250;
-            g_gunStick[0].store(bruteGun?controls.stick[1][0]:0.f,std::memory_order_relaxed);
-            g_gunStick[1].store(bruteGun?controls.stick[1][1]:0.f,std::memory_order_relaxed);
+            g_gunStick[0].store(bruteGun?x:0.f,std::memory_order_relaxed);
+            g_gunStick[1].store(bruteGun?y:0.f,std::memory_order_relaxed);
             const bool turned=bruteGun&&g_gunPitchTurned.load(std::memory_order_relaxed);
-            pad.rightY=ToAxis(bruteGun&&!turned?-controls.stick[1][1]:controls.stick[1][1]);
+            pad.rightY=ToAxis(turned?-y:y);
         }
         if(controls.stickClick[0]) pad.buttons|=kPadLeftThumb;
         if(controls.stickClick[1]) pad.buttons|=kPadRightThumb;
@@ -1334,7 +1383,37 @@ void RefreshPadUnlocked() {
         edf6vr::g_openxr.SetUiClusterPose(pos,quat,have);
     }
     if(++g_uiClusterTick%120==0 && UiClusterClass()!=g_uiClusterClass) PublishUiCluster();
-    BuildPad(controls,haveHead && haveRight,head,hand,other,basis.yaw,haveHead && haveLeft);
+    // Seated in a vehicle: the gun hand's pointing, off the cabin's heading, as
+    // a right stick push (HandAimStick). Nothing without a fresh heading (VR
+    // off, a menu), a tracked hand, or with the seat's kind switched off (a
+    // seat with no cabin has no kind).
+    float handAim[2]{};bool aiming=false;
+    const auto now=GetTickCount64();
+    const int aimClass=g_vehicleAimClass.load(std::memory_order_relaxed);
+    if(aimClass>=0&&aimClass<kHandAimClasses&&g_vehicleHandAimOn[aimClass]&&haveRight&&VehiclePadActive()
+       &&now-g_vehicleAimAt.load(std::memory_order_relaxed)<250) {
+        const float yaw=g_vehicleAimYaw.load(std::memory_order_relaxed);
+        const edf6vr::Quat reference{0,std::sin(yaw*.5f),0,std::cos(yaw*.5f)};
+        edf6vr::HandAimAngles angles{};constexpr float kDegree=.01745329252f;
+        aiming=edf6vr::HandAimStick(reference,{rightRot[0],rightRot[1],rightRot[2],rightRot[3]},g_vehicleHandAimLevel*kDegree,
+            g_vehicleHandAimDead*kDegree,g_vehicleHandAimFull*kDegree,handAim[0],handAim[1],&angles);
+        if(aiming&&now-g_handAimLogAt>=1000) {
+            g_handAimLogAt=now;
+            Log("HANDAIM %s right %.1f up %.1f deg (level %.1f) -> push (%.2f,%.2f) stick (%.2f,%.2f) dead %.1f full %.1f",kHandAimNames[aimClass],
+                angles.right/kDegree,angles.up/kDegree,g_vehicleHandAimLevel,handAim[0],handAim[1],controls.stick[1][0],controls.stick[1][1],
+                g_vehicleHandAimDead,g_vehicleHandAimFull);
+        }
+    }
+    // A weak hum on the gun hand all the while it pushes (the user), renewed
+    // before it runs out; nothing else buzzes that hand in a vehicle. Not while
+    // the hand is at the temple, where the stick is the d-pad and aims nothing.
+    const bool humming=aiming&&!g_gestureOn&&g_vehicleHandAimBuzz>0&&(handAim[0]!=0||handAim[1]!=0);
+    if(humming) {
+        if(now-g_handAimBuzzAt>=50){g_handAimBuzzAt=now;edf6vr::g_openxr.Buzz(1,.1f,g_vehicleHandAimBuzz);}
+    } else if(g_handAimBuzzAt&&now-g_handAimBuzzAt<100) {
+        edf6vr::g_openxr.StopBuzz(1);g_handAimBuzzAt=0;
+    }
+    BuildPad(controls,haveHead && haveRight,head,hand,other,basis.yaw,haveHead && haveLeft,aiming?handAim:nullptr);
 }
 
 // XInputGetState and GetStateEx can request input concurrently. Serialize the
@@ -1371,6 +1450,13 @@ unsigned g_eyeHeld=0;   // camera updates the current eye has waited for a frame
 float g_fovScale=1.0f;
 bool g_binocularZoom=true;
 float g_nativeZoom=1, g_renderZoom=1;
+// Weapon scopes (scope.h): [VR] ScopeMode 0 off, 1 the rendered view, 2 digital zoom.
+int g_scopeMode=1;
+float g_scopeLensScale=1;
+int g_scopeLensIndex=-1; ULONGLONG g_scopeLensAt=0;   // the tracked weapon's eyepiece (update thread)
+float g_scopeAim[2]{}; ULONGLONG g_scopeAimAt=0;        // the aim written this update (pitch, yaw)
+bool g_scopeActive=false;
+std::atomic<unsigned long long> g_scopeResolves{0},g_scopeResolveRefused{0};   // native_renderer_probe.h ScopeResolve
 int g_frameEye=0;               // which eye the frame about to be drawn is for
 float g_lastRenderFov=0, g_lastIpd=0, g_lastEyeOffset=0;
 ULONGLONG g_fovWrites=0;
@@ -1820,6 +1906,15 @@ void ReportPerf(ULONGLONG now) noexcept {
                 stat.ms/static_cast<double>(stat.count),stat.maxMs,stat.ms);
         }
     }
+    if(const auto split=edf6vr::DrainGpuSplit();split.frames||split.skipped||split.disjoint) {
+        const double n=split.frames?static_cast<double>(split.frames):1.0;
+        const double models=split.modelMs[0]+split.modelMs[1]+split.modelMs[2];
+        Log("GPUSPLIT frames=%llu gpuMs=%.2f (worst %.2f: models %.2f rest %.2f) models=%.2f [eye0 %.2f in %.1f runs/%.0f draws, eye1 %.2f in %.1f/%.0f, other %.2f in %.1f/%.0f] "
+            "rest(lighting,effects,post)=%.2f skipped=%llu disjoint=%llu",
+            split.frames,split.gpuMs/n,split.gpuMaxMs,split.modelMaxMs,split.restMaxMs,models/n,
+            split.modelMs[0]/n,split.runs[0]/n,split.draws[0]/n,split.modelMs[1]/n,split.runs[1]/n,split.draws[1]/n,
+            split.modelMs[2]/n,split.runs[2]/n,split.draws[2]/n,(split.gpuMs-models)/n,split.skipped,split.disjoint);
+    }
     const auto perf=edf6vr::DrainPerf();
     // One file open/write for the whole report, not one per stage. This runs on
     // the existing five-second reporting path, never in the Present hook.
@@ -1863,6 +1958,9 @@ void ReportPerf(ULONGLONG now) noexcept {
 // is running or finishing shutdown. Only shutdown milestones log from here.
 void OnGameFrame(void* backBuffer,unsigned width,unsigned height,unsigned sampleCount) {
     void* captureDevice=nullptr; void* captureContext=nullptr;
+    // Research: the GPU's frame, present to present (gpu_split.h; [Diagnostics] GpuSplit).
+    if(edf6vr::GpuSplitEnabled() && edf6vr::GameDevice(captureDevice,captureContext))
+        edf6vr::GpuSplitPresent(static_cast<ID3D11Device*>(captureDevice),static_cast<ID3D11DeviceContext*>(captureContext));
     if(edf6vr::WeaponLayerCapturePending() && edf6vr::GameDevice(captureDevice,captureContext))
         edf6vr::PollWeaponLayerCapture(static_cast<ID3D11DeviceContext*>(captureContext));
     if(edf6vr::WeaponStereoCapturePending() && edf6vr::GameDevice(captureDevice,captureContext))
@@ -2007,6 +2105,24 @@ void MergeShippedIni() noexcept {
     g_iniReset=edf6vr::ResetOlderIni(data,size,g_iniPath,kSettingsRevision);
     g_iniMerge=edf6vr::MergeIniDefaults(data,size,g_iniPath);
 }
+// [Diagnostics] CrewFigureTest*: the Proteus crew figure in an empty tandem
+// seat, for a solo look (live: the class and look can be changed in play).
+void ReadCrewFigureTest(const wchar_t* path) noexcept {
+    const auto kind=static_cast<unsigned>(std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Diagnostics",L"CrewFigureTest",0,path)),0,4));
+    // Look -1 and colour -2: the player's own (their own seat's soldier).
+    const int lookAsked=static_cast<int>(GetPrivateProfileIntW(L"Diagnostics",L"CrewFigureTestLook",0,path));
+    const unsigned look=lookAsked<0?edf6vr::kCrewTestOwn:static_cast<unsigned>(std::min(lookAsked,3));
+    const int colour=static_cast<int>(GetPrivateProfileIntW(L"Diagnostics",L"CrewFigureTestColour",-1,path));
+    edf6vr::SetCrewFigureTest(kind,look,colour==-2?edf6vr::kCrewTestOwnColours:colour>=0&&colour<12?static_cast<unsigned>(colour):0xFFu);
+}
+// [VR] VehicleHandAim*: at load and with the live tunables.
+void ReadVehicleHandAim(const wchar_t* path) noexcept {
+    for(int i=0;i<kHandAimClasses;++i)g_vehicleHandAimOn[i]=GetPrivateProfileIntW(L"VR",kHandAimKeys[i],kHandAimDefault[i]?1:0,path)!=0;
+    g_vehicleHandAimLevel=ReadFloat(path,L"VehicleHandAimLevelDegrees",12.f,-60.f,60.f,L"VR");
+    g_vehicleHandAimDead=ReadFloat(path,L"VehicleHandAimDeadzoneDegrees",10.f,0.f,45.f,L"VR");
+    g_vehicleHandAimFull=std::fmax(ReadFloat(path,L"VehicleHandAimFullDegrees",25.f,1.f,90.f,L"VR"),g_vehicleHandAimDead+1.f);
+    g_vehicleHandAimBuzz=ReadFloat(path,L"VehicleHandAimBuzz",.03f,0.f,1.f,L"VR");
+}
 void Settings() noexcept {
     wchar_t path[MAX_PATH]{};
     const DWORD length=GetModuleFileNameW(g_module,path,MAX_PATH);
@@ -2041,6 +2157,8 @@ void Settings() noexcept {
     edf6vr::EnableSceneAA(GetPrivateProfileIntW(L"Render",L"SceneAA",0,path)!=0);
     Log("SCENEAA configured=%d controlled by INI; F1 reserved for ClearLoot",edf6vr::SceneAAEnabled()?1:0);
     edf6vr::EnableGpuProfile(GetPrivateProfileIntW(L"Render",L"GpuProfile",0,path)!=0);
+    edf6vr::SetGpuSplitEyeSource(&edf6vr::NativeWorldProducerEye);
+    edf6vr::EnableGpuSplit(GetPrivateProfileIntW(L"Diagnostics",L"GpuSplit",0,path)!=0);
     edf6vr::SetWarpTrialEnabled(GetPrivateProfileIntW(L"Render",L"WarpABTest",0,path)!=0);
     g_warpNearest=ReadFloat(path,L"WarpNearestMetres",0.15f,0.05f,5.0f,L"Render");
     g_nearKnee=ReadFloat(path,L"WarpNearKneeMetres",1.5f,0.1f,20.0f,L"Render");
@@ -2073,6 +2191,8 @@ void Settings() noexcept {
     g_testRequestPoints=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Diagnostics",L"MissionRequestPoints",0,path)),0,1000000);
     g_stickButtons=GetPrivateProfileIntW(L"VR",L"RightStickButtons",1,path)!=0;
     g_stickButtonEdge=ReadFloat(path,L"RightStickButtonEdge",0.6f,0.2f,0.95f,L"VR");
+    ReadVehicleHandAim(path);
+    ReadCrewFigureTest(path);
     g_gripPress=ReadFloat(path,L"GripPress",0.75f,0.05f,1.0f,L"VR");
     g_gripRelease=ReadFloat(path,L"GripRelease",0.45f,0.02f,1.0f,L"VR");
     g_gripForcePress=ReadFloat(path,L"GripForcePress",0.30f,0.02f,1.0f,L"VR");
@@ -2130,6 +2250,69 @@ void Settings() noexcept {
 #include "class_support.h"
 #include "ranger_dual.h"
 #include "fencer_dual.h"
+// Which eyepiece (scope.h) a weapon model has, told by a node name; -1 none.
+// Kept per weapon, as FencerBackModel does. Update thread.
+int ScopeLensFor(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
+    struct Memo { void* weapon=nullptr; void* model=nullptr; int index=-1; };
+    static Memo memo[8]{}; static unsigned next=0;
+    for(const auto& m:memo) if(m.weapon==weapon && m.model==model && weapon) return m.index;
+    int index=-1;
+    for(int i=0;i<edf6vr::ScopeLensCount() && index<0;++i) if(FencerModelHasNode(model,nodes,count,edf6vr::ScopeLensAt(i)->node)) index=i;
+    memo[next]={weapon,model,index}; next=(next+1)%8;
+    return index;
+}
+void ReadScopeSettings() noexcept {
+    g_scopeMode=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"VR",L"ScopeMode",1,g_iniPath)),0,2);
+    g_scopeLensScale=ReadFloat(g_iniPath,L"ScopeLensScale",1.f,.5f,3.f,L"VR");
+}
+// The scope's camera for this update (scope.h): on while zoomed on foot with
+// one weapon tracked, or as the Fencer. Where the picture goes (ScopeKind):
+// a scope's eyepiece or screen; a holographic monitor over the sights of a
+// weapon without one (its row, or the generic one); the Fencer's panel in
+// front of the eyes, looking where the right hand's weapon aims. The picture's
+// half field is the surface's apparent size over the game's magnification.
+void UpdateScopeView() noexcept {
+    const auto now=GetTickCount64();
+    const bool fencer=g_fencerActive.load(),tracked=now-g_scopeLensAt<250;
+    const auto* spec=g_scopeLensIndex>=0 && tracked?edf6vr::ScopeLensAt(g_scopeLensIndex):nullptr;
+    int kind=-1;
+    if(fencer) kind=edf6vr::ScopeHoloPanel;
+    else if(spec) kind=spec->holo?edf6vr::ScopeHoloOnWeapon:edf6vr::ScopeInLens;
+    else if(tracked) {kind=edf6vr::ScopeHoloOnWeapon;spec=&edf6vr::ScopeHoloSpec();}
+    const bool zoomed=std::isfinite(g_nativeZoom) && g_nativeZoom>1.01f && g_nativeZoom<=40;
+    const bool want=g_scopeMode>0 && kind>=0 && zoomed && g_vrEnabled && g_fpsEnabled && g_stereoMode>=2
+        && edf6vr::NativeWorldEnabled() && !g_dualActive.load() && !g_vehicleMounted.load()
+        && now-g_scopeAimAt<250;
+    edf6vr::ScopeView view{};
+    if(want) {
+        float forward[3]{};FencerAimForward(g_scopeAim[0],g_scopeAim[1],forward);
+        view.active=true;view.mode=g_scopeMode;view.zoom=g_nativeZoom;view.lens=g_scopeLensIndex;view.kind=kind;
+        float lensTan=.15f;
+        if(kind==edf6vr::ScopeHoloPanel) {
+            lensTan=edf6vr::kScopePanelHalfHeight/edf6vr::kScopePanelDistance;
+            view.aspect=edf6vr::kScopePanelHalfWidth/edf6vr::kScopePanelHalfHeight;
+            view.style=edf6vr::ScopeStyleHoloGreen;
+            // From the eyes, a little ahead: the panel is held in front of them.
+            for(int j=0;j<3;++j) view.origin[j]=g_eyeWorld[j]+forward[j]*.3f;
+        } else {
+            const auto lens=edf6vr::ReadScopeLens();
+            if(lens.valid && now-lens.at<500) lensTan=lens.lensTan;
+            view.aspect=spec->shape && spec->halfHeight>0?spec->halfWidth/spec->halfHeight:1.f;
+            view.style=kind==edf6vr::ScopeHoloOnWeapon?edf6vr::ScopeStyleHoloBlue:edf6vr::ScopeStyleLens;
+            for(int j=0;j<3;++j) view.origin[j]=g_muzzleWantValid?g_muzzleWant[j]:g_eyeWorld[j]+forward[j]*.5f;
+        }
+        view.tanHalf=edf6vr::ScopeTanHalf(lensTan,g_nativeZoom);
+        for(int j=0;j<3;++j) view.forward[j]=forward[j];
+        view.at=now;
+    }
+    if(want!=g_scopeActive) {
+        g_scopeActive=want;
+        Log("SCOPE %s mode=%d kind=%d lens=%ls zoom=%.2f tanHalf=%.4f aspect=%.2f%s",want?"on":"off",g_scopeMode,kind,
+            spec && spec->node?spec->node:L"-",g_nativeZoom,view.tanHalf,view.aspect,
+            kind!=edf6vr::ScopeHoloPanel?"":g_fencerScopeHand==0?" hand=left":" hand=right");
+    }
+    edf6vr::PublishScopeView(view);
+}
 #include "guide_probe.h"
 #include "action_weapon_visibility.h"
 #include "tracked_weapon_bounds.h"
@@ -2899,6 +3082,7 @@ void ApplyVrInput(void* soldier) noexcept {
             // Other classes use absolute aim and clear look below. Fencer preserves
             // both native angle fields and the look delta produced by XInput.
             if(WriteTrackedAim(soldier,targetPitch,targetYaw,g_handAiming)) ++g_vrAimWrites;
+            if(g_handAiming && !fencer) {g_scopeAim[0]=targetPitch;g_scopeAim[1]=targetYaw;g_scopeAimAt=GetTickCount64();}   // the Fencer's: fencer_dual.h
             // The old persistent muzzle write fed back into weapon selection and
             // later placement. This visual-only borrow leaves gameplay transforms
             // and shot origin with the game; aim-angle/controller logic is unchanged.
@@ -3802,6 +3986,10 @@ void ReloadTunables() noexcept {
     if(!g_iniPath[0]) return;
     ReadHandSettings();
     g_vehicleLevelView=GetPrivateProfileIntW(L"VR",L"VehicleLevelView",1,g_iniPath)!=0;
+    ReadVehicleHandAim(g_iniPath);
+    ReadCrewFigureTest(g_iniPath);
+    ReadScopeSettings();
+    edf6vr::EnableGpuSplit(GetPrivateProfileIntW(L"Diagnostics",L"GpuSplit",0,g_iniPath)!=0);
     g_devKeys=GetPrivateProfileIntW(L"Diagnostics",L"DevKeys",0,g_iniPath)!=0;
     g_worldNameplates=GetPrivateProfileIntW(L"Render",L"WorldNameplates",1,g_iniPath)!=0;
     g_worldNameplateMask=static_cast<unsigned>(GetPrivateProfileIntW(L"Render",L"WorldNameplateClasses",7,g_iniPath));
@@ -4044,9 +4232,10 @@ void ProbeFencerWeapons(void* soldier,bool fpsApplied) noexcept {
         const auto look=reinterpret_cast<const float*>(bytes+0xD60);
         edf6vr::FencerPadCommand pad{};
         AcquireSRWLockShared(&g_fencerPadLock); pad=g_fencerPad; ReleaseSRWLockShared(&g_fencerPadLock);
-        if(report) Log("FENCER vr=%d fps=%d nativePose=1 pad=(%.3f,%.3f) fresh=%d target=(%.4f,%.4f) aim=(%.4f,%.4f) smooth=(%.4f,%.4f) gain=%.5f equip=%.4f look=(%.5f,%.5f)",
+        if(report) Log("FENCER vr=%d fps=%d nativePose=1 pad=(%.3f,%.3f) fresh=%d target=(%.4f,%.4f) aim=(%.4f,%.4f) smooth=(%.4f,%.4f) gain=%.5f equip=%.4f look=(%.5f,%.5f) flips yaw/pitch=%u/%u",
             g_vrEnabled,fpsApplied,pad.x,pad.y,pad.Fresh(now),pad.targetPitch,pad.targetYaw,angles[0],angles[1],smooth[0],smooth[1],
-            *reinterpret_cast<float*>(bytes+0x1260),*reinterpret_cast<float*>(bytes+0x1AB0),look[0],look[1]);
+            *reinterpret_cast<float*>(bytes+0x1260),*reinterpret_cast<float*>(bytes+0x1AB0),look[0],look[1],
+            g_fencerPadFlips[0].exchange(0,std::memory_order_relaxed),g_fencerPadFlips[1].exchange(0,std::memory_order_relaxed));
         const auto count=edf6vr::WeaponSlotCount(soldier);
         for(unsigned slot=0;slot<8;++slot) {
             edf6vr::WeaponPose held{};
@@ -4088,8 +4277,9 @@ void ProbeFencerWeapons(void* soldier,bool fpsApplied) noexcept {
 // +Z nose), within 3 degrees of the posed barrel (found by watching memory in
 // the 11:44 ride: +138 matched 1176 of 1193 samples).
 // The game's own stick moves them, with its own weight, which the user wants
-// kept as it is (it is the game's difficulty); the stick's up and down are
-// inverted for him in BuildPad. A mod-driven aim (12:00) was worse.
+// kept as it is (it is the game's difficulty); its up and down are the game's
+// own again (inverted in BuildPad from 2026-09-27 to 2026-10-01, the user asked
+// for them back). A mod-driven aim (12:00) was worse.
 // What is added: on entering the seat the heading is set straight out of the
 // door, the base he drew. And straight down, the pole of that yaw/pitch aim,
 // no longer stops a barrel still pushed down: the heading is mirrored about
@@ -4130,8 +4320,8 @@ void AssistBruteGun(const edf6vr::VehicleSeat& seat,unsigned side) noexcept {
             g_gunPitchTurned.store(false,std::memory_order_relaxed);
             Log("GUNNERASSIST seat %u stick (%.2f,%.2f) let go or turned: it reads as before",side+1,x,y);
         }
-    } else if(*pitch>kPole&&y>.5f&&std::fabs(*heading-outward)>kNearOut) {
-        // At the bottom and still pushed down (stick up turns the barrel down):
+    } else if(*pitch>kPole&&y<-.5f&&std::fabs(*heading-outward)>kNearOut) {
+        // At the bottom and still pushed down (stick down, the game's way):
         // over to the other side of the door's axis, pitch input turned over.
         const float was=*heading;
         *heading=s*kPi-was;
@@ -4144,6 +4334,26 @@ void AssistBruteGun(const edf6vr::VehicleSeat& seat,unsigned side) noexcept {
         Log("GUNNERASSIST seat %u heading %.3f pitch %.3f stick (%.2f,%.2f) turned %d flips %u",side+1,*heading,*pitch,
             x,y,g_gunPitchTurned.load(std::memory_order_relaxed)?1:0,a.flips);
     }
+}
+std::wstring g_crewFolder;   // Mods/Plugins/EDF6VRCrew, generated by tools/edf6/crew_figures.py
+// The other seat's figure (CREWFIG): class, look, colours and the builds, every
+// 5 s while mounted and at once when it changes or the seat is new. The
+// research that found them (the riders' raw seats, skeletons, model strings and
+// draw counts, 2026-10-01) has done its job and is gone; vehicle_camera reads the
+// look and colours (CrewLookOf, CrewColoursOf) for the figure itself.
+void ReportCrewFigure(bool entered) noexcept {
+    static ULONGLONG reported=0;static unsigned shown[3]{~0u,~0u,~0u};
+    const auto now=GetTickCount64();
+    const unsigned state[3]={g_cockpitRig.crewKind,g_cockpitRig.crewModel,g_cockpitRig.crewPreset};
+    const bool changed=entered||std::memcmp(state,shown,sizeof(state))!=0;
+    if(!changed&&now-reported<5000)return;
+    reported=now;std::memcpy(shown,state,sizeof(shown));
+    const auto figures=edf6vr::ReadCrewDrawStats();
+    Log("CREWFIG other seat class=%u look=%u preset=%u colours=%s (%.3f,%.3f,%.3f)/(%.3f,%.3f,%.3f) cabin=%d; built=%u failed=%u drawn=%llu %s",
+        g_cockpitRig.crewKind,g_cockpitRig.crewModel,g_cockpitRig.crewPreset,g_cockpitRig.crewColours?"own":"-",
+        g_cockpitRig.crewColour[0][0],g_cockpitRig.crewColour[0][1],g_cockpitRig.crewColour[0][2],
+        g_cockpitRig.crewColour[1][0],g_cockpitRig.crewColour[1][1],g_cockpitRig.crewColour[1][2],
+        static_cast<int>(g_cockpitRig.kind),figures.builds,figures.failures,figures.draws,figures.note);
 }
 // Runs under the existing camera-update lock; no game transforms are written.
 bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
@@ -4185,6 +4395,7 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
         Log("VEHICLE enter type=%s id=%u vehicle=%p seat=%p seatCamera=%p source=%p soldier=%p riderHead=%d; native sticks, camera-only XYZ, no vehicle scale",
             edf6vr::TypeName(g_image,seat.vehicle),seat.vehicleId,seat.vehicle,seat.seat,seat.cameraOwner,source,soldier,seat.riderHead);
     }
+    ReportCrewFigure(changed);
     if(!g_vrEnabled || !g_fpsEnabled || g_faulted || !edf6vr::ValidCamera(nativeCamera)) return false;
     edf6vr::HmdSample sample{};
     if(!edf6vr::g_openxr.Sample(sample) || !sample.orientationValid || !edf6vr::NormalizedQuat(sample.orientation)) return false;
@@ -4196,6 +4407,9 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
         g_recenterRequested=false;
         Log("VEHICLE recenter heading-only, pitch/roll level reference; positionValid=%d",sample.positionValid);
     }
+    // The cabin's heading for the hand aim (the pad reads it while fresh).
+    g_vehicleAimYaw.store(2.f*std::atan2(g_vehicleHeadReference.y,g_vehicleHeadReference.w),std::memory_order_relaxed);
+    g_vehicleAimAt.store(GetTickCount64(),std::memory_order_relaxed);
     edf6vr::Vec3 delta{};
     if(sample.positionValid) {
         if(!g_vehiclePositionReference) {g_vehiclePosition=sample.position;g_vehiclePositionReference=true;}
@@ -4225,6 +4439,8 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
     }
     const bool cockpit=g_cockpitRequested&&g_cockpitHooksReady&&edf6vr::NativeWorldEnabled()&&g_stereoMode>=2&&
         edf6vr::PlaceVehicleCockpit(g_image,seat,g_nodeLookup,base,g_cockpitRig);
+    // The hand aim's switch for this seat: by its cabin, none without one.
+    g_vehicleAimClass.store(cockpit?static_cast<int>(edf6vr::HandAimClassOf(g_cockpitRig.kind)):-1,std::memory_order_relaxed);
     if(cockpit) {
         const bool gunner=g_cockpitRig.kind==edf6vr::CockpitKind::ProteusGunner||g_cockpitRig.kind==edf6vr::CockpitKind::TitanGunner||
             g_cockpitRig.kind==edf6vr::CockpitKind::HeliBruteGunner;
@@ -4245,10 +4461,10 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
         anchored=true;
     }
     else edf6vr::ClearCockpitPose();
-    // The Brute's door guns (the user, 2026-09-27): the game's own stick, its
-    // up and down inverted (BuildPad, while g_bruteGunnerAt is fresh), the base
-    // out of the door and a pass over the bottom (AssistBruteGun). Only the gun
-    // changes: the player's view is not touched (he watches it from the booth).
+    // The Brute's door guns (the user, 2026-09-27): the game's own stick (its
+    // up and down no longer inverted, 2026-10-01), the base out of the door and
+    // a pass over the bottom (AssistBruteGun). Only the gun changes: the
+    // player's view is not touched (they watch it from the booth).
     if(seatIndex>=1&&seatIndex<=2&&edf6vr::HasType(g_image,seat.vehicle,".?AVVehicleHelicopter410@@")) {
         g_bruteGunnerAt.store(GetTickCount64(),std::memory_order_relaxed);
         AssistBruteGun(seat,static_cast<unsigned>(seatIndex-1));
@@ -4693,7 +4909,12 @@ void AfterUpdate(void* camera) noexcept {
                             // F890E divides stock FOV by this native camera-setting
                             // value. Read it before replacing +24 with the VR FOV.
                             g_nativeZoom=*reinterpret_cast<const float*>(bytes+0x410);
-                            g_renderZoom=!g_dualActive.load() && g_binocularZoom && std::isfinite(g_nativeZoom)
+                            // A scoped weapon zoomed: the picture is in its lens, the
+                            // headset view stays its normal size (GoldenEye VR dropped
+                            // the whole-view zoom for the same reason: the sight went
+                            // out of reach).
+                            UpdateScopeView();
+                            g_renderZoom=!g_scopeActive && !g_dualActive.load() && g_binocularZoom && std::isfinite(g_nativeZoom)
                                 && g_nativeZoom>=1 && g_nativeZoom<=40?g_nativeZoom:1;
                             edf6vr::g_openxr.SetBinocularZoom(g_renderZoom);
                             float wantFov=0, ipd=0;
@@ -5009,6 +5230,9 @@ void AfterUpdate(void* camera) noexcept {
                         g_holdCommand.objectId=pose.objectId;
                         g_holdCommand.armsNode=pose.armsNode;
                         g_holdCommand.weaponNodes=held.nodes;
+                        g_holdCommand.scopeLens=ScopeLensFor(held.weapon,held.model,held.nodes,static_cast<unsigned>(held.nodeCount));
+                        g_scopeLensIndex=g_holdCommand.scopeLens;g_scopeLensAt=GetTickCount64();
+                        g_holdCommand.screenNode=FencerNodeIndex(held.model,held.nodes,static_cast<unsigned>(held.nodeCount),L"screen");
                         g_holdCommand.count=held.nodeCount;
                         g_holdCommand.serial=g_calls;
                         g_holdCommand.refreshed=GetTickCount64();
@@ -5191,6 +5415,21 @@ void AfterUpdate(void* camera) noexcept {
         if(!supportedSoldier || !valid) ++g_rejected;
         const auto now=GetTickCount64();
         TraceFiringPresentation(camera,g_vrSoldier,fpsApplied,nativeLive,before,after);
+        // The player's own look and colours, 10 s into a mission (the crew
+        // figure reads other riders' the same way): the log says what it read.
+        {
+            static void* firstSoldier=nullptr;static ULONGLONG firstAt=0;
+            if(supportedSoldier&&valid&&g_vrSoldier) {
+                if(g_vrSoldier!=firstSoldier){firstSoldier=g_vrSoldier;firstAt=now;}
+                else if(firstAt&&now-firstAt>=10000) {
+                    firstAt=0;
+                    const unsigned kind=edf6vr::SoldierClassOf(g_image,g_vrSoldier);float main[4]{},sub[4]{};int route=0;
+                    const bool own=edf6vr::CrewColoursOf(g_vrSoldier,main,sub,&route);
+                    Log("CREWSELF class %u look %d colours %s (%.3f,%.3f,%.3f)/(%.3f,%.3f,%.3f) route %d",kind,edf6vr::CrewLookOf(g_vrSoldier,kind),
+                        own?"read":"not found",main[0],main[1],main[2],sub[0],sub[1],sub[2],route);
+                }
+            }
+        }
         if(g_calls==1 || now-g_reportTime>=5000) {
             g_reportTime=now;
             Log("ACTIONWEAPON hideCalls=%llu modelsKept=%llu",g_actionHideCalls.load(),g_actionModelsKept.load());
@@ -5251,6 +5490,13 @@ void AfterUpdate(void* camera) noexcept {
                 g_handPassSeen.load(),g_handPassMask,hands.meshes,hands.trianglesLeft,hands.trianglesRight,hands.trianglesPartial,hands.verticesReweighted,
                 hands.verticesCollapsed,hands.verticesTapered,hands.handDraws,hands.layerDraws,hands.layerRejected,hands.dropped,hands.pending,hands.note);
             Log("ZOOM native=%.3f render=%.3f binocular=%d",g_nativeZoom,g_renderZoom,g_binocularZoom);
+            {
+                const auto s=edf6vr::ReadScopeView();const auto l=edf6vr::ReadScopeLens();
+                const auto q=edf6vr::NativeWorldQueueStatistics();const auto d=edf6vr::ReadScopeDrawStats();
+                Log("SCOPE mode=%d active=%d lens=%d zoom=%.2f tanHalf=%.4f lensTan=%.4f lensR=%.3f lensAge=%llums loops=%llu resolves=%llu refused=%llu drawn=%llu refusedDraw=%llu (why %u) failed=%llu field drawn/asked=%.4f/%.4f",
+                    g_scopeMode,s.active,s.lens,s.zoom,s.tanHalf,l.lensTan,l.radius,l.at?GetTickCount64()-l.at:0ull,q.scopes,
+                    g_scopeResolves.load(),g_scopeResolveRefused.load(),d.drawn,d.refused,d.lastRefusal,d.failed,d.fieldTan,d.wantTan);
+            }
             Log("MUZZLEFLASH draws=%llu owned=%llu scaled=%llu scale=%.2f leftPrepared=%llu dualPassthrough=%llu efsUpdates=%llu efsLeftUpdates=%llu efsLeftCreates=%llu why=notOurs%llu/staleFrame%llu/class%llu/carried%llu/skeleton%llu/range%llu/carry%llu gapL=%.3f/%.3fm up%+.3f n%llu gapR=%.3f/%.3fm up%+.3f n%llu carryL kept=%llu lost=%llu by%.2fm carryR kept=%llu lost=%llu by%.2fm toPalm=%.3f/%.3f toRoot=%.3f/%.3f",g_flashDraws.load(),g_flashOwned.load(),g_flashScaled.load(),g_muzzleFlashScale.load(),g_flashLeftPrepared.load(),g_flashLeftRejected.load(),g_efsFlashUpdates.load(),g_efsFlashLeftUpdates.load(),g_efsFlashLeftCreates.load(),g_flashLeftWhy[0].load(),g_flashLeftWhy[1].load(),g_flashLeftWhy[2].load(),g_flashLeftWhy[3].load(),g_flashLeftWhy[4].load(),g_flashLeftWhy[5].load(),g_flashLeftWhy[6].load(),g_flashGapLast[0].load(),g_flashGapMax[0].load(),g_flashGapUp[0].load(),g_flashGapSamples[0].load(),g_flashGapLast[1].load(),g_flashGapMax[1].load(),g_flashGapUp[1].load(),g_flashGapSamples[1].load(),g_flashCarryKept[0].load(),g_flashCarryLost[0].load(),g_flashCarryLostBy[0].load(),g_flashCarryKept[1].load(),g_flashCarryLost[1].load(),g_flashCarryLostBy[1].load(),g_flashToPalm[0].load(),g_flashToPalm[1].load(),g_flashToRoot[0].load(),g_flashToRoot[1].load());
             Log("CASING calls=%llu candidates=%llu applied=%llu passthrough=%llu stage=%u",
                 g_casingCalls.load(),g_casingCandidates.load(),g_casingApplied.load(),g_casingRejected.load(),g_casingStage.load());
@@ -6239,7 +6485,7 @@ bool DrawFencerStereo(void* model,void* renderContext,int pass,void* view) {
     const float sourceOffset=edf6vr::NativeWorldEnabled()?-g_lastEyeOffset:g_lastEyeOffset;
     ReleaseSRWLockShared(&g_lock);
     if(!eligible || !edf6vr::WeaponStereoLive() || !edf6vr::Readable(renderContext,16)) return false;
-    if(edf6vr::NativeWorldRenderEye()==1 && edf6vr::WeaponStereoPairReady()) return true;
+    if(edf6vr::NativeWorldRenderEye()>=1 && edf6vr::WeaponStereoPairReady()) return true;
     if(g_insideFencerStereo) { g_modelOriginal(model,renderContext,pass,view); return true; }
     auto ctx=*reinterpret_cast<ID3D11DeviceContext**>(static_cast<unsigned char*>(renderContext)+8);
     if(!ctx) return false;
@@ -6282,7 +6528,7 @@ bool DrawHeldWeapon(void* model,void* renderContext,int pass,void* view) {
         if(pass>=0 && pass<32) g_heldPassTraceMask.fetch_or(1u<<pass,std::memory_order_relaxed);
     }
     // Both private weapon eyes were completed during the first world pass.
-    if((pass==0 || pass==1) && liveCamera && edf6vr::NativeWorldRenderEye()==1
+    if((pass==0 || pass==1) && liveCamera && edf6vr::NativeWorldRenderEye()>=1
        && edf6vr::WeaponStereoPairReady()) return true;
     // Reentrant draws consume the existing borrowed pose; never transform it
     // twice and never recursively acquire the non-recursive SRW lock.
@@ -6344,6 +6590,40 @@ bool DrawHeldWeapon(void* model,void* renderContext,int pass,void* view) {
                         PublishMuzzleFrame(command.weapon,command.soldier,command.objectId,muzzle,command.rootWorld,command.refreshed,
                                            command.fencer?command.handIndex:1u);
                     PublishCasingFrame(command,&arm,&wanted[0]);
+                    // Research for the Air Raider monitor guns (2026-10-01): their
+                    // "screen" node's live pose against the root while zoomed, which
+                    // the animation sets (the plate swings or the lid opens), every 2 s.
+                    if(command.screenNode>0 && static_cast<std::size_t>(command.screenNode)<paletteCount
+                       && std::isfinite(g_nativeZoom) && g_nativeZoom>1.01f) {
+                        static ULONGLONG screenAt=0;const auto nowTick=GetTickCount64();
+                        if(nowTick-screenAt>=2000) {
+                            screenAt=nowTick;
+                            const auto& r=wanted[0];const auto& s=wanted[command.screenNode];
+                            float rel[4][3]{};   // the screen's rows and origin in the root's frame
+                            for(int i=0;i<4;++i) for(int k=0;k<3;++k) {
+                                float v=0;const float* row=s.m[i];
+                                for(int j=0;j<3;++j) v+=(i==3?row[j]-r.m[3][j]:row[j])*r.m[k][j];
+                                rel[i][k]=v;
+                            }
+                            Log("SCOPESCREEN node=%d zoom=%.2f rows=(%.3f,%.3f,%.3f)(%.3f,%.3f,%.3f)(%.3f,%.3f,%.3f) origin=(%.4f,%.4f,%.4f)",
+                                command.screenNode,g_nativeZoom,rel[0][0],rel[0][1],rel[0][2],rel[1][0],rel[1][1],rel[1][2],
+                                rel[2][0],rel[2][1],rel[2][2],rel[3][0],rel[3][1],rel[3][2]);
+                        }
+                    }
+                    // The eyepiece, screen or holographic monitor where this draw
+                    // puts it, for the picture (scope.h): a screen by its node's
+                    // live pose (the zoom opens it), the rest by the root.
+                    if(!dual && !command.fencer)
+                        if(const auto* spec=command.scopeLens>=0?edf6vr::ScopeLensAt(command.scopeLens):&edf6vr::ScopeHoloSpec()) {
+                            const int frame=spec->frame?command.screenNode:0;
+                            edf6vr::ScopeLensFrame lens{};
+                            if(frame>=0 && static_cast<std::size_t>(frame)<paletteCount
+                               && edf6vr::ScopeLensFrameFrom(wanted[frame],*spec,command.eyeWorld,g_scopeLensScale,lens)) {
+                                lens.anchored=liveCamera;lens.eyeHalf=eyeHalf;
+                                for(int j=0;j<3;++j) lens.eye[j]=command.eyeWorld[j];
+                                lens.at=GetTickCount64();edf6vr::PublishScopeLens(lens);
+                            }
+                        }
                 }
                 if(prepared) for(std::size_t b=0;b<paletteCount;++b) {
                     touched=static_cast<unsigned>(b)+1; // partial writes are restored too
@@ -6440,6 +6720,12 @@ bool DrawHeldWeapon(void* model,void* renderContext,int pass,void* view) {
 #include "native_renderer_probe.h"
 #include "world_distance.h"
 bool AllowNativeWorldPair() noexcept {return edf6vr::NativeWorldLive() && edf6vr::NativeWorldCompositeAvailable();}
+// The scope's view as a third loop: only while a scoped weapon is zoomed in
+// the rendered mode, and the request is current.
+bool AllowNativeWorldScope() noexcept {
+    const auto view=edf6vr::ReadScopeView();
+    return view.active && view.mode==1 && GetTickCount64()-view.at<250 && AllowNativeWorldPair();
+}
 void BeginNativeWorldProducer(std::uint64_t,unsigned eye) noexcept {
     if(!eye) g_nativeProducerIpd=edf6vr::NativeWorldSeparation();
 }
@@ -6505,7 +6791,11 @@ bool DrawTruckWithoutGlass(void* model,void* renderContext,int pass,void* view) 
     edf6vr::TruckGlassScope scope;
     g_modelOriginal(model,renderContext,pass,view);return true;
 }
+void HookModelDrawAll(void* model,void* renderContext,int pass,void* view);
 void __fastcall HookModelDraw(void* model,void* renderContext,int pass,void* view) {
+    HookModelDrawAll(model,renderContext,pass,view);
+}
+void HookModelDrawAll(void* model,void* renderContext,int pass,void* view) {
     if(VehicleRecoilDraw(model,renderContext,pass,view))return;
     if(DrawCockpitVehicle(model,renderContext,pass,view))return;
     ObserveFencerDraw(model);
@@ -6594,6 +6884,9 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     QueryPerformanceFrequency(&g_frequency);
     Settings();
     g_cockpitRequested=GetPrivateProfileIntW(L"VR",L"VehicleCockpit",1,g_iniPath)!=0;
+    // The crew figures, generated from this install's Root.cpk (tools/edf6/crew_figures.py).
+    try {g_crewFolder=std::wstring(g_modDirectory)+L"EDF6VRCrew";} catch(...) {g_crewFolder.clear();}
+    edf6vr::ConfigureCrewFigures(g_crewFolder.c_str());
     ReadHandSettings();
     g_vehicleLevelView=GetPrivateProfileIntW(L"VR",L"VehicleLevelView",1,g_iniPath)!=0;
     g_devKeys=GetPrivateProfileIntW(L"Diagnostics",L"DevKeys",0,g_iniPath)!=0;
@@ -6611,7 +6904,8 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 2.1.8 cockpit loading, with EDF6MultiSlot 1.5.32. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 3.0.0 cockpit loading, with EDF6MultiSlot 1.5.33. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
     if(_wcsicmp(slash?slash+1:host,L"EDF6.exe")) { Log("REFUSED: process is not EDF6.exe"); return false; }
@@ -6709,6 +7003,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     g_weaponMuzzleFollows=GetPrivateProfileIntW(L"VR",L"WeaponMuzzleFollows",1,g_iniPath)!=0;
     g_laserFollowsMuzzle=GetPrivateProfileIntW(L"VR",L"LaserSightFollowsMuzzle",1,g_iniPath)!=0;
     g_binocularZoom=GetPrivateProfileIntW(L"Render",L"BinocularZoom",1,g_iniPath)!=0;
+    ReadScopeSettings();
     g_weaponArmBone=GetPrivateProfileIntW(L"VR",L"WeaponArmBone",0,g_iniPath)!=0;
     // Lost in 0.56.0, when the regex that deleted the logo pulse took the line
     // below it as well. The flag stayed false all session while the INI said 1,
@@ -6893,6 +7188,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         if(changed && !outputOK)g_faulted=true;
         Log("CLASSEFFECT hooks ready=%d booster=2CBDF0 marker=6A3D0E/6A3DFB/684271",InstallClassEffects());
         Log("FENCERGUIDE hooks ready=%d guide=17E2498/688C30 laser=17E2458/6890A0",InstallFencerAttachmentHooks());
+        Log("FENCERGUARD block test 5957C0 on the shield's own aim: %u/4 sites",InstallFencerGuardHooks());
         changed=false;
         const bool probeOK=InstallGuideProbe(changed);
         Log("GUIDEPROBE hooks ready=%d changed=%d prepare guide=17E2498+18/688680 laser=17E2458+18/688970 (read-only)",probeOK,changed);
@@ -6961,7 +7257,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
                 edf6vr::ConfigureMotionTrace(trace,traceDirectory,&LogText);
                 Log("MOTIONTRACE enabled=%d read-only view/projection imports, one 30-second mission capture",trace);
             }
-            const edf6vr::NativeWorldQueueCallbacks callbacks{&AllowNativeWorldPair,&BeginNativeWorldQueue,&EndNativeWorldQueue,&BeginNativeWorldProducer,&EndNativeWorldProducer};
+            const edf6vr::NativeWorldQueueCallbacks callbacks{&AllowNativeWorldPair,&BeginNativeWorldQueue,&EndNativeWorldQueue,&BeginNativeWorldProducer,&EndNativeWorldProducer,&AllowNativeWorldScope};
             const bool compositeReady=g_nativeWorldRequested && edf6vr::InstallNativeWorldComposite(g_image,&Log);
             const bool nativeReady=g_nativeWorldRequested && imports && getters && compositeReady &&
                 edf6vr::InstallNativeWorldQueue(g_image,callbacks,&Log);

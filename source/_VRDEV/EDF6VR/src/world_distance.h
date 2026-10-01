@@ -12,10 +12,23 @@ float PreserveWorldDistance(float native,bool stereo) noexcept {
     // Keep native zoom (<1), invalid values and non-VR paths unchanged.
     return stereo && std::isfinite(native) && native>1.f ? 1.f : native;
 }
+// The weapon scope's loop (eye 2): the scale the game itself gives a zoomed
+// view, tan(field / 2) / tan(reference / 2), from the scope's own half field --
+// what lets far enemies be drawn, and drawn in detail, when you zoom.
+float ScopeWorldDistance(void* camera,float native) noexcept {
+    const auto view=edf6vr::ReadScopeView();
+    float reference=0;
+    if(!view.active || view.mode!=1 || !(view.tanHalf>0) || !edf6vr::Readable(static_cast<unsigned char*>(camera)+0x20,4)) return native;
+    std::memcpy(&reference,static_cast<unsigned char*>(camera)+0x20,4);
+    const float base=std::tan(reference*.5f);
+    if(!std::isfinite(base) || !(base>.01f)) return native;
+    const float scale=view.tanHalf/base;
+    return std::isfinite(scale) && scale>0 ? std::min(scale,1.f) : native;
+}
 float __fastcall HookWorldDistance(void* camera) {
     const float native=g_worldDistance(camera);
     const bool stereo=g_worldDistanceReady && edf6vr::NativeWorldProducerEye()>=0;
-    const float result=PreserveWorldDistance(native,stereo);
+    const float result=edf6vr::NativeWorldProducerEye()==2?ScopeWorldDistance(camera,native):PreserveWorldDistance(native,stereo);
     if(stereo) {
         static thread_local ULONGLONG next=0;
         const auto now=GetTickCount64();

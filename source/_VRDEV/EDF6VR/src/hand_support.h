@@ -353,7 +353,7 @@ bool DrawBodyHands(void* model,void* renderContext,int pass,void* view) noexcept
     const bool layer=live && drawContext && edf6vr::HandStereoAvailable(drawContext);
     if(live) {
         if(!layer || pass!=1) return true;
-        if(edf6vr::NativeWorldRenderEye()==1 && edf6vr::HandStereoDrawnThisFrame()) return true;
+        if(edf6vr::NativeWorldRenderEye()>=1 && edf6vr::HandStereoDrawnThisFrame()) return true;
     } else if(!((1u<<pass)&g_handPassMask)) return false;
     auto soldier=static_cast<unsigned char*>(model)-edf6vr::kBodyModelOffset;
     if(!EnsureHandRig(soldier)) { ++g_handRefused; return false; }

@@ -32,6 +32,11 @@ struct NativeWorldImages {
     Matrix view[2]{},projection[2]{};
     bool cockpitMatched=false;
     bool attempted=false,ready=false;
+    // The weapon scope's mono view (eye 2 of the same producer loop), when
+    // one was drawn this frame: same size as the eyes, its own camera.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> scope;
+    Matrix scopeView{},scopeProjection{};
+    bool scopeReady=false;
 };
 // Both eyes must be from the same producer loop, dimensions, and camera.
 // A failed pair is explicitly reported: it must never enter the depth warp.

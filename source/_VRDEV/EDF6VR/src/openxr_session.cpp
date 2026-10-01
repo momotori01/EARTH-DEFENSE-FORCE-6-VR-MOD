@@ -22,6 +22,7 @@
 #include "ui_world_composite.h"
 #include "eye_check_sampler.h"
 #include "eye_crop.h"
+#include "scope_draw.h"
 
 #include <unknwn.h>
 #include <d3d11.h>
@@ -2005,7 +2006,75 @@ bool BuildOtherEye(int drawnEye,PerfBatch& perf,float steps,bool antiAlias) noex
     return ok;
 }
 
-bool CopyNativeRightEye(ID3D11Texture2D* image,PerfBatch& perf,bool antiAlias) noexcept {
+// The weapon scope's picture (scope.h) over the weapon in this eye: in a
+// scope's eyepiece or screen, on a holographic monitor over a weapon without
+// one, or on the Fencer's panel in front of the eyes. The picture is the
+// scope's own view (mode 1, eye 2 of the native loop) or a magnified crop of
+// this eye's picture (mode 2, the digital zoom).
+void CompositeScopeLens(ID3D11Texture2D* target,unsigned eye,const NativeWorldImages& images) noexcept {
+    const auto view=ReadScopeView();
+    const auto now=GetTickCount64();
+    if(!view.active || eye>1 || !images.ready || now-view.at>250) return;
+    ScopeLensFrame lens{};
+    if(view.kind==ScopeHoloPanel) {
+        // Held in front of the eyes: between the two eye cameras, along their
+        // forward, facing back, standing with the head.
+        const auto left=ScopeCameraOf(images.view[0]),right=ScopeCameraOf(images.view[1]);
+        for(int j=0;j<3;++j) {
+            lens.centre[j]=(left.m[3][j]+right.m[3][j])*.5f+left.m[2][j]*kScopePanelDistance;
+            lens.normal[j]=-left.m[2][j];lens.up[j]=left.m[1][j];
+        }
+        lens.radius=kScopePanelHalfHeight;lens.halfWidth=kScopePanelHalfWidth;lens.shape=1;lens.valid=true;
+    } else {
+        lens=ReadScopeLens();
+        if(!lens.valid || now-lens.at>250) return;
+    }
+    ScopeDrawInput in{};
+    in.lens=lens;in.view=images.view[eye];in.projection=images.projection[eye];in.mode=view.mode;in.style=view.style;
+    in.tanHalf=view.tanHalf;in.aspect=lens.shape && lens.radius>0?lens.halfWidth/lens.radius:1.f;
+    // A surface on the weapon goes through the weapon layer's camera: the
+    // native one moved to the eye the weapon was placed from, plus this eye's
+    // half IPD (weapon_stereo.cpp's transform, anchored). Through the native
+    // camera it was left behind while walking, as the weapon once was.
+    if(lens.anchored) {
+        Matrix camera=ScopeCameraOf(images.view[eye]);
+        const float dx=eye?lens.eyeHalf:-lens.eyeHalf;
+        for(int j=0;j<3;++j) camera.m[3][j]=lens.eye[j]-camera.m[0][j]*dx;   // screen right is -row0
+        in.view=ScopeCameraOf(camera);                                     // a rigid inverse undoes itself
+    }
+    // How the picture stands: a round lens by its camera's up, a screen by
+    // its own (a monitor shows the picture square to its edges).
+    float forward[3]={view.forward[0],view.forward[1],view.forward[2]},up[3]{};
+    Matrix scopeCamera{};
+    if(view.mode==1) {
+        float l=0,r=0,t=0,b=0;
+        if(!images.scopeReady || !FrustumFromProjection(images.scopeProjection.m,l,r,t,b)) {NoteScopeSkip(10);return;}
+        // Only a view drawn with the narrow field; anything else is the head's own.
+        if(std::fabs(std::tan(t)-view.tanHalf)>view.tanHalf*.25f) {NoteScopeSkip(11,std::tan(t),view.tanHalf);return;}
+        scopeCamera=ScopeCameraOf(images.scopeView);   // row0 = up x forward: screen right is -row0
+        for(int j=0;j<3;++j) {
+            in.cameraRight[j]=-scopeCamera.m[0][j];in.cameraUp[j]=scopeCamera.m[1][j];in.cameraForward[j]=scopeCamera.m[2][j];
+            forward[j]=scopeCamera.m[2][j];in.origin[j]=scopeCamera.m[3][j];
+            up[j]=lens.shape?lens.up[j]:scopeCamera.m[1][j];
+        }
+        in.tanLeft=std::tan(l);in.tanRight=std::tan(r);in.tanTop=std::tan(t);in.tanBottom=std::tan(b);
+        in.source=images.scope.Get();
+    } else {
+        const auto camera=ScopeCameraOf(images.view[eye]);
+        for(int j=0;j<3;++j) {up[j]=lens.shape?lens.up[j]:camera.m[1][j];in.origin[j]=view.origin[j];}
+        in.source=images.eye[eye].Get();
+        in.sourceClip=ScopeWorldToClip(images.view[eye],images.projection[eye]);   // the picture's own camera
+    }
+    const float along=up[0]*forward[0]+up[1]*forward[1]+up[2]*forward[2];
+    for(int j=0;j<3;++j) up[j]-=forward[j]*along;
+    const float length=std::sqrt(up[0]*up[0]+up[1]*up[1]+up[2]*up[2]);
+    if(!(length>1e-4f)) return;
+    for(float& c:up) c/=length;
+    const float right[3]={forward[1]*up[2]-forward[2]*up[1],forward[2]*up[0]-forward[0]*up[2],forward[0]*up[1]-forward[1]*up[0]};   // forward x up
+    for(int j=0;j<3;++j) {in.right[j]=right[j];in.up[j]=up[j];in.forward[j]=forward[j];}
+    DrawScopeLens(g_context,target,in);
+}
+bool CopyNativeRightEye(ID3D11Texture2D* image,PerfBatch& perf,bool antiAlias,const NativeWorldImages* images=nullptr) noexcept {
     uint32_t index=0;
     XrSwapchainImageAcquireInfo take{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
     if(!image || XR_FAILED(g_api.acquireImage(g_swapchainRight,&take,&index))) return false;
@@ -2014,6 +2083,9 @@ bool CopyNativeRightEye(ID3D11Texture2D* image,PerfBatch& perf,bool antiAlias) n
         CopyIntoSwapchain(image,1,index,g_imagesRight,g_imageCountRight,perf);
     if(ok) {
         CompositeWeaponStereo(g_context,g_imagesRight[index],1);
+        // The right eye is a swapchain of its own: the lens goes on after its
+        // weapon here too (it showed in the left eye alone, hardware 2026-10-01).
+        if(images) CompositeScopeLens(g_imagesRight[index],1,*images);
         ApplySceneAA(g_context,g_imagesRight[index],antiAlias);
         CompositeWorldUi(g_imagesRight[index]);
         if(g_desktopMirror.load()) SnapshotMirror(g_context,g_imagesRight[index],MirrorImage::Right,
@@ -2344,10 +2416,11 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
                 if(eye==g_lastCopiedEye) g_eyeRepeats.fetch_add(1,std::memory_order_relaxed);
                 g_lastCopiedEye=eye;
                 g_eyeConsumed.store(true,std::memory_order_release);
-                if(native) warped=CopyNativeRightEye(nativeImages.eye[1].Get(),perf,antiAlias);
+                if(native) warped=CopyNativeRightEye(nativeImages.eye[1].Get(),perf,antiAlias,&nativeImages);
                 else if(g_warpEnabled.load(std::memory_order_relaxed) && g_resolved)
                     warped=BuildOtherEye(eye,perf,effectiveSteps,antiAlias);
                 CompositeWeaponStereo(g_context,targetImages[index],static_cast<unsigned>(eye));
+                if(native) CompositeScopeLens(targetImages[index],static_cast<unsigned>(eye),nativeImages);
             }
             if(copied) ApplySceneAA(g_context,targetImages[index],antiAlias);
             if(copied && mode!=XrDisplayMode::Quad) CompositeWorldUi(targetImages[index]);
@@ -2701,7 +2774,15 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
 
                 // And the middle of it again, turned to the weapon. The panel
                 // pass leaves that rectangle empty, so it appears once.
-                if(drewReticle) {
+                //
+                // Not while a scope shows its own picture: the middle of the HUD
+                // then holds the game's zoom sight, which it places for a zoomed
+                // screen the headset no longer shows, so it stood off the shot
+                // (hardware 2026-10-01). The lens carries its own reticle, as True
+                // Scopes hides the vanilla reticle quad while its lens is live.
+                const auto scopeView=ReadScopeView();
+                const bool scopeOwnsReticle=scopeView.active && GetTickCount64()-scopeView.at<250;
+                if(drewReticle && !scopeOwnsReticle) {
                     float aim[3]={g_aimX.load(std::memory_order_relaxed),
                                   g_aimY.load(std::memory_order_relaxed),
                                   g_aimZ.load(std::memory_order_relaxed)};

@@ -65,6 +65,7 @@ int main() {
     CHECK(percent==42 && detail=="upscale 120 of 300 about 20 min left");
     CHECK(ParseProgress("  [######################] 100%  finished",percent,detail) && percent==100 && detail=="finished");
     CHECK(!ParseProgress("[3 of 120]  MAP/ig_city.rab",percent,detail));
+    CHECK(ParseProgress("[crew] 25% P605_RANGER",percent,detail) && percent==25 && detail=="P605_RANGER");   // crew_figures.py
 
     std::printf("EDF6VR settings core tests: %d failures\n",failures);
     return failures?1:0;

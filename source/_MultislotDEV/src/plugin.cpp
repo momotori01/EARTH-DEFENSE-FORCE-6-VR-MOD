@@ -34,11 +34,12 @@
 #include "spawn.h"
 #include "traffic.h"
 #include "gaplog.h"
+#include "packetsize.h"
 
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.5.32";
+constexpr const char* kVersion = "1.5.33";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -156,6 +157,8 @@ bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int gho
         for (const auto& site : ArmorHooks()) hooks.push_back({site, ArmorHookHandler(site.rva)});
     if (diagnostics)
         for (const auto& site : DiagnosticHooks()) hooks.push_back({site, JoinLogHookHandler(site.rva)});
+    if (diagnostics)
+        for (const auto& site : PacketSizeHooks()) hooks.push_back({site, PacketSizeHookHandler(site.rva)});
     if (desync)
         for (const auto& site : DesyncHooks()) hooks.push_back({site, DesyncHookHandler(site.rva)});
     if (mission) {
@@ -560,6 +563,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     InitHostMode(base, iniPath, eightPlayers, hostModeKey, hostModePad, hostModeHint);
     // The patch only takes when a percentage was asked for and it differs from the stock 0.05.
     InitDesyncMeter(base, smoothing > 0.0f ? smoothing : kVanillaSmoothing);
+    InitPacketSize(base);
     if (!Apply(base, roomView.dummies, mission, spawns, ghosts, netLog, copyArmorKey || copyArmorPad, recovery,
                desyncMeter, smoothing, positionEveryPacket, facingEveryPacket, thunks)) {
         KeepMenuLayout(false);
@@ -613,6 +617,10 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     } else {
         Log("HandshakeRecovery=0: off");
     }
+    if (netLog)
+        Log("Packet sizes: messages from the mission start and result sync, and any of 1000 bytes or more, are "
+            "logged with their size against EOS's 1170-byte packet limit (EDF6 never splits a message, and a "
+            "packet EOS refuses is dropped without a word), and so is every send EOS refuses. Logging only");
     if (trafficMeter)
         Log("Traffic meter: on; one line per minute says how much the game sends and receives per channel, "
             "against the roughly 320 kbps EDF6 keeps its routine sync under (Sync/TrafficMeter=0 turns it "

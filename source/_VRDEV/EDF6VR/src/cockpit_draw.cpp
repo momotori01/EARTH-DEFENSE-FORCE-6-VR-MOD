@@ -5,11 +5,15 @@
 #include "cockpit_lighting.h"
 #include "ui_capture.h"
 #include "native_world.h"
+#include "crew_figures.h"
 #include <d3dcompiler.h>
 #include <wrl/client.h>
 #include <atomic>
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <future>
+#include <memory>
 #include <cmath>
 
 namespace edf6vr {
@@ -67,7 +71,7 @@ CapMesh lid;bool lidDirty=false;
 std::future<std::vector<CockpitVertex>> lidBuild;unsigned lidGeneration=0,lidBuilding=0;
 void ResetLid() noexcept {lidHull.clear();lid={};lidDirty=false;++lidGeneration;}
 constexpr char shader[]=R"(
-cbuffer Data:register(b0) {row_major float4x4 model;row_major float4x4 view;row_major float4x4 projection;float4 options;float4 panelAspect;float4 materials;float4 cameraPosition;float4 paint;float4 accent;}
+cbuffer Data:register(b0) {row_major float4x4 model;row_major float4x4 view;row_major float4x4 projection;float4 options;float4 panelAspect;float4 materials;float4 cameraPosition;float4 paint;float4 accent;float4 crew0;float4 crew1;}
 cbuffer NativeSystem:register(b1) {float4 nativeSystem[38];}
 cbuffer NativeExtra:register(b2) {float4 nativeExtra[25];}
 cbuffer NativeEnvironment:register(b3) {float4 envInfo[6];}
@@ -80,6 +84,9 @@ StructuredBuffer<EnvCell> EnvironmentGrid:register(t7);
 StructuredBuffer<float4> Crop:register(t4);RWStructuredBuffer<float4> CropOut:register(u0);
 SamplerState Smooth:register(s0);
 SamplerState EnvironmentSmooth:register(s1);
+// A crew figure's own textures (surface 25, cockpit_crew_draw.inc).
+Texture2D<float4> CrewAlbedo:register(t9);Texture2D<float4> CrewMask:register(t10);Texture2D<float4> CrewParam:register(t11);
+SamplerState CrewWrap:register(s2);
 groupshared uint minX,minY,maxX,maxY,hits;
 [numthreads(64,1,1)]
 void crop(uint3 group:SV_GroupID,uint thread:SV_GroupIndex) {
@@ -209,6 +216,17 @@ float4 fragment(Output i):SV_Target {
      rough=Roughness.SampleGrad(Smooth,uv,dx,dy).r;
      detailNormal=Normal.SampleGrad(Smooth,uv,dx,dy).rgb*2-1;
    }
+   // A crew figure: the soldier's own albedo, the player's main and sub colour
+   // where its colour mask's red and green say (the game's 2ColorChange
+   // material; the masked albedo is a light grey the colour multiplies, x2 so
+   // a mid-grey preset leaves it as is), roughness and occlusion from its
+   // param map (r roughness, b occlusion).
+   float crewOcclusion=1;
+   if(material==25) {
+     const float4 albedo=CrewAlbedo.Sample(CrewWrap,i.uv);const float2 mask=CrewMask.Sample(CrewWrap,i.uv).rg;const float4 param=CrewParam.Sample(CrewWrap,i.uv);
+     base=albedo.rgb*lerp(1,2*crew0.rgb,mask.x)*lerp(1,2*crew1.rgb,mask.y);
+     rough=param.r;crewOcclusion=lerp(1,param.b,.8);
+   }
    // Native metal/scuff maps, muted construction orange for crawler panels.
    // Preserve the approved coloured grip caps and warning markings.
    if(cabin==1&&material<7) {
@@ -241,7 +259,7 @@ float4 fragment(Output i):SV_Target {
      rough=max(rough,.44);
    }
    float3 eye=normalize(i.eye),lamp=normalize(i.lamp),n=normalize(i.normal);
-   bool back=dot(n,eye)<0;float ao=saturate(back?i.visibility.y:i.visibility.x);if(back)n=-n;
+   bool back=dot(n,eye)<0;float ao=saturate(back?i.visibility.y:i.visibility.x)*crewOcclusion;if(back)n=-n;
    // Reconstruct tangent directions from the actual face UV derivatives;
    // imported/canted/mirrored parts cannot share a fixed world tangent.
    float3 dpdx=-ddx(i.eye),dpdy=-ddy(i.eye);
@@ -287,7 +305,8 @@ float4 fragment(Output i):SV_Target {
  return float4(c,1);
 }
 )";
-struct Constants {Matrix model,view,projection;float options[4]{},panelAspect[4]{},materials[4]{},cameraPosition[4]{},paint[4]{},accent[4]{};};
+struct Constants {Matrix model,view,projection;float options[4]{},panelAspect[4]{},materials[4]{},cameraPosition[4]{},paint[4]{},accent[4]{},crew0[4]{},crew1[4]{};};
+#include "cockpit_crew_draw.inc"
 bool Staging(ID3D11Device* d,ID3D11DeviceContext* ctx,ID3D11Buffer* src,ComPtr<ID3D11Buffer>& dst) {
     D3D11_BUFFER_DESC desc{};src->GetDesc(&desc);if(!desc.ByteWidth||desc.ByteWidth>32*1024*1024)return false;
     desc.BindFlags=desc.MiscFlags=0;desc.Usage=D3D11_USAGE_STAGING;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
@@ -338,6 +357,7 @@ void ReleaseCockpitDraw() noexcept {
     cropShader.Reset();cropBuffer.Reset();cropView.Reset();cropOutput.Reset();
     zbuffer.Reset();zview.Reset();device.Reset();zwidth=zheight=0;
     for(auto& t:atlas)t.Reset();hudView.Reset();hudTexture.Reset();sampler.Reset();environmentSampler.Reset();atlasReady=false;
+    if(crewJob.future.valid())crewJob.future.wait();crewJob=CrewJob{};for(auto& entry:crewCache)entry=CrewGpu{};crewSampler.Reset();crewFailedKey=~0u;
     meshes.clear();meshRig={};stats.meshes=stats.keptTriangles=stats.removedTriangles=0;
     ResetLid();
 }
@@ -578,6 +598,7 @@ static bool DrawCockpitPass(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,con
     }
     if(!capsOnly) {
         ctx->Draw(interior.vertexCount-interior.seamCount,0);
+        DrawCrewFigure(ctx,d.Get(),pose,data,frame);
         ctx->OMSetBlendState(hologramBlend.Get(),nullptr,~0u);ctx->OMSetDepthStencilState(hologramDepth.Get(),0);
         ctx->Draw(interior.seamCount+interior.displayCount,interior.vertexCount-interior.seamCount);if(hudView)++stats.instrumentFrames;++stats.interiors;
     }
@@ -679,8 +700,44 @@ bool TruckGlassIntercept(ID3D11DeviceContext* ctx,UINT count) noexcept {
     if(!desc.DepthEnable||desc.DepthWriteMask==D3D11_DEPTH_WRITE_MASK_ALL)return false;
     glassSkipped.fetch_add(1,std::memory_order_relaxed);return true;
 }
+namespace {
+thread_local int crewSlot=-1;
+struct CrewCounters { std::atomic<std::uint64_t> draws{0},indices{0},depthWrites{0}; std::atomic<unsigned> sizes[8]{}; };
+CrewCounters crewCounters[4];
+}
+CrewDrawScope::CrewDrawScope(unsigned slot) noexcept:previous(crewSlot) {crewSlot=slot<4?static_cast<int>(slot):-1;}
+CrewDrawScope::~CrewDrawScope() noexcept {crewSlot=previous;}
+void CrewDrawNote(ID3D11DeviceContext* ctx,UINT count) noexcept {
+    if(crewSlot<0||!ctx)return;
+    auto& c=crewCounters[crewSlot];
+    c.draws.fetch_add(1,std::memory_order_relaxed);c.indices.fetch_add(count,std::memory_order_relaxed);
+    ComPtr<ID3D11DepthStencilState> state;UINT reference=0;ctx->OMGetDepthStencilState(&state,&reference);
+    if(state){D3D11_DEPTH_STENCIL_DESC desc{};state->GetDesc(&desc);
+        if(desc.DepthEnable&&desc.DepthWriteMask==D3D11_DEPTH_WRITE_MASK_ALL)c.depthWrites.fetch_add(1,std::memory_order_relaxed);}
+    for(auto& size:c.sizes) {
+        unsigned seen=size.load(std::memory_order_relaxed);
+        if(seen==count)return;
+        if(!seen&&size.compare_exchange_strong(seen,count,std::memory_order_relaxed))return;
+        if(seen==count)return;
+    }
+}
+CrewDrawCounts ReadCrewDrawCounts(unsigned slot) noexcept {
+    CrewDrawCounts out{};if(slot>=4)return out;
+    auto& c=crewCounters[slot];
+    out.draws=c.draws.load(std::memory_order_relaxed);out.indices=c.indices.load(std::memory_order_relaxed);
+    out.depthWrites=c.depthWrites.load(std::memory_order_relaxed);
+    for(unsigned i=0;i<8;++i)out.sizes[i]=c.sizes[i].load(std::memory_order_relaxed);
+    return out;
+}
+void ResetCrewDrawCounts(unsigned slot) noexcept {
+    if(slot>=4)return;auto& c=crewCounters[slot];
+    c.draws.store(0,std::memory_order_relaxed);c.indices.store(0,std::memory_order_relaxed);c.depthWrites.store(0,std::memory_order_relaxed);
+    for(auto& size:c.sizes)size.store(0,std::memory_order_relaxed);
+}
 void TruckGlassCounts(std::uint64_t& seen,std::uint64_t& skipped) noexcept {
     seen=glassSeen.load(std::memory_order_relaxed);skipped=glassSkipped.load(std::memory_order_relaxed);
 }
 CockpitDrawStats ReadCockpitDrawStats() noexcept {return stats;} // render thread
+void ConfigureCrewFigures(const wchar_t* folder) noexcept {try{crewFolder=folder?folder:L"";}catch(...){crewFolder.clear();}}
+CrewDrawStats ReadCrewDrawStats() noexcept {return crewStats;}
 }

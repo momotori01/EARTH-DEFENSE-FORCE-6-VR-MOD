@@ -60,6 +60,12 @@ Changes: only the stick half is used, welded, triangulated, decimated, rescaled 
 given cockpit materials (src/cockpit_proteus_stick.inc). NonCommercial: this part,
 and so any build that contains it, may not be used commercially.
 
+The crew figures' model and animation readers (src/crew_figures.cpp,
+tools/edf6/crew_figures.py, which ships as Mods/HDTexture/crew_figures.py) follow
+the MDB and CANM file layouts described by blender-mdb-addon (Smileynator et al.,
+CC BY-NC 4.0): https://github.com/Smileynator/blender-mdb-addon
+Only that format knowledge is used; none of its code is included.
+
 The hand rig tables in src/hand_rest_data.inc are bone bind poses read from the
 game's player models, so the mod's hands line up with the game's own skeleton.
 EDF6MultiSlot's menu layout (LYT_MAINFRAME.SGO) is the game's own layout with one

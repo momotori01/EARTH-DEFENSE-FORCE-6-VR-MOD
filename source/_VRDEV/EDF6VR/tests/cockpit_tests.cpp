@@ -4,6 +4,7 @@
 #include "cockpit_draw.h"
 #include "cockpit_lighting.h"
 #include "vehicle_camera.h"
+#include "crew_figures.h"
 #include "native_world.h"
 #include <d3dcompiler.h>
 #include <wrl/client.h>
@@ -99,10 +100,11 @@ void VisibilityTest() {
         CHECK(Blocked({s*.414f,0,0},{s*.414f,0,-.49f})); // compact rear machinery beside the seat
         CHECK(!Blocked({s*.21f,-.45f,.135f},{s*.31f,-.45f,.135f})); // fingers enter below the free lever end
         // The fore/aft lever guide must have depth, not a black strip over a
-        // solid cap. The open stretch ahead of its carriage clears the deck
-        // height and then reaches the bottom of the recessed channel.
-        CHECK(!Blocked({s*.417f,-.50f,.205f},{s*.417f,-.555f,.205f}));
-        CHECK(Blocked({s*.417f,-.555f,.205f},{s*.417f,-.65f,.205f}));
+        // solid cap. The open stretch behind its carriage (at the front of its
+        // travel) clears the deck height and then reaches the bottom of the
+        // recessed channel.
+        CHECK(!Blocked({s*.417f,-.50f,.080f},{s*.417f,-.575f,.080f}));
+        CHECK(Blocked({s*.417f,-.575f,.080f},{s*.417f,-.65f,.080f}));
     }
     for(float x:{-.60f,0.f,.60f})for(float y:{-.5f,.10f,.5f}) {
         const auto eye=ClampCockpitHead({x,y,-.4f});
@@ -1100,6 +1102,8 @@ int BenchmarkCockpit(UINT width,UINT height) {
 }
 #include "cockpit_barga_tests.inc"
 #include "cockpit_barga_rigs.inc"
+#include "vehicle_crew_tests.inc"
+#include "crew_figure_tests.inc"
 #include "cockpit_proteus_tests.inc"
 #include "cockpit_cabin_tests.inc"
 #include "cockpit_tank_tests.inc"
@@ -1129,6 +1133,11 @@ int wmain(int argc,wchar_t** argv) {
     if(argc==3&&!std::wcscmp(argv[1],L"--missile-export")){ExportMesh(argv[2],CockpitKind::ProteusMissile);return failures?1:0;}
     if(argc==3&&!std::wcscmp(argv[1],L"--proteus-fixtures")){FixtureTest(argv[2],false,false,true);return failures?1:0;}
     if(argc==4&&!std::wcscmp(argv[1],L"--barga-rigs")){BargaRigTest(argv[2],argv[3]);return failures?1:0;}
+    if(argc==3&&!std::wcscmp(argv[1],L"--crew")){VehicleCrewTest(argv[2]);return failures?1:0;}
+    if(argc==3&&!std::wcscmp(argv[1],L"--crew-figures")){CrewFigureTest(argv[2]);return failures?1:0;}
+    if(argc==3&&!std::wcscmp(argv[1],L"--crew-draw")){CrewDrawTest(argv[2]);return failures?1:0;}
+    if(argc==4&&!std::wcscmp(argv[1],L"--crew-draw")){CrewDrawTest(argv[2],argv[3]);return failures?1:0;}
+    if(argc==6&&!std::wcscmp(argv[1],L"--crew-export")){CrewFigureExport(argv[2],argv[3],static_cast<unsigned>(_wtoi(argv[4])),static_cast<unsigned>(_wtoi(argv[5])));return failures?1:0;}
     if(argc==2&&!std::wcscmp(argv[1],L"--barga-layout")){BargaLayoutTest(false);return failures?1:0;}
     if(argc==3&&!std::wcscmp(argv[1],L"--barga-export")){ExportMesh(argv[2],CockpitKind::Barga);return failures?1:0;}
     if(argc==3&&!std::wcscmp(argv[1],L"--barga-fixtures")){FixtureTest(argv[2],false,true);return failures?1:0;}

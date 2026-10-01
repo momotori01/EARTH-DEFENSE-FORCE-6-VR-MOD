@@ -17,6 +17,8 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
 - Native stereo rendering, room-scale 6DoF tracking.
 - **EDF6 VR setting.exe**: one window for everything set outside the game -- update, VR or normal mode, picture size, HD textures, gun hand, a log zip for bug reports, and extra VR settings ([see Setup](#setup)).
 - One-handed and two-handed weapon aiming, all four soldier classes and vehicles.
+- **Scopes:** when you zoom, the magnified view is shown on the weapon, in its scope or screen, or on a small holographic monitor. The Fencer gets a panel in front of you. The rest of your view stays normal size.
+- **Vehicle aim with your gun hand:** point the right controller and the vehicle's aim follows. You can turn it on or off for each kind of vehicle.
 - **Left-handed mode** for Rangers, Wing Divers and Air Raiders: hold and fire the gun with the left hand ([how to switch it on](#left-handed-mode)).
 - Hand models for all four classes, with fingers that follow the trigger, grip and stick.
 - Recoil animation and per-hand firing vibration.
@@ -27,7 +29,8 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
 - Fencers aim both weapons independently with the game's own heavy aim; hand weapons ride the controllers, shoulder weapons sit on your shoulders.
 - **VR cockpits for every vehicle**, built per vehicle type into the machine's own hull: walkers (Nix, Depth Crawler,
   Barga, Proteus MK2, ...), tanks, combat vehicles, helicopters and trucks. The view stays open to the world, and your
-  armour, ammunition and radar are on the cabin's screens.
+  armour, ammunition and radar are on the cabin's screens. In the Proteus two-seater you see the other rider, seated, as
+  their own soldier.
 - **8-player online co-op** (EDF6MultiSlot). It only applies when you host:
   unless you switch it on and make an eight-player room, ordinary online play
   is untouched. While it is on, the room search shows eight-player rooms only.
@@ -37,6 +40,8 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
   Other players are also shown where they really are: the base game often
   skipped sending positions for seconds, so people could look metres off.
 - **HD textures** (2x), built from your own game files.
+- **Lighter Kurul shots:** the Kurul's shotgun pellets are drawn without their swelling ring, so big fights stay smooth.
+  It is on by default and can be turned off in EDF6 VR setting.exe.
 - Compact HUD: radar, armour and weapons sit together at the corner of your view, or on the inside of a wrist.
 - Menus float in the room; subtitles and messages sit on a panel in front of you. Other players' nameplates float over their heads and show through walls.
 - Automatically collects all remaining items when a mission is cleared (F1).
@@ -73,17 +78,21 @@ Everything outside the game is set in **EDF6 VR setting.exe**, next to `EDF6.exe
 | **Update** | Shows the installed and the newest version. **Update now** installs the newest release; your settings are kept. |
 | **VR mode** | **VR** (headset) or **Normal** (monitor, no VR). |
 | **Picture size** | **Low 0.8** / **Normal 1.0** / **High 1.25** / **Custom** (0.5 to 2.0). Bigger is sharper but slower. The mod ignores the resolution set in SteamVR or other runtimes. |
+| **Scope zoom** | **Native**: sharp, but costs frame rate while zoomed. **Digital**: no frame-rate cost, but blurrier. **Off**: the old whole-view zoom. |
 | **HD textures** | **Make** or **Delete** the 2x textures, with progress. |
+| **Crew figures** | **Make** or **Delete** the Proteus two-seater's other rider (about 2 minutes). Making HD textures makes them too. |
 | **Gun hand** | **Right** or **Left** (Ranger, Wing Diver, Air Raider). |
 | **Problem report** | **Make zip** puts the logs and settings into one zip, saved in the game folder next to EDF6 VR setting.exe (`EDF6VR-logs-<date>-<time>.zip`). Attach it to a bug report. |
 
 | Extra VR settings tab | |
 |---|---|
 | **VR cockpit** | A cockpit around you in vehicles, on or off. |
+| **Vehicle hand aim** | Aim vehicles by pointing your gun hand, on or off for each kind of vehicle. |
 | **Compact HUD** | On or off, and where: the corner of your view, or the right or left wrist. |
 | **Aim mark size** | The reticle's size (0.5 is normal). |
 | **Recoil** / **Shot vibration** | The gun kicking back when you shoot; how strongly the controller shakes (0 = off, 1 = strong). |
 | **Desktop mirror** | Also shows the game on your monitor, for recording and streaming. |
+| **Lighter Kurul shots** | The Kurul's shotgun pellets without their swelling ring. On by default. It is made from your game files when the window opens. |
 | **Reset settings** | Every VR setting back to how it came. Your picture size and gun hand stay; the old file is kept as a backup. |
 
 Everything it changes can also be set by hand in `Mods/Plugins/EDF6VR.ini`.
@@ -131,7 +140,7 @@ Press **F2**, or click the left stick, on the menu screen **outside a room** to 
 - Hosting with it **ON**, only players who have the 8P mod can join your room; with it **OFF** you make an ordinary room and play with anyone.
 - **It also filters the room search.** With it **ON**, only 8-player rooms are listed; with it **OFF**, ordinary and 8-player rooms are both listed and you can join either. To look for an ordinary 4-player room, switch it OFF. Switching while the room list is open searches again straight away.
 - Up to 4 players nothing changes. From the 5th on there are more enemies (x1.2, x1.4, x1.6, x1.8 for 5 to 8 players), and their durability, damage and speed stay exactly as they are with four.
-- Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later; the bundled 1.5.32 is recommended for all.
+- Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later; the bundled 1.5.33 is recommended for all.
 
 ### Matching armour
 In a room, press **F4** or click the left stick to turn armour matching on or off (shown at the bottom left). It is for playing alongside a beginner, or on a class you rarely use, without being far behind in health.

@@ -93,6 +93,9 @@ These parts keep their own licenses:
 - `_VRDEV/EDFModLoader-src`: EDFModLoader by BlueAmulet, MIT.
 - `_VRDEV/EDF6VR/src/cockpit_proteus_stick.inc`: adapted from "Low Poly Hands On Throttle and Stick for VR"
   by marcosgon, CC BY-NC 4.0 (NonCommercial).
+- `_VRDEV/EDF6VR/src/crew_figures.cpp` and `tools/edf6/crew_figures.py` read the MDB and CANM layouts that
+  blender-mdb-addon (Smileynator et al., CC BY-NC 4.0) describes. Only that format knowledge is used; none
+  of its code is included.
 - The rest of the list, with the reused CC0 cockpit parts and the game-derived data:
   `_VRDEV/EDF6VR/packaging/THIRD_PARTY_NOTICES.txt`.
 

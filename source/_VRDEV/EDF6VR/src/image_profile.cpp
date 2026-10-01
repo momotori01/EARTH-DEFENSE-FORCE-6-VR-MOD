@@ -210,6 +210,39 @@ void* AllocateNearThunk(const void* anchor,void* target) noexcept {
     return page;
 }
 
+namespace {
+// A rel32 call (E8) or jump (E9) moved onto a near thunk to `replacement`.
+bool RedirectBranch(unsigned char* callSite,unsigned char opcode,void* expectedTarget,void* replacement,
+                    const char* purpose,bool& changed) noexcept {
+    changed=false;
+    __try {
+        if(!callSite || !expectedTarget || !replacement) return false;
+        if(!Readable(callSite,5) || callSite[0]!=opcode) return false;
+        std::int32_t relative=0;
+        std::memcpy(&relative,callSite+1,sizeof(relative));
+        if(callSite+5+relative!=static_cast<unsigned char*>(expectedTarget)) return false;
+        auto thunk=AllocateNearThunk(callSite,replacement);
+        if(!thunk) return false;
+        const auto delta=static_cast<unsigned char*>(thunk)-(callSite+5);
+        if(delta>0x7FFFFFF0 || delta<-0x7FFFFFF0) { VirtualFree(thunk,0,MEM_RELEASE); return false; }
+        const auto next=static_cast<std::int32_t>(delta);
+        DWORD previous=0;
+        if(!VirtualProtect(callSite,5,PAGE_EXECUTE_READWRITE,&previous)) { VirtualFree(thunk,0,MEM_RELEASE); return false; }
+        std::memcpy(callSite+1,&next,sizeof(next));
+        changed=true;
+        RecordPatch(callSite,5,purpose);
+        DWORD restored=0;
+        const bool ok=VirtualProtect(callSite,5,previous,&restored)!=0;
+        FlushInstructionCache(GetCurrentProcess(),callSite,5);
+        return ok;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+}
+
+bool RedirectJump(unsigned char* jumpSite,void* expectedTarget,void* replacement,bool& changed) noexcept {
+    return RedirectBranch(jumpSite,0xE9,expectedTarget,replacement,"jump redirect",changed);
+}
+
 bool RedirectCall(unsigned char* callSite,void* expectedTarget,void* replacement,bool& changed) noexcept {
     changed=false;
     __try {

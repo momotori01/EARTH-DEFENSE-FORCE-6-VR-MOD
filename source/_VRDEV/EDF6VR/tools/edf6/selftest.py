@@ -166,6 +166,49 @@ def check_naming():
           % (len(colour), len(surface)))
 
 
+def check_surfaces():
+    """A texture of several surfaces is read, counted and never enlarged.
+
+    The terrain colour of 23 maps is a DX10 array (2 to 19 slices) and one enemy
+    carries a cube map. The pack enlarged their first surface and dropped the
+    rest until revision 3, and the ground of mission 65 came out white.
+    """
+    import dds as dds_module
+
+    def header(caps2=0, dx10=None):
+        blob = bytearray(148 if dx10 else 128)
+        blob[:4] = b'DDS '
+        struct.pack_into('<7I', blob, 4, 124, 0xA1007, 2048, 2048, 2048 * 1024, 0, 12)
+        struct.pack_into('<II4s', blob, 76, 32, 0x4, b'DX10' if dx10 else b'DXT1')
+        struct.pack_into('<II', blob, 108, 0x401008, caps2)
+        if dx10:
+            struct.pack_into('<5I', blob, 128, *dx10)
+        return bytes(blob)
+
+    cases = (
+        (header(), True, 1),                               # legacy BC1
+        (header(dx10=(71, 3, 0, 1, 0)), True, 1),          # DX10 BC1, one slice
+        (header(dx10=(71, 3, 0, 8, 0)), False, 8),         # the cave's terrain colour
+        (header(dx10=(71, 3, 4, 1, 0)), False, 6),         # DX10 cube
+        (header(dx10=(71, 3, 4, 2, 0)), False, 12),        # cube array
+        (header(caps2=0xFE00), False, 6),                  # legacy cube, all faces
+    )
+    for blob, ok, surfaces in cases:
+        info = dds_module.read(blob)
+        if info.ok != ok or info.surfaces != surfaces or info.width != 2048:
+            raise AssertionError('surfaces: %r read as ok=%s surfaces=%d' % (info, info.ok, info.surfaces))
+    if dds_module.read(header(caps2=0x200000)).width:
+        raise AssertionError('a volume should not be read at all')
+
+    class Named:
+        name, directory = 'ig_cave604_2_color.dds', 'HD-TEXTURE'
+    if hd_module.selected(Named(), dds_module.read(header(dx10=(71, 3, 0, 8, 0))), True):
+        raise AssertionError('a texture array was chosen for enlarging')
+    if not hd_module.selected(Named(), dds_module.read(header(dx10=(71, 3, 0, 1, 0))), True):
+        raise AssertionError('a plain colour map was refused')
+    print('surfaces: %d headers counted, arrays and cubes left alone' % len(cases))
+
+
 def check_loader_config():
     import codecs
     import tempfile
@@ -230,6 +273,7 @@ def main():
     print('rewriting one texture per archive cost %.1f kB of stored-mode overhead' % (grew / 1e3))
 
     check_naming()
+    check_surfaces()
     check_batching()
     check_loader_config()
 

@@ -10,6 +10,7 @@
 #include "identity.h"
 #include "joinlog.h"
 #include "traffic.h"
+#include "packetsize.h"
 
 namespace multislot {
 namespace {
@@ -222,6 +223,23 @@ EOS_EResult DispatchSendPacket(void* handle, const SendPacketOptions* options, s
     }
     if (meterBytes) RecordSent(meterPeer, meterChannel, meterBytes, GetTickCount64());
     const auto result = originalSendPacket(handle, effective);
+    // A send EOS refused is a message lost for good: 12C8BC0 only reacts to EOS_NoConnection (1). The one
+    // expected to show up is a packet over EOS's 1170 bytes (packetsize.h).
+    std::uint32_t sentBytes = 0;
+    std::uint8_t sentChannel = 0;
+    std::int32_t sentReliability = 0;
+    bool sentRead = false;
+    __try {
+        if (effective) {
+            sentBytes = effective->DataLengthBytes;
+            sentChannel = effective->Channel;
+            sentReliability = effective->Reliability;
+            sentRead = true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    if (sentRead && (sentBytes > kEosMaxPacket || (result != 0 && result != 1)))
+        NoteSendRefused(sentBytes, sentChannel, sentReliability, static_cast<int>(result), caller);
     if (finalHello) {
         ++activeHello->sends;
         activeHello->result = result;

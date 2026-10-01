@@ -6,6 +6,8 @@
 //  - Mods\Plugins\EDF6VR.dll <-> EDF6VR.dll.disabled (VR mode, as Switch-VR.ps1);
 //  - what the shipped tools do when asked: EDF6VR\Update-EDF6VR.ps1 -Yes and
 //    Mods\HDTexture\hd_textures.py, run hidden with their output shown here;
+//  - the lighter enemy effects in Mods\OBJECT, made or undone by
+//    Mods\HDTexture\light_effects.py to match [VR] LightEnemyEffects;
 //  - a log ZIP it writes into its own folder.
 // Everything a player reads is plain, simple English.
 #include "settings_core.h"
@@ -15,6 +17,7 @@
 #include <shellapi.h>
 #include <TlHelp32.h>
 #include <winhttp.h>
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <ctime>
@@ -35,6 +38,9 @@ constexpr UINT WM_APP_HD_PROGRESS=WM_APP+4;  // wParam: percent, lParam: new std
 constexpr UINT WM_APP_HD_LINE=WM_APP+5;      // lParam: new std::wstring
 constexpr UINT WM_APP_HD_DONE=WM_APP+6;      // wParam: exit code
 constexpr UINT WM_APP_ZIP_DONE=WM_APP+7;     // wParam: exit code, lParam: new std::wstring (zip path)
+constexpr UINT WM_APP_CREW_PROGRESS=WM_APP+8;  // wParam: percent, lParam: new std::wstring
+constexpr UINT WM_APP_CREW_DONE=WM_APP+9;      // wParam: exit code, lParam: 1 when run ahead of the HD textures
+constexpr UINT WM_APP_LIGHT_DONE=WM_APP+10;    // wParam: exit code, lParam: new std::wstring (its last line)
 constexpr UINT_PTR kGameTimer=1;
 
 enum : int {
@@ -43,7 +49,19 @@ enum : int {
     ID_HD_MAKE, ID_HD_DELETE, ID_HAND_RIGHT, ID_HAND_LEFT, ID_HAND_APPLY, ID_LOGS,
     ID_COCKPIT_ON, ID_COCKPIT_APPLY, ID_HUD_ON, ID_HUD_CORNER, ID_HUD_RWRIST, ID_HUD_LWRIST, ID_HUD_APPLY,
     ID_RETICLE_APPLY, ID_RECOIL_ON, ID_RECOIL_APPLY, ID_BUZZ_APPLY, ID_MIRROR_ON, ID_MIRROR_APPLY, ID_RESET,
+    ID_HANDAIM_APPLY, ID_HANDAIM_ON,   // ID_HANDAIM_ON..+7: one box a kind of seat (kHandAimKinds)
+    ID_HANDAIM_ON_END=ID_HANDAIM_ON+8,
+    ID_CREW_MAKE, ID_CREW_DELETE,
+    ID_SCOPE_VIEW, ID_SCOPE_DIGITAL, ID_SCOPE_OFF, ID_SCOPE_APPLY,
+    ID_LIGHT_ON, ID_LIGHT_APPLY,
 };
+// The hand aim's switches, one a kind of seat, as the mod reads them ([VR]),
+// with their defaults (the Depth Crawler and the Barga off).
+struct HandAimKind { const wchar_t* label; const char* key; bool on; };
+constexpr HandAimKind kHandAimKinds[8]={{L"Nix","VehicleHandAimNix",true},{L"Depth",
+    "VehicleHandAimDepth",false},{L"Barga","VehicleHandAimBarga",false},{L"Tank","VehicleHandAimTank",true},
+    {L"Combat","VehicleHandAimCombat",true},{L"Heli","VehicleHandAimHeli",true},{L"Gun seat","VehicleHandAimGunner",true},
+    {L"Brute gun","VehicleHandAimBruteGunner",true}};
 
 HINSTANCE g_instance=nullptr;
 HWND g_window=nullptr,g_tabs=nullptr,g_footer=nullptr;
@@ -53,7 +71,11 @@ HANDLE g_job=nullptr;                      // the HD builder and its upscaler di
 int g_dpi=96;
 std::wstring g_root,g_exe,g_ini,g_defaults,g_plugins;
 bool g_gameRunning=false;
-enum class Task { None, Update, Hd, Zip } g_task=Task::None;
+enum class Task { None, Update, Hd, Zip, Crew } g_task=Task::None;
+// The crew figures are being made: alone (Task::Crew) or ahead of the HD textures.
+bool g_crewRunning=false;std::wstring g_crewLast;
+// The lighter enemy effects are being made or undone (LightEnemyEffects), and what the tool said last.
+bool g_lightRunning=false;std::wstring g_lightLast;
 bool g_renamedForUpdate=false;
 std::wstring g_updateResult,g_updateError,g_hdLast;
 Version g_installed,g_latest; bool g_latestChecked=false;
@@ -270,11 +292,12 @@ std::vector<std::pair<HWND,COLORREF>> g_colours;
 std::vector<HWND> g_actions;               // disabled while the game runs or a task works
 int g_y=0,g_tab=0,g_shownTab=0;
 constexpr int kLeft=24,kRight=332,kApplyX=656,kRowHeight=78,kTop=46,kWidth=760;
+constexpr int kRows=9;   // the longer tab's rows: Extra VR settings
 
 HWND g_stUpdate,g_btUpdate,g_stMode,g_rbVr,g_rbFlat,g_stSize,g_rbLow,g_rbNormal,g_rbHigh,g_rbCustom,g_edSize,
-     g_stHd,g_pbHd,g_btHdMake,g_btHdDelete,g_stHand,g_cbRight,g_cbLeft,g_stLogs,g_btLogs,
-     g_stCockpit,g_cbCockpit,g_stHud,g_cbHud,g_rbCorner,g_rbRWrist,g_rbLWrist,g_stReticle,g_edReticle,
-     g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stReset;
+     g_stHd,g_pbHd,g_btHdMake,g_btHdDelete,g_stCrew,g_pbCrew,g_btCrewMake,g_btCrewDelete,g_stHand,g_cbRight,g_cbLeft,g_stLogs,g_btLogs,
+     g_stCockpit,g_cbCockpit,g_stHandAim,g_cbHandAim[8],g_stHud,g_cbHud,g_rbCorner,g_rbRWrist,g_rbLWrist,g_stReticle,g_edReticle,g_stScope,g_rbScopeView,g_rbScopeDigital,g_rbScopeOff,
+     g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stLight,g_cbLight,g_btLight,g_stReset;
 
 void Colour(HWND h,COLORREF c) {
     for(auto& entry:g_colours) if(entry.first==h) { entry.second=c; InvalidateRect(h,nullptr,TRUE); return; }
@@ -327,11 +350,30 @@ void ShowTab(int tab) {
     g_shownTab=tab;
     for(const auto& row:g_rows) if(row.tab>=0) for(HWND h:row.parts) ShowWindow(h,row.tab==tab?SW_SHOW:SW_HIDE);
     if(g_task!=Task::Hd) ShowWindow(g_pbHd,SW_HIDE);
+    if(!g_crewRunning) ShowWindow(g_pbCrew,SW_HIDE);
+}
+// A window taller than the screen's work area (more rows, or large text) is cut
+// to fit and scrolls: every part moves together by how far it scrolled.
+int g_scroll=0,g_contentHeight=0;
+void ScrollTo(int pos) {
+    SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE};
+    if(!GetScrollInfo(g_window,SB_VERT,&info)) return;
+    const int most=std::max(0,info.nMax-static_cast<int>(info.nPage)+1);
+    pos=std::clamp(pos,0,most);
+    if(pos==g_scroll) return;
+    const int delta=g_scroll-pos; g_scroll=pos;
+    for(HWND child=GetWindow(g_window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
+        RECT r{}; GetWindowRect(child,&r); MapWindowPoints(nullptr,g_window,reinterpret_cast<POINT*>(&r),2);
+        SetWindowPos(child,nullptr,r.left,r.top+delta,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
+    }
+    SetScrollPos(g_window,SB_VERT,pos,TRUE);
+    InvalidateRect(g_window,nullptr,TRUE);
 }
 // Buttons work only while the game is closed and nothing else is running.
 void RefreshButtons() {
     const bool free=!g_gameRunning && g_task==Task::None;
     for(HWND h:g_actions) EnableWindow(h,free);
+    if(g_lightRunning) EnableWindow(g_btLight,FALSE);
     if(free && g_latestChecked && g_installed.Valid() && g_latest.Valid() && !(g_installed<g_latest)) EnableWindow(g_btUpdate,FALSE);
     SetWindowTextW(g_footer,g_gameRunning?L"The game is running. Close the game to change settings.   （ゲームを閉じてから変更してください）"
                                          :L"Changes are used the next time you start the game.   （次にゲームを起動した時から反映されます）");
@@ -367,6 +409,147 @@ void ShowHd() {
     else if(Exists(g_root+L"\\Mods\\HDTextureWork\\written.txt")) Say(g_stHd,L"Made, but not checked.\nPress Make to check and finish it.");
     else Say(g_stHd,L"Not made.");
 }
+std::wstring BeginLight();             // the lighter enemy effects, below
+void RunLight(const std::wstring& command);
+// The crew figures (the other player in the Proteus's twin seat, drawn as their
+// own soldier): made from this install's Root.cpk by Mods\HDTexture\crew_figures.py
+// into Mods\Plugins\EDF6VRCrew, which says its version last of all.
+std::wstring CrewTool() { return g_root+L"\\Mods\\HDTexture\\crew_figures.py"; }
+std::wstring CrewFolder() { return g_plugins+L"\\EDF6VRCrew"; }
+int CrewVersionWanted() {
+    std::string script;if(!ReadBytes(CrewTool(),script)) return 0;
+    const auto at=script.find("\nVERSION = ");if(at==std::string::npos) return 0;
+    return std::atoi(script.c_str()+at+11);
+}
+int CrewVersionMade() {
+    std::string text;if(!ReadBytes(CrewFolder()+L"\\version.txt",text)) return 0;
+    return std::atoi(text.c_str());
+}
+bool CrewNeeded() { const int want=CrewVersionWanted(); return want>0 && CrewVersionMade()!=want; }
+void ShowCrew() {
+    if(g_crewRunning) return;
+    if(!Exists(g_root+L"\\Mods\\HDTexture\\python\\python.exe") || !Exists(CrewTool()))
+        Say(g_stCrew,L"The tools are missing.\nExtract the mod again.",true);
+    else if(!CrewNeeded()) Say(g_stCrew,L"Made.\nThey are used in the game.");
+    else if(CrewVersionMade()>0) Say(g_stCrew,L"Made by an older version.\nPress Make to make them again.");
+    else Say(g_stCrew,L"Not made.");
+}
+// Runs the generator on this thread (a worker), posting its progress to the row.
+DWORD RunCrew(bool ahead) {
+    const std::wstring python=g_root+L"\\Mods\\HDTexture\\python\\python.exe";
+    const std::wstring command=L"\""+python+L"\" \""+CrewTool()+L"\" \""+g_root+L"\"";
+    const DWORD code=RunCaptured(command,g_root,g_job,[](const std::string& s) {
+        int percent=0; std::string detail;
+        if(ParseProgress(s,percent,detail)) Post(WM_APP_CREW_PROGRESS,static_cast<WPARAM>(percent),Wide(detail));
+        else if(!Trim(s).empty()) Post(WM_APP_CREW_PROGRESS,~static_cast<WPARAM>(0),Wide(Trim(s)));
+    });
+    PostMessageW(g_window,WM_APP_CREW_DONE,code,ahead?1:0);
+    return code;
+}
+void BeginCrewRow() {
+    g_crewRunning=true; g_crewLast.clear();
+    SendMessageW(g_pbCrew,PBM_SETPOS,0,0);
+    ShowWindow(g_pbCrew,g_shownTab==0?SW_SHOW:SW_HIDE);
+    Say(g_stCrew,L"Starting... (reading the game files)");
+}
+void StartCrew() {
+    if(GameRunning()) { Say(g_stCrew,L"Close the game first.",true); return; }
+    if(!Exists(g_root+L"\\Mods\\HDTexture\\python\\python.exe") || !Exists(CrewTool())) { ShowCrew(); return; }
+    if(MessageBoxW(g_window,L"Make the crew figures now?\n\nThey show the other player in the Proteus's twin seat as their own soldier. "
+                   L"They are made from your own game files: about 2 minutes and 180 MB.\n\n"
+                   L"搭乗者フィギュアを作りますか？（約2分・約180MB）",L"Crew figures",MB_YESNO|MB_ICONQUESTION)!=IDYES) return;
+    g_task=Task::Crew;
+    RefreshButtons();
+    BeginCrewRow();
+    const std::wstring light=BeginLight();   // the lighter effects come along with any Make
+    std::thread([light]() { if(!light.empty()) RunLight(light); RunCrew(false); }).detach();
+}
+void DeleteCrew() {
+    if(GameRunning()) { Say(g_stCrew,L"Close the game first.",true); return; }
+    if(MessageBoxW(g_window,L"Delete the crew figures?\n\nThe other player in the Proteus's twin seat is no longer shown. "
+                   L"Only the files this made are deleted.\n\n搭乗者フィギュアを削除しますか？",L"Crew figures",MB_YESNO|MB_ICONQUESTION)!=IDYES) return;
+    // Only the generator's own files, then the folder if it is left empty.
+    const std::wstring folder=CrewFolder();
+    WIN32_FIND_DATAW found{};
+    HANDLE search=FindFirstFileW((folder+L"\\*").c_str(),&found);
+    if(search!=INVALID_HANDLE_VALUE) {
+        do {
+            if(found.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY) continue;
+            const std::wstring name=found.cFileName;const auto dot=name.find_last_of(L'.');
+            const std::wstring ext=dot==std::wstring::npos?L"":name.substr(dot);
+            for(const wchar_t* own:{L".crew",L".dds",L".pose",L".colors"}) if(!_wcsicmp(ext.c_str(),own)) { DeleteFileW((folder+L"\\"+name).c_str()); break; }
+            if(!_wcsicmp(name.c_str(),L"version.txt")) DeleteFileW((folder+L"\\"+name).c_str());
+        } while(FindNextFileW(search,&found));
+        FindClose(search);
+    }
+    RemoveDirectoryW(folder.c_str());
+    ShowCrew();
+}
+// Lighter enemy effects: the Kurul's shotgun pellets without the ring that
+// swells around each one (hundreds glow at once in a big fight, and VR draws
+// every glow twice). Made from this install's Root.cpk by
+// Mods\HDTexture\light_effects.py into Mods\OBJECT, each copy beside a .edf6vr
+// note naming the version that made it. On unless [VR] LightEnemyEffects=0:
+// whenever the settings load with the game closed, the copies are made or
+// removed to match (a fraction of a second).
+std::wstring LightTool() { return g_root+L"\\Mods\\HDTexture\\light_effects.py"; }
+int LightVersionWanted() {
+    std::string script;if(!ReadBytes(LightTool(),script)) return 0;
+    const auto at=script.find("\nVERSION = ");if(at==std::string::npos) return 0;
+    return std::atoi(script.c_str()+at+11);
+}
+// 0 when none is made; the version when every note agrees; -1 when they do not.
+int LightVersionMade() {
+    const std::wstring folder=g_root+L"\\Mods\\OBJECT\\";
+    int made=0;
+    WIN32_FIND_DATAW found{};
+    HANDLE search=FindFirstFileW((folder+L"*.edf6vr").c_str(),&found);
+    if(search==INVALID_HANDLE_VALUE) return 0;
+    do {
+        std::string text;if(!ReadBytes(folder+found.cFileName,text)) continue;
+        const auto at=text.find("light_effects ");if(at==std::string::npos) continue;
+        const int v=std::atoi(text.c_str()+at+14);
+        made=made==0 || made==v?v:-1;
+    } while(FindNextFileW(search,&found));
+    FindClose(search);
+    return made;
+}
+bool LightWanted() { return IniOn(LoadIni(),"VR","LightEnemyEffects",true); }
+bool LightToolsHere() { return Exists(g_root+L"\\Mods\\HDTexture\\python\\python.exe") && LightVersionWanted()>0; }
+bool LightMatches(bool on) { const int made=LightVersionMade(); return on?made==LightVersionWanted():made==0; }
+void ShowLight() {
+    if(g_lightRunning) return;
+    const bool on=LightWanted();
+    SetCheck(g_cbLight,on);
+    if(!LightToolsHere()) Say(g_stLight,L"The tools are missing. Extract the mod again.",true);
+    else if(LightMatches(on)) Say(g_stLight,on?L"Now: On":L"Now: Off (the game's own effect)");
+    else if(GameRunning()) Say(g_stLight,on?L"Now: On, made when the game is closed":L"Now: Off, undone when the game is closed");
+    else Say(g_stLight,g_lightLast.empty()?std::wstring(L"Not done yet."):L"Could not: "+g_lightLast,true);
+}
+// The command that brings the copies in line with the setting, marking the row
+// busy; empty when they already match (or it is running, or the tools are missing).
+std::wstring BeginLight() {
+    if(g_lightRunning || !LightToolsHere()) return {};
+    const bool on=LightWanted();
+    if(LightMatches(on)) { g_lightLast.clear(); return {}; }
+    g_lightRunning=true; g_lightLast.clear();
+    EnableWindow(g_btLight,FALSE);
+    Say(g_stLight,on?L"Making...":L"Undoing...");
+    const std::wstring python=g_root+L"\\Mods\\HDTexture\\python\\python.exe";
+    return L"\""+python+L"\" \""+LightTool()+L"\" \""+g_root+L"\""+(on?L"":L" --remove");
+}
+// On a worker: runs it and posts the outcome to the row.
+void RunLight(const std::wstring& command) {
+    auto* last=new std::wstring;
+    const DWORD code=RunCaptured(command,g_root,g_job,[last](const std::string& s) { if(!Trim(s).empty()) *last=Wide(Trim(s)); });
+    PostMessageW(g_window,WM_APP_LIGHT_DONE,code,reinterpret_cast<LPARAM>(last));
+}
+void SyncLight() {
+    if(g_lightRunning || g_task!=Task::None || GameRunning()) { ShowLight(); return; }
+    const std::wstring command=BeginLight();
+    if(command.empty()) { ShowLight(); return; }
+    std::thread([command]() { RunLight(command); }).detach();
+}
 void LoadAll() {
     const auto ini=LoadIni();
     g_installed=InstalledVersion();
@@ -386,12 +569,22 @@ void LoadAll() {
     SetWindowTextW(g_edSize,Wide(Number(scale)).c_str());
 
     ShowHd();
+    ShowCrew();
     const bool left=IniOn(ini,"LeftHanded","LeftHanded",false);
     Say(g_stHand,left?L"Now: Left hand":L"Now: Right hand");
     Pick({g_cbRight,g_cbLeft},left?g_cbLeft:g_cbRight);
 
     const bool cockpit=IniOn(ini,"VR","VehicleCockpit",true);
     Say(g_stCockpit,cockpit?L"Now: On":L"Now: Off"); SetCheck(g_cbCockpit,cockpit);
+    {
+        std::wstring off;int on=0;
+        for(int i=0;i<8;++i) {
+            const bool now=IniOn(ini,"VR",kHandAimKinds[i].key,kHandAimKinds[i].on);
+            SetCheck(g_cbHandAim[i],now);
+            if(now)++on;else off+=(off.empty()?L"":L", ")+std::wstring(kHandAimKinds[i].label);
+        }
+        Say(g_stHandAim,on==8?L"Now: On for all":on==0?L"Now: Off for all":L"Now: On, except "+off);
+    }
     const bool hud=IniOn(ini,"Render","UiCluster",true);
     int place=std::atoi(IniValue(ini,"Render","UiClusterPlace","0").c_str());
     if(place<0 || place>2) place=0;
@@ -406,6 +599,11 @@ void LoadAll() {
     Say(g_stBuzz,L"Now: "+Wide(buzz)); SetWindowTextW(g_edBuzz,Wide(buzz).c_str());
     const bool mirror=IniOn(ini,"Render","DesktopMirror",true);
     Say(g_stMirror,mirror?L"Now: On":L"Now: Off"); SetCheck(g_cbMirror,mirror);
+    int scope=std::atoi(IniValue(ini,"VR","ScopeMode","1").c_str());
+    if(scope<0 || scope>2) scope=1;
+    Say(g_stScope,scope==1?L"Now: Native (sharp)":scope==2?L"Now: Digital (no FPS cost)":L"Now: Off (the whole view zooms)");
+    Pick({g_rbScopeView,g_rbScopeDigital,g_rbScopeOff},scope==1?g_rbScopeView:scope==2?g_rbScopeDigital:g_rbScopeOff);
+    SyncLight();
 }
 
 // ---- actions -------------------------------------------------------------------
@@ -514,16 +712,25 @@ void StartHd(bool remove) {
         if(MessageBoxW(g_window,L"Delete the HD texture files?\n\nThe game goes back to its normal pictures. "
                        L"Only the files this made are deleted.\n\n高画質テクスチャを削除しますか？",L"HD textures",MB_YESNO|MB_ICONQUESTION)!=IDYES) return;
     } else if(MessageBoxW(g_window,L"Make HD textures now?\n\nIt takes about 1 hour and needs about 40 GB of free disk space.\n"
-                          L"Do not start the game until it is done. You can stop it and go on later.\n\n"
-                          L"高画質テクスチャを作りますか？（約1時間。終わるまでゲームを起動しないでください）",
+                          L"Do not start the game until it is done. You can stop it and go on later.\n"
+                          L"The crew figures are made first if they are not made yet (about 2 minutes).\n\n"
+                          L"高画質テクスチャを作りますか？（約1時間。終わるまでゲームを起動しないでください）\n"
+                          L"搭乗者フィギュアも一緒に作ります（約2分）",
                           L"HD textures",MB_YESNO|MB_ICONQUESTION)!=IDYES) return;
+    // The crew figures first: two minutes, and kept even if the hour of HD
+    // textures is stopped part way.
+    const bool crewAhead=!remove && Exists(CrewTool()) && CrewNeeded();
     g_task=Task::Hd; g_hdLast.clear();
     RefreshButtons();
     SendMessageW(g_pbHd,PBM_SETPOS,0,0);
     ShowWindow(g_pbHd,remove?SW_HIDE:SW_SHOW);
-    Say(g_stHd,remove?L"Deleting...":L"Starting... (reading the game files)");
+    Say(g_stHd,remove?L"Deleting...":crewAhead?L"Waiting for the crew figures...":L"Starting... (reading the game files)");
+    if(crewAhead) BeginCrewRow();
+    const std::wstring light=remove?std::wstring():BeginLight();   // the lighter effects come along with any Make
     const std::wstring command=L"\""+python+L"\" \""+tool+(remove?L"\" --remove":L"\" --set all");
-    std::thread([command]() {
+    std::thread([command,crewAhead,light]() {
+        if(!light.empty()) RunLight(light);
+        if(crewAhead) RunCrew(true);   // its result shows in its own row; the HD textures go on regardless
         const DWORD code=RunCaptured(command,g_root,g_job,[](const std::string& s) {
             int percent=0; std::string detail;
             if(ParseProgress(s,percent,detail)) Post(WM_APP_HD_PROGRESS,static_cast<WPARAM>(percent),Wide(detail));
@@ -604,7 +811,7 @@ void Build() {
     face.lfWeight=FW_BOLD;
     g_bold=CreateFontIndirectW(&face);
 
-    g_tabs=CreateWindowExW(0,WC_TABCONTROLW,L"",WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|WS_TABSTOP,S(8),S(8),S(kWidth-16),S(kTop+7*kRowHeight),
+    g_tabs=CreateWindowExW(0,WC_TABCONTROLW,L"",WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|WS_TABSTOP,S(8),S(8),S(kWidth-16),S(kTop+kRows*kRowHeight),
                            g_window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TABS)),g_instance,nullptr);
     SendMessageW(g_tabs,WM_SETFONT,reinterpret_cast<WPARAM>(g_font),TRUE);
     TCITEMW item{TCIF_TEXT};
@@ -625,9 +832,18 @@ void Build() {
     g_rbHigh=Radio(L"High",ID_SIZE_HIGH,kRight+124,54); g_rbCustom=Radio(L"Custom",ID_SIZE_CUSTOM,kRight+180,70);
     g_edSize=Edit(kRight+252,52); Button(L"Apply",ID_SIZE_APPLY); EndRow();
 
+    g_stScope=BeginRow(L"Scope zoom",L"How the zoomed view in the scope is drawn.\nNative is sharp; Digital costs no FPS.\nズーム映像（デジタルはFPSに影響なし）");
+    g_rbScopeView=Radio(L"Native",ID_SCOPE_VIEW,kRight,76); g_rbScopeDigital=Radio(L"Digital",ID_SCOPE_DIGITAL,kRight+80,76);
+    g_rbScopeOff=Radio(L"Off",ID_SCOPE_OFF,kRight+160,60);
+    Button(L"Apply",ID_SCOPE_APPLY); EndRow();
+
     g_stHd=BeginRow(L"HD textures",L"Makes walls, weapons and enemies 2x sharper.\nTakes about 1 hour and 40 GB of disk.\n高画質化（約1時間・空き容量40GB）",2,226);
     g_pbHd=Part(PROGRESS_CLASSW,L"",0,kRight,g_y+44,226,14);
     g_btHdMake=Button(L"Make",ID_HD_MAKE,kApplyX-88,80); g_btHdDelete=Button(L"Delete",ID_HD_DELETE); EndRow();
+
+    g_stCrew=BeginRow(L"Crew figures",L"The other player in the Proteus's twin seat,\nas their own soldier. Made with HD textures.\n搭乗者フィギュア（HDテクスチャと一緒に作成）",2,226);
+    g_pbCrew=Part(PROGRESS_CLASSW,L"",0,kRight,g_y+44,226,14);
+    g_btCrewMake=Button(L"Make",ID_CREW_MAKE,kApplyX-88,80); g_btCrewDelete=Button(L"Delete",ID_CREW_DELETE); EndRow();
 
     g_stHand=BeginRow(L"Gun hand",L"The hand that holds and fires the gun.\nRanger, Wing Diver, Air Raider. Not Fencer.\n銃を持つ手（フェンサー・乗り物は除く）");
     g_cbRight=Check(L"Right",ID_HAND_RIGHT,kRight,70,false); g_cbLeft=Check(L"Left",ID_HAND_LEFT,kRight+74,70,false);
@@ -640,6 +856,12 @@ void Build() {
     g_tab=1; g_y=kTop;
     g_stCockpit=BeginRow(L"VR cockpit",L"Shows a cockpit around you\nwhen you ride a vehicle.\n乗り物にコクピットを表示");
     g_cbCockpit=Check(L"On",ID_COCKPIT_ON,kRight,60,true); Button(L"Apply",ID_COCKPIT_APPLY); EndRow();
+
+    g_stHandAim=BeginRow(L"Vehicle hand aim",L"Point your gun hand to aim, by vehicle.\nGun seat: Proteus and Titan seats.\n乗り物の照準を手の向きで（車種別）");
+    // Two lines of four: one box a kind of seat.
+    for(int i=0;i<8;++i)
+        g_cbHandAim[i]=Part(L"BUTTON",kHandAimKinds[i].label,BS_AUTOCHECKBOX|WS_TABSTOP,kRight+(i%4)*80,g_y+24+(i/4)*25,78,22,ID_HANDAIM_ON+i);
+    Button(L"Apply",ID_HANDAIM_APPLY); EndRow();
 
     g_stHud=BeginRow(L"Compact HUD",L"Radar, armor and weapons in one small box,\nin the corner of your view or on a wrist.\n小さなHUD（視界の隅か手首に表示）");
     g_cbHud=Check(L"On",ID_HUD_ON,kRight,50,true); g_rbCorner=Radio(L"Corner",ID_HUD_CORNER,kRight+54,70);
@@ -658,11 +880,14 @@ void Build() {
     g_stMirror=BeginRow(L"Desktop mirror",L"Also shows the game on your monitor in VR.\nGood for recording and streaming.\nVR中もモニターに映します（配信向け）");
     g_cbMirror=Check(L"On",ID_MIRROR_ON,kRight,60,true); Button(L"Apply",ID_MIRROR_APPLY); EndRow();
 
+    g_stLight=BeginRow(L"Lighter Kurul shots",L"Kurul shotgun pellets without the ring\nthat swells around each one: smoother fights.\nクルールの散弾を軽く（弾のリングを省略）");
+    g_cbLight=Check(L"On",ID_LIGHT_ON,kRight,60,true); g_btLight=Button(L"Apply",ID_LIGHT_APPLY); EndRow();
+
     g_stReset=BeginRow(L"Reset settings",L"Puts all VR settings back to how they came.\nYour picture size and gun hand stay.\n設定を初期値に戻す（解像度と利き手は維持）",2,300);
     Button(L"Reset",ID_RESET); EndRow();
 
     g_rows.push_back({-1,{}});
-    g_footer=Part(L"STATIC",L"",SS_LEFT|WS_VISIBLE,16,kTop+7*kRowHeight+16,kWidth-32,20);
+    g_footer=Part(L"STATIC",L"",SS_LEFT|WS_VISIBLE,16,kTop+kRows*kRowHeight+16,kWidth-32,20);
     SetWindowPos(g_tabs,HWND_BOTTOM,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
 }
 
@@ -676,10 +901,17 @@ void OnCommand(int id) {
     case ID_SIZE_APPLY: ApplySize(); break;
     case ID_HD_MAKE: StartHd(false); break;
     case ID_HD_DELETE: StartHd(true); break;
+    case ID_CREW_MAKE: StartCrew(); break;
+    case ID_CREW_DELETE: DeleteCrew(); break;
     case ID_HAND_RIGHT: case ID_HAND_LEFT: Pick({g_cbRight,g_cbLeft},GetDlgItem(g_window,id)); break;
     case ID_HAND_APPLY: Save(g_stHand,{{"LeftHanded","LeftHanded",Checked(g_cbLeft)?"1":"0"}}); break;
     case ID_LOGS: StartZip(); break;
     case ID_COCKPIT_APPLY: Save(g_stCockpit,{{"VR","VehicleCockpit",Checked(g_cbCockpit)?"1":"0"}}); break;
+    case ID_HANDAIM_APPLY: {
+        std::vector<Setting> settings;
+        for(int i=0;i<8;++i)settings.push_back({"VR",kHandAimKinds[i].key,Checked(g_cbHandAim[i])?"1":"0"});
+        Save(g_stHandAim,settings); break;
+    }
     case ID_HUD_CORNER: case ID_HUD_RWRIST: case ID_HUD_LWRIST: Pick({g_rbCorner,g_rbRWrist,g_rbLWrist},GetDlgItem(g_window,id)); break;
     case ID_HUD_APPLY:
         Save(g_stHud,{{"Render","UiCluster",Checked(g_cbHud)?"1":"0"},
@@ -688,6 +920,11 @@ void OnCommand(int id) {
     case ID_RECOIL_APPLY: Save(g_stRecoil,{{"VR","RecoilKick",Checked(g_cbRecoil)?"1":"0"}}); break;
     case ID_BUZZ_APPLY: ApplyNumber(g_stBuzz,g_edBuzz,"VR","ShotBuzz",0.0,1.0); break;
     case ID_MIRROR_APPLY: Save(g_stMirror,{{"Render","DesktopMirror",Checked(g_cbMirror)?"1":"0"}}); break;
+    case ID_SCOPE_VIEW: case ID_SCOPE_DIGITAL: case ID_SCOPE_OFF:
+        Pick({g_rbScopeView,g_rbScopeDigital,g_rbScopeOff},GetDlgItem(g_window,id)); break;
+    case ID_SCOPE_APPLY:
+        Save(g_stScope,{{"VR","ScopeMode",Checked(g_rbScopeView)?"1":Checked(g_rbScopeDigital)?"2":"0"}}); break;
+    case ID_LIGHT_APPLY: Save(g_stLight,{{"VR","LightEnemyEffects",Checked(g_cbLight)?"1":"0"}}); break;   // made or undone by LoadAll
     case ID_RESET: Reset(); break;
     default: break;
     }
@@ -698,6 +935,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam) 
     case WM_CREATE:
         g_window=hwnd;
         Build();
+        {
+            RECT client{}; GetClientRect(hwnd,&client);
+            if(client.bottom<g_contentHeight) {
+                SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS,0,g_contentHeight-1,static_cast<UINT>(client.bottom),0,0};
+                SetScrollInfo(hwnd,SB_VERT,&info,TRUE);
+            }
+        }
         LoadAll();
         g_gameRunning=GameRunning();
         ShowTab(0);
@@ -766,6 +1010,50 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam) 
         ShowHd();
         if(wParam!=0 && !g_hdLast.empty()) Say(g_stHd,L"Stopped:\n"+g_hdLast,true);
         return 0;
+    case WM_APP_CREW_PROGRESS: {
+        std::unique_ptr<std::wstring> detail(reinterpret_cast<std::wstring*>(lParam));
+        if(wParam==~static_cast<WPARAM>(0)) { g_crewLast=*detail; return 0; }   // a plain line: kept for a failure
+        SendMessageW(g_pbCrew,PBM_SETPOS,wParam,0);
+        wchar_t text[64]{}; swprintf_s(text,L"Making: %d%%\n",static_cast<int>(wParam));
+        Say(g_stCrew,text+*detail);
+        return 0;
+    }
+    case WM_APP_CREW_DONE:
+        g_crewRunning=false;
+        ShowWindow(g_pbCrew,SW_HIDE);
+        if(lParam==0) { g_task=Task::None; RefreshButtons(); }
+        else if(g_task==Task::Hd) Say(g_stHd,L"Starting... (reading the game files)");
+        ShowCrew();
+        if(wParam!=0) Say(g_stCrew,L"Stopped:\n"+(g_crewLast.empty()?std::wstring(L"the generator failed"):g_crewLast),true);
+        return 0;
+    case WM_APP_LIGHT_DONE: {
+        std::unique_ptr<std::wstring> last(reinterpret_cast<std::wstring*>(lParam));
+        g_lightRunning=false; g_lightLast=*last;
+        if(wParam!=0 && g_lightLast.empty()) g_lightLast=L"the tool failed";
+        RefreshButtons();
+        ShowLight();
+        return 0;
+    }
+    case WM_VSCROLL: {
+        SCROLLINFO info{sizeof(info),SIF_ALL};
+        if(!GetScrollInfo(hwnd,SB_VERT,&info)) return 0;
+        int pos=g_scroll;
+        switch(LOWORD(wParam)) {
+        case SB_LINEUP: pos-=S(40); break;
+        case SB_LINEDOWN: pos+=S(40); break;
+        case SB_PAGEUP: pos-=static_cast<int>(info.nPage); break;
+        case SB_PAGEDOWN: pos+=static_cast<int>(info.nPage); break;
+        case SB_THUMBTRACK: case SB_THUMBPOSITION: pos=info.nTrackPos; break;
+        case SB_TOP: pos=0; break;
+        case SB_BOTTOM: pos=info.nMax; break;
+        default: break;
+        }
+        ScrollTo(pos);
+        return 0;
+    }
+    case WM_MOUSEWHEEL:
+        ScrollTo(g_scroll-GET_WHEEL_DELTA_WPARAM(wParam)*S(kRowHeight)/WHEEL_DELTA);
+        return 0;
     case WM_APP_ZIP_DONE: {
         std::unique_ptr<std::wstring> zip(reinterpret_cast<std::wstring*>(lParam));
         g_task=Task::None;
@@ -780,6 +1068,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam) 
         if(g_task==Task::Update) { MessageBoxW(hwnd,L"Please wait until the update is done.\n\n更新が終わるまでお待ちください。",L"EDF6 VR setting",MB_ICONINFORMATION); return 0; }
         if(g_task==Task::Hd && MessageBoxW(hwnd,L"HD textures are still being made.\n\nStop now? You can go on later from where it stopped.\n\n作成を中断しますか？（後で続きから再開できます）",
                                            L"EDF6 VR setting",MB_YESNO|MB_ICONQUESTION)!=IDYES) return 0;
+        if(g_task==Task::Crew && MessageBoxW(hwnd,L"The crew figures are still being made.\n\nStop now? Press Make later to make them again.\n\n作成を中断しますか？",
+                                             L"EDF6 VR setting",MB_YESNO|MB_ICONQUESTION)!=IDYES) return 0;
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
@@ -832,11 +1122,19 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     windowClass.hbrBackground=g_white;
     windowClass.lpszClassName=L"EDF6VRSettings";
     RegisterClassExW(&windowClass);
-    const DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
-    RECT area{0,0,S(kWidth),S(kTop+7*kRowHeight+48)};
+    DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
+    g_contentHeight=S(kTop+kRows*kRowHeight+48);
+    RECT area{0,0,S(kWidth),g_contentHeight};
     AdjustWindowRectEx(&area,style,FALSE,WS_EX_CONTROLPARENT);
-    HWND window=CreateWindowExW(WS_EX_CONTROLPARENT,windowClass.lpszClassName,L"EDF6 VR setting",style,CW_USEDEFAULT,CW_USEDEFAULT,
-                                area.right-area.left,area.bottom-area.top,nullptr,nullptr,instance,nullptr);
+    int width=area.right-area.left,height=area.bottom-area.top;
+    // Centred on the work area; cut to fit it, with a scroll bar, when too tall.
+    RECT work{0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};
+    SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
+    const int room=work.bottom-work.top;
+    if(height>room) { style|=WS_VSCROLL; width+=GetSystemMetrics(SM_CXVSCROLL); height=room; }
+    const int x=work.left+std::max(0,(static_cast<int>(work.right-work.left)-width)/2),y=work.top+std::max(0,(room-height)/2);
+    HWND window=CreateWindowExW(WS_EX_CONTROLPARENT,windowClass.lpszClassName,L"EDF6 VR setting",style,x,y,
+                                width,height,nullptr,nullptr,instance,nullptr);
     if(!window) return 1;
     ShowWindow(window,show);
     UpdateWindow(window);

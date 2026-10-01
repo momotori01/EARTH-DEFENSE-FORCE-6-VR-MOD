@@ -47,9 +47,9 @@ COLOUR_FORMATS = frozenset(('BC1_UNORM', 'BC1_UNORM_SRGB', 'BC2_UNORM', 'BC2_UNO
 
 
 class Info:
-    __slots__ = ('width', 'height', 'mips', 'fourcc', 'format', 'dx10', 'ok')
+    __slots__ = ('width', 'height', 'mips', 'fourcc', 'format', 'dx10', 'ok', 'surfaces')
 
-    def __init__(self, width=0, height=0, mips=0, fourcc=b'', format='', dx10=False, ok=False):
+    def __init__(self, width=0, height=0, mips=0, fourcc=b'', format='', dx10=False, ok=False, surfaces=1):
         self.width = width
         self.height = height
         self.mips = mips
@@ -57,6 +57,7 @@ class Info:
         self.format = format
         self.dx10 = dx10
         self.ok = ok
+        self.surfaces = surfaces      # pictures in the file: array slices, times six for a cube
 
     @property
     def colour(self):
@@ -73,27 +74,34 @@ def read(blob):
         return Info()
     height, width = struct.unpack_from('<II', blob, 12)
     mips = struct.unpack_from('<I', blob, 28)[0]
-    # Cube maps and volumes hold several surfaces in one file; doubling one is a
-    # different job with different rules, and there is no reason to attempt it.
-    if struct.unpack_from('<I', blob, 112)[0] & 0x00200000:
+    # Cube maps, arrays and volumes hold several surfaces in one file; doubling
+    # one is a different job with different rules, and there is no reason to
+    # attempt it. They are read (`surfaces` says how many) but never `ok`.
+    # Only volumes were refused until 2026-10-01: the terrain colour of 23 maps
+    # is a DX10 array of 2 to 19 slices, and it came back as its first slice
+    # alone -- the ground of mission 65 turned white.
+    caps2 = struct.unpack_from('<I', blob, 112)[0]
+    if caps2 & 0x00200000:
         return Info()
+    surfaces = 6 if caps2 & 0x200 else 1    # DDSCAPS2_CUBEMAP
     pixel_flags = struct.unpack_from('<I', blob, 80)[0]
     fourcc = blob[84:88]
     if pixel_flags & 0x4:  # DDPF_FOURCC
         if fourcc == b'DX10':
             if len(blob) < DX10_HEADER:
                 return Info()
-            dxgi = struct.unpack_from('<I', blob, 128)[0]
+            dxgi, _dimension, misc, array_size = struct.unpack_from('<4I', blob, 128)
+            surfaces = max(1, array_size) * (6 if misc & 0x4 else 1)   # RESOURCE_MISC_TEXTURECUBE
             name = DXGI_NAMES.get(dxgi, 'DXGI_%d' % dxgi)
-            return Info(width, height, mips, fourcc, name, True, True)
+            return Info(width, height, mips, fourcc, name, True, surfaces == 1, surfaces)
         name = FOURCC_NAMES.get(fourcc)
         if not name:
-            return Info(width, height, mips, fourcc, fourcc.decode('ascii', 'replace'), False, False)
-        return Info(width, height, mips, fourcc, name, False, True)
+            return Info(width, height, mips, fourcc, fourcc.decode('ascii', 'replace'), False, False, surfaces)
+        return Info(width, height, mips, fourcc, name, False, surfaces == 1, surfaces)
     if pixel_flags & 0x40:  # DDPF_RGB
         bits = struct.unpack_from('<I', blob, 88)[0]
         name = {32: 'B8G8R8A8_UNORM', 24: 'B8G8R8X8_UNORM'}.get(bits)
-        return Info(width, height, mips, b'', name or 'RGB_%d' % bits, False, bool(name))
+        return Info(width, height, mips, b'', name or 'RGB_%d' % bits, False, bool(name) and surfaces == 1, surfaces)
     return Info(width, height, mips, fourcc, 'unknown', False, False)
 
 

@@ -23,7 +23,13 @@ STAGE = os.path.join(ROOT, 'dist', 'HDTexture')
 
 SCRIPTS = ('hd_textures.py', 'cpk.py', 'rab.py', 'dds.py', 'progress.py', 'gpu.py', 'check.py',
            'loader_config.py',
-           'verify_pack.py')
+           'verify_pack.py',
+           # The Proteus crew figures (Mods/Plugins/EDF6VRCrew), made from the
+           # player's own Root.cpk by the settings program, like the HD pack.
+           'crew_figures.py',
+           # The lighter Kurul shots (Mods/OBJECT/E601_SHOTGUN.EFARC), made or
+           # undone by the settings program to match [VR] LightEnemyEffects.
+           'light_effects.py')
 PYTHON_ZIP = os.path.join(ROOT, 'tools', 'upscale', 'python-embed.zip')
 # The model that fits this job. The other two in the release are for line art;
 # shipping them would treble the download for pictures of concrete.

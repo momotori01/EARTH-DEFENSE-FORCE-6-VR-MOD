@@ -42,9 +42,58 @@ bool ReadUmbraProbeData(const void* source,void* output,std::size_t bytes) noexc
         std::memcpy(output,source,bytes); return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+// The last camera matrix and frustum each Umbra camera was given (118DFF0 sets
+// both inside every loop, before its resolves), for the scope's view to replace
+// and put back. Producer thread, but locked: the setters are not ours to time.
+struct UmbraFrustumRaw { float f[6]; unsigned tag; };
+static_assert(sizeof(UmbraFrustumRaw)==28);
+struct UmbraLatest { void* camera=nullptr; edf6vr::Matrix matrix{}; UmbraFrustumRaw frustum{}; bool haveMatrix=false,haveFrustum=false; };
+SRWLOCK g_umbraLatestLock=SRWLOCK_INIT;
+UmbraLatest g_umbraLatest[16]{};
+unsigned g_umbraLatestNext=0;
+void NoteUmbraLatest(void* camera,const edf6vr::Matrix* matrix,const UmbraFrustumRaw* frustum) noexcept {
+    if(!camera) return;
+    AcquireSRWLockExclusive(&g_umbraLatestLock);
+    UmbraLatest* entry=nullptr;
+    for(auto& e:g_umbraLatest) if(e.camera==camera) {entry=&e;break;}
+    if(!entry) {entry=&g_umbraLatest[g_umbraLatestNext];g_umbraLatestNext=(g_umbraLatestNext+1)%16;*entry={};entry->camera=camera;}
+    if(matrix) {entry->matrix=*matrix;entry->haveMatrix=true;}
+    if(frustum) {entry->frustum=*frustum;entry->haveFrustum=true;}
+    ReleaseSRWLockExclusive(&g_umbraLatestLock);
+}
+bool ReadUmbraLatest(void* camera,UmbraLatest& out) noexcept {
+    AcquireSRWLockShared(&g_umbraLatestLock);
+    bool found=false;
+    for(const auto& e:g_umbraLatest) if(e.camera==camera) {out=e;found=true;break;}
+    ReleaseSRWLockShared(&g_umbraLatestLock);
+    return found && out.haveMatrix && out.haveFrustum;
+}
+// The scope's view (eye 2): its camera on the firing line and its narrow field,
+// put on Main and Far for their resolves and taken off again -- the same
+// pattern as the right eye's shift, plus the frustum. Culling, the projection
+// the GPU is given and the distance scale all follow the resolve.
+bool ScopeResolve(void* camera) noexcept {
+    UmbraLatest latest{};
+    const auto view=edf6vr::ReadScopeView();
+    alignas(16) edf6vr::Matrix scope{};UmbraFrustumRaw narrow{};
+    if(!view.active || view.mode!=1 || !ReadUmbraLatest(camera,latest)
+       || !edf6vr::ScopeCamera(latest.matrix,view.origin,view.forward,scope)
+       || !edf6vr::ScopeFrustum(latest.frustum.f,view.tanHalf,view.aspect,narrow.f)) {
+        g_scopeResolveRefused.fetch_add(1,std::memory_order_relaxed);
+        g_umbraResolve(camera);
+        return false;
+    }
+    narrow.tag=latest.frustum.tag;
+    g_umbraMatrix(camera,&scope);g_umbraFrustum(camera,&narrow);  // bypass the observers
+    g_umbraResolve(camera);
+    g_umbraFrustum(camera,&latest.frustum);g_umbraMatrix(camera,&latest.matrix); // restore, WITHOUT another resolve
+    g_scopeResolves.fetch_add(1,std::memory_order_relaxed);
+    return true;
+}
 void __fastcall ProbeUmbraResolve(void* camera) {
     const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress())-reinterpret_cast<std::uintptr_t>(g_image.base);
     const int eye=edf6vr::NativeWorldProducerEye();
+    if(eye==2 && edf6vr::ClassifyNativeWorldResolve(caller)!=edf6vr::NativeWorldViewKind::Other) {ScopeResolve(camera);return;}
     alignas(16) edf6vr::Matrix original{},shifted{};
     const bool eyeView=eye>=0 && edf6vr::ClassifyNativeWorldResolve(caller)!=edf6vr::NativeWorldViewKind::Other
         && edf6vr::PrepareNativeWorldEye(camera,edf6vr::NativeWorldProducerFrame(),static_cast<unsigned>(eye),
@@ -140,6 +189,7 @@ void __fastcall ProbeUmbraMatrix(void* camera,const void* source) {
     edf6vr::Matrix original{};
     if(edf6vr::NativeWorldEnabled() && ReadUmbraProbeData(source,&original,sizeof(original))) {
         edf6vr::RecordNativeWorldCamera(camera,original);
+        NoteUmbraLatest(camera,&original,nullptr);
         // 118DFF0 publishes camera matrices inside the first viewport loop.
         // Main/Far may then use an already queued resolve (+74==0), so latch
         // here as well. Never latch last frame's matrices at loop entry.
@@ -158,6 +208,10 @@ void __fastcall ProbeUmbraMatrix(void* camera,const void* source) {
     g_umbraMatrix(camera,source);
 }
 void __fastcall ProbeUmbraFrustum(void* camera,const void* source) {
+    {
+        UmbraFrustumRaw raw{};
+        if(edf6vr::NativeWorldEnabled() && ReadUmbraProbeData(source,&raw,sizeof(raw))) NoteUmbraLatest(camera,nullptr,&raw);
+    }
     if(ClaimUmbraSample(camera,8)) {
         // EDF setter11D46B0 copies six floats and one 32-bit value (28 bytes).
         struct Frustum { float f[6]; unsigned tag; } frustum{};

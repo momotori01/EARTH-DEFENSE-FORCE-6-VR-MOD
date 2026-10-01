@@ -46,6 +46,14 @@ bool IsSupportedSoldier(const ImageProfile& image,const void* soldier) noexcept 
     for(const auto& entry:soldierClasses) if(HasType(image,soldier,entry.name)) return true;
     return false;
 }
+unsigned SoldierClassOf(const ImageProfile& image,const void* object) noexcept {
+    __try {
+        if(!image.base||!object) return 0;
+        const auto table=*static_cast<void* const*>(object);
+        for(unsigned i=0;i<4;++i) if(table==image.base+soldierClasses[i].table) return i+1;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    return 0;
+}
 unsigned WeaponSlotCount(void* soldier) noexcept {
     __try {
         if(!Readable(soldier,0x1984)) return 0;

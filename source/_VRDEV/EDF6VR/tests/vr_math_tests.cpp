@@ -8,6 +8,7 @@
 #include "body_tumble.h"
 #include "openxr_session.h"
 #include "ranger_holster.h"
+#include "scope.h"
 #include <Windows.h>
 #include <cmath>
 #include <algorithm>
@@ -203,6 +204,11 @@ __declspec(guard(ignore)) static void TestRedirect() {
     const auto relative=static_cast<std::int32_t>(reinterpret_cast<unsigned char*>(&Target)-(site+5));
     std::memcpy(site+1,&relative,sizeof(relative));
     site[5]=0xC3;
+    // jmp rel32 -- a tail call, for RedirectJump.
+    unsigned char* jump=page+0x60;
+    jump[0]=0xE9;
+    const auto jumpRelative=static_cast<std::int32_t>(reinterpret_cast<unsigned char*>(&Target)-(jump+5));
+    std::memcpy(jump+1,&jumpRelative,sizeof(jumpRelative));
     DWORD restored=0;
     CHECK(VirtualProtect(page,0x1000,PAGE_EXECUTE_READ,&restored)!=0);
     FlushInstructionCache(GetCurrentProcess(),page,0x1000);
@@ -221,6 +227,17 @@ __declspec(guard(ignore)) static void TestRedirect() {
     CHECK(changed);
     CHECK(call(21)==63);
     CHECK(g_redirected==1);
+
+    const auto tail=reinterpret_cast<Call>(jump);
+    CHECK(tail(21)==42);
+    CHECK(!RedirectCall(jump,reinterpret_cast<void*>(&Target),reinterpret_cast<void*>(&Replacement),changed));
+    CHECK(!changed);
+    CHECK(!RedirectJump(site,reinterpret_cast<void*>(&Replacement),reinterpret_cast<void*>(&Replacement),changed));
+    CHECK(!changed);
+    CHECK(RedirectJump(jump,reinterpret_cast<void*>(&Target),reinterpret_cast<void*>(&Replacement),changed));
+    CHECK(changed);
+    CHECK(tail(21)==63);
+    CHECK(g_redirected==2);
     VirtualFree(page,0,MEM_RELEASE);
 }
 
@@ -321,6 +338,87 @@ void TestTurnAboutVertical() {
     CHECK(std::fabs(point[0]-eye[0]-want.x)<1e-4f && std::fabs(point[1]-eye[1]-want.y)<1e-4f
           && std::fabs(point[2]-eye[2]-want.z)<1e-4f);
 }
+// Weapon scopes (scope.h): the field, the frustum, the camera and the lens.
+static void TestScope() {
+    auto approx=[](float a,float b,float e){return std::fabs(a-b)<=e;};
+    CHECK(approx(ScopeTanHalf(.25f,4.f),.0625f,1e-6f));
+    CHECK(approx(ScopeTanHalf(.25f,.5f),.25f,1e-6f));             // no magnification below 1
+    CHECK(approx(ScopeTanHalf(5.f,1.f),1.f,1e-6f));               // clamped to a frustum's worth
+    CHECK(ScopeTanHalf(std::numeric_limits<float>::quiet_NaN(),4.f)==0);
+    // Umbra's raw frustum (the VR camera's, as logged): made symmetric, the
+    // height from the field, the width from the surface's aspect (never narrower).
+    const float in[6]={-.148001f,.148001f,.137478f,-.137478f,.1f,1000.f};
+    float out[6]{};
+    CHECK(ScopeFrustum(in,.05f,1.f,out));
+    CHECK(approx(out[2]/out[4],.05f,1e-5f) && approx(out[3]/out[4],-.05f,1e-5f));
+    CHECK(approx(out[1]-out[0],out[2]-out[3],1e-7f) && out[0]<0 && out[1]>0);
+    CHECK(out[4]==in[4] && out[5]==in[5]);
+    CHECK(ScopeFrustum(in,.05f,16.f/9.f,out) && approx((out[1]-out[0])/(out[2]-out[3]),16.f/9.f,1e-4f));
+    CHECK(ScopeFrustum(in,.05f,.5f,out) && approx(out[1]-out[0],out[2]-out[3],1e-7f));
+    const float flat[6]={-.1f,.1f,0,0,.1f,1000.f};
+    CHECK(!ScopeFrustum(flat,.05f,1.f,out));
+    CHECK(!ScopeFrustum(in,.05f,std::numeric_limits<float>::quiet_NaN(),out));
+    // The camera: the head turned onto the aim, moved to the muzzle.
+    Matrix head{};head.m[0][0]=1;head.m[1][1]=1;head.m[2][2]=1;head.m[3][3]=1;
+    head.m[3][0]=5;head.m[3][1]=1.6f;head.m[3][2]=-2;
+    const float origin[3]={5.2f,1.4f,-1.6f};
+    float forward[3]={.3f,.1f,1.f};
+    Matrix scope{};
+    CHECK(ScopeCamera(head,origin,forward,scope));
+    const float lf=std::sqrt(.3f*.3f+.1f*.1f+1.f);
+    CHECK(approx(scope.m[2][0],.3f/lf,1e-5f) && approx(scope.m[2][1],.1f/lf,1e-5f) && approx(scope.m[2][2],1.f/lf,1e-5f));
+    CHECK(approx(scope.m[3][0],5.2f,1e-6f) && approx(scope.m[3][1],1.4f,1e-6f) && approx(scope.m[3][2],-1.6f,1e-6f));
+    CHECK(scope.m[1][1]>.9f);                                    // the head's up kept, no roll
+    const float* r0=scope.m[0];const float* r1=scope.m[1];const float* r2=scope.m[2];
+    CHECK(approx(r0[0],r1[1]*r2[2]-r1[2]*r2[1],1e-5f) && approx(r0[1],r1[2]*r2[0]-r1[0]*r2[2],1e-5f));   // row0 = row1 x row2
+    float same[3]={0,0,2};
+    CHECK(ScopeCamera(head,origin,same,scope) && approx(scope.m[0][0],1,1e-6f) && approx(scope.m[1][1],1,1e-6f));
+    float behind[3]={0,0,-1};
+    CHECK(!ScopeCamera(head,origin,behind,scope));
+    // The lens: the eyepiece through the weapon root, seen from the eye.
+    Matrix root{};root.m[0][0]=1;root.m[1][1]=1;root.m[2][2]=1;root.m[3][3]=1;root.m[3][0]=1;root.m[3][1]=2;root.m[3][2]=3;
+    const ScopeLensSpec spec{L"test",nullptr,0,{0.f,.1f,-.05f},.02f,.02f,{0.f,0.f,-1.f},{0.f,1.f,0.f},false};
+    const float eye[3]={1.f,2.1f,2.5f};
+    ScopeLensFrame lens{};
+    CHECK(ScopeLensFrameFrom(root,spec,eye,1.f,lens));
+    CHECK(approx(lens.centre[0],1,1e-6f) && approx(lens.centre[1],2.1f,1e-6f) && approx(lens.centre[2],2.95f,1e-6f));
+    CHECK(approx(lens.normal[2],-1,1e-6f) && approx(lens.up[1],1,1e-6f));
+    CHECK(approx(lens.lensTan,.02f/.45f,1e-5f));
+    CHECK(ScopeLensFrameFrom(root,spec,eye,2.f,lens) && approx(lens.radius,.04f,1e-6f));
+    const float onLens[3]={1.f,2.1f,2.95f};
+    CHECK(!ScopeLensFrameFrom(root,spec,onLens,1.f,lens));      // the eye at the lens: no field
+    // A screen in its node's frame: its own facing and up, rectangular.
+    const ScopeLensSpec screen{L"screen",L"screen",1,{0.f,0.f,0.f},.04f,.02f,{0.f,-1.f,0.f},{0.f,0.f,-1.f},false};
+    CHECK(ScopeLensFrameFrom(root,screen,eye,1.f,lens) && lens.shape==1);
+    CHECK(approx(lens.normal[1],-1,1e-6f) && approx(lens.up[2],-1,1e-6f));
+    CHECK(approx(lens.radius,.02f,1e-6f) && approx(lens.halfWidth,.04f,1e-6f));
+    // The generic holographic monitor and the table's own rows.
+    CHECK(ScopeHoloSpec().holo && !ScopeHoloSpec().node && ScopeHoloSpec().shape==0);
+    for(int i=0;i<ScopeLensCount();++i) {
+        const auto* row=ScopeLensAt(i);
+        CHECK(row && row->node && row->halfWidth>0 && row->halfHeight>0 && (!row->holo || row->shape==0));
+        if(row && !row->frame) CHECK(row->halfWidth>=.0244f && row->halfHeight>=.0244f);   // none too small to see
+    }
+    // One matrix for world -> clip agrees with the step-by-step projection.
+    Matrix view{};view.m[0][0]=.8f;view.m[0][2]=.6f;view.m[1][1]=1;view.m[2][0]=-.6f;view.m[2][2]=.8f;view.m[3][3]=1;
+    view.m[3][0]=.3f;view.m[3][1]=-1.2f;view.m[3][2]=4;
+    Matrix projection{};projection.m[0][0]=.7f;projection.m[1][1]=1.2f;projection.m[2][2]=1.0001f;projection.m[2][3]=1;projection.m[3][2]=-.1f;
+    const float point[3]={2,1,7};
+    float clip[4]{};
+    CHECK(ScopeClip(view,projection,point,clip));
+    const Matrix m=ScopeWorldToClip(view,projection);
+    for(int j=0;j<4;++j) {
+        const float v=point[0]*m.m[0][j]+point[1]*m.m[1][j]+point[2]*m.m[2][j]+m.m[3][j];
+        CHECK(approx(v,clip[j],1e-4f));
+    }
+    // A rigid view's inverse is its camera.
+    const Matrix camera=ScopeCameraOf(view);
+    float back[3]{};
+    for(int j=0;j<3;++j) back[j]=camera.m[3][0]*view.m[0][j]+camera.m[3][1]*view.m[1][j]+camera.m[3][2]*view.m[2][j]+view.m[3][j];
+    CHECK(approx(back[0],0,1e-5f) && approx(back[1],0,1e-5f) && approx(back[2],0,1e-5f));
+    CHECK(ScopeLensCount()>=10 && ScopeLensAt(0) && !ScopeLensAt(-1) && !ScopeLensAt(ScopeLensCount()));
+}
+
 int main() {
     TestTrimIsRigid();
     TestLateralSupportKeepsPitch();
@@ -372,6 +470,76 @@ int main() {
         CHECK(VehicleStickYaw(down,{-native.m[0][0],-native.m[0][1],-native.m[0][2]},stick)&&std::fabs(stick+1.57079633f)<.0001f);
         CHECK(!VehicleStickYaw(camera,{0,1,0},stick));   // a hull on its nose has no heading
     }
+    {   // The gun hand as a right stick in a vehicle: above the horizon is up,
+        // left of the cabin's front is left, a small deadzone straight ahead,
+        // full at the full angle; the cabin's heading is the reference.
+        constexpr float d=.01745329252f,dead=3*d,full=30*d;
+        auto aim=[&](float yawLeft,float pitchUp){return QuatMultiply(FromAxisAngle(0,1,0,yawLeft*d),FromAxisAngle(1,0,0,pitchUp*d));};
+        const Quat ahead{};HandAimAngles angles{};
+        CHECK(HandAimStick(ahead,aim(0,0),0,dead,full,x,y)&&x==0&&y==0);
+        CHECK(HandAimStick(ahead,aim(2,-2.5f),0,dead,full,x,y)&&x==0&&y==0);          // inside the deadzone: still
+        CHECK(HandAimStick(ahead,aim(0,16.5f),0,dead,full,x,y,&angles)&&x==0&&std::fabs(y-.5f)<.001f&&std::fabs(angles.up-16.5f*d)<.0001f);
+        CHECK(HandAimStick(ahead,aim(0,-45),0,dead,full,x,y)&&x==0&&y==-1);           // past full: a full push
+        CHECK(HandAimStick(ahead,aim(16.5f,0),0,dead,full,x,y)&&std::fabs(x+.5f)<.001f&&std::fabs(y)<.0001f);   // left
+        CHECK(HandAimStick(ahead,aim(-60,0),0,dead,full,x,y)&&x==1&&std::fabs(y)<.0001f);                       // right
+        CHECK(HandAimStick(ahead,aim(0,90),0,dead,full,x,y)&&std::fabs(x)<.0001f&&y==1);                        // straight up: no spin
+        // The cabin's heading, not the room's: a cabin a quarter turn left, the
+        // hand along it, is straight ahead; the head plays no part.
+        const Quat cabin=FromAxisAngle(0,1,0,90*d);
+        CHECK(HandAimStick(cabin,aim(90,0),0,dead,full,x,y)&&std::fabs(x)<.0001f&&std::fabs(y)<.0001f);
+        CHECK(HandAimStick(cabin,aim(60,10),0,dead,full,x,y)&&x>.9f&&std::fabs(y-7.f/27)<.01f);
+        CHECK(!HandAimStick(ahead,Quat{0,0,0,0},0,dead,full,x,y)&&x==0&&y==0);
+        CHECK(!HandAimStick(ahead,aim(0,20),0,full,dead,x,y));                    // full inside the deadzone
+        // The user's settings: level at 14 up, deadzone 10, full at 15. Held at
+        // 14 up it is still; 24 up is the deadzone's edge; 29 up is full;
+        // the horizon itself is 14 below level, past the deadzone: a push down.
+        const float level=14*d,dead2=10*d,full2=15*d;
+        CHECK(HandAimStick(ahead,aim(0,14),level,dead2,full2,x,y,&angles)&&x==0&&y==0&&std::fabs(angles.up-14*d)<.0001f);
+        CHECK(HandAimStick(ahead,aim(0,23.9f),level,dead2,full2,x,y)&&y==0);
+        CHECK(HandAimStick(ahead,aim(0,26.5f),level,dead2,full2,x,y)&&std::fabs(y-.5f)<.001f);
+        CHECK(HandAimStick(ahead,aim(0,29.5f),level,dead2,full2,x,y)&&y==1);
+        CHECK(HandAimStick(ahead,aim(0,0),level,dead2,full2,x,y)&&std::fabs(y+.8f)<.001f);
+        // Which switch each cabin answers to (the user's grouping).
+        CHECK(HandAimClassOf(CockpitKind::Nix)==HandAimClass::Nix&&HandAimClassOf(CockpitKind::NixChest)==HandAimClass::Nix);
+        CHECK(HandAimClassOf(CockpitKind::Crawler)==HandAimClass::Depth&&HandAimClassOf(CockpitKind::Barga)==HandAimClass::Barga);
+        CHECK(HandAimClassOf(CockpitKind::Tank)==HandAimClass::Tank&&HandAimClassOf(CockpitKind::CombatCaliban)==HandAimClass::Combat);
+        CHECK(HandAimClassOf(CockpitKind::Heli602)==HandAimClass::Heli&&HandAimClassOf(CockpitKind::HeliBrute)==HandAimClass::Heli);
+        CHECK(HandAimClassOf(CockpitKind::ProteusDriver)==HandAimClass::Gunner&&HandAimClassOf(CockpitKind::ProteusMissile)==HandAimClass::Gunner);
+        CHECK(HandAimClassOf(CockpitKind::TitanGunner)==HandAimClass::Gunner&&HandAimClassOf(CockpitKind::HeliBruteGunner)==HandAimClass::BruteGunner);
+        CHECK(HandAimClassOf(CockpitKind::TruckPickup)==HandAimClass::None);
+        {   // A rider's look: the file its body model was loaded from (body model +0x88 -> +0x20 -> the path).
+            static unsigned char soldier[0x1000];static unsigned char block[512];static wchar_t name[128];
+            auto wear=[&](const wchar_t* path){std::memset(block,0,sizeof(block));std::memset(name,0,sizeof(name));wcscpy_s(name,path);
+                const auto q=reinterpret_cast<std::uint64_t>(name);std::memcpy(block+0x20,&q,8);
+                const auto p=reinterpret_cast<std::uint64_t>(block);std::memcpy(soldier+kBodyModelOffset+0x88,&p,8);};
+            wear(L"APP:\\OBJECT\\P505_RANGER.MRAB");CHECK(CrewLookOf(soldier,1)==1&&CrewLookOf(soldier,2)==-1);
+            wear(L"APP:\\OBJECT\\p601_proto_ranger.MRAB");CHECK(CrewLookOf(soldier,1)==2);
+            wear(L"APP:\\OBJECT\\P504_PROTO_AIRRADER.MRAB");CHECK(CrewLookOf(soldier,3)==3);
+            wear(L"APP:\\OBJECT\\P605_RANGER_X.MRAB");CHECK(CrewLookOf(soldier,1)==-1);
+            std::memset(soldier,0,sizeof(soldier));CHECK(CrewLookOf(soldier,1)==-1&&CrewLookOf(nullptr,1)==-1);
+            // Its colours: the block (0.5,0.5,0.5,0) | colour 1 | colour 2 (4th 0.5),
+            // by the player's route (body model +0x458 -> +0xF0), a friend's
+            // (+0xF0 -> +0x40 -> +0x30), or found by the search; a near miss is no block.
+            const float colours[12]={.5f,.5f,.5f,0, .361f,0,.439f,0, .98f,.8624f,.9722f,.5f};
+            alignas(8) static float block2[16];alignas(8) static unsigned char table[0x200],a1[0x200],b1[0x200],c1[0x200];
+            float main[4]{},sub[4]{};int route=-1;
+            auto put=[](unsigned char* at,const void* p){const auto v=reinterpret_cast<std::uint64_t>(p);std::memcpy(at,&v,8);};
+            std::memcpy(block2,colours,sizeof(colours));put(table+0xF0,block2);put(soldier+kBodyModelOffset+0x458,table);
+            CHECK(CrewColoursOf(soldier,main,sub,&route)&&route==2&&main[0]==.361f&&main[2]==.439f&&sub[1]==.8624f&&main[3]==1&&sub[3]==1);
+            std::memset(soldier,0,sizeof(soldier));std::memset(table,0,sizeof(table));
+            put(a1+0x40,b1);put(b1+0x30,block2);put(soldier+kBodyModelOffset+0xF0,a1);
+            static unsigned char other[0x3000];put(other+kBodyModelOffset+0xF0,a1);
+            CHECK(CrewColoursOf(other,main,sub,&route)&&route==1&&sub[0]==.98f);
+            static unsigned char third[0x3000];put(third+0x30,c1);put(c1+0x120,block2);   // two deep, no known route
+            CHECK(CrewColoursOf(third,main,sub,&route)&&route==4&&main[1]==0);
+            // A page of its own, so the search finds nothing past it.
+            static unsigned char fourth[0x3000];auto* wrong=static_cast<float*>(VirtualAlloc(nullptr,0x1000,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
+            std::memcpy(wrong,colours,sizeof(colours));wrong[1]=.49f;put(fourth+0x40,wrong);
+            CHECK(!CrewColoursOf(fourth,main,sub,&route)&&route==0);
+            CHECK(!CrewColoursOf(nullptr,main,sub));
+        }
+        CHECK(HandAimStick(ahead,aim(12,14),level,dead2,full2,x,y)&&std::fabs(x+.328f)<.005f&&y==0);   // left, at level (11.64 deg across)
+    }
     CHECK(!ComposeVehicleCamera(native,Quat{},Quat{0,0,0,0},{},out,yaw));
     CHECK(!ComposeVehicleCamera(native,Quat{},Quat{},{0,0,100},out,yaw));
     VehicleEntryLevel entry{};Matrix entryCamera{},nextCamera{},entryView{},nextView{};
@@ -409,6 +577,7 @@ int main() {
     TestRoll();
     TestMoveBasis();
     TestRedirect();
+    TestScope();
     TestTurnAboutVertical();
     printf(failures?"FAILURES %d\n":"vr math and call redirection OK\n",failures);
     // The gun camera's angles found in memory by watching them move: a float

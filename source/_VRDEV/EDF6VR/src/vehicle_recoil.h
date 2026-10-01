@@ -452,7 +452,7 @@ bool VehicleRecoilDraw(void* model,void* renderContext,int pass,void* view) noex
     // And whatever the pass once the record is 200 ms old, so a scene drawn
     // without a depth pass still gets its kick.
     const ULONGLONG nowTick=GetTickCount64();
-    if((pass==0 && (!frame.valid || frame.lastPass!=0) && edf6vr::NativeWorldRenderEye()!=1) || nowTick-frame.takenAt>200) {
+    if((pass==0 && (!frame.valid || frame.lastPass!=0) && edf6vr::NativeWorldRenderEye()<1) || nowTick-frame.takenAt>200) {
         AcquireSRWLockShared(&g_vehicleRecoilLock); frame.state=g_vehicleRecoilDraw; ReleaseSRWLockShared(&g_vehicleRecoilLock);
         for(unsigned p=0;p<frame.state.partCount && p<kVehicleRecoilParts;++p)
             frame.pivotOk[p]=VehicleRecoilNodeAt(frame.state.nodes,frame.state.parts[p].moves[0],frame.pivot[p]);

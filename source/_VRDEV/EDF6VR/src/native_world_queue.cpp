@@ -16,13 +16,13 @@ NativeWorldQueueCallbacks callbacks{};
 NativeWorldQueueLog logger=nullptr;
 std::atomic<bool> enabled{false};
 std::atomic<std::uint32_t> generation{1},nextSequence{0};
-std::atomic<std::uint64_t> pairs{0},loops{0},begins{0},ends{0},invalidMarkers{0};
+std::atomic<std::uint64_t> pairs{0},loops{0},begins{0},ends{0},invalidMarkers{0},scopes{0};
 void* expectedSetupReturn=nullptr;
 unsigned char* installedBase=nullptr;
 unsigned char* codePage=nullptr;
 RUNTIME_FUNCTION bridgeFunction{};
 bool registeredFunction=false;
-enum class Phase { Idle,Left,AwaitRight,Right };
+enum class Phase { Idle,Left,AwaitRight,Right,AwaitScope,Scope };
 struct ProducerState {
     Phase phase=Phase::Idle;
     std::uintptr_t stack=0;
@@ -47,7 +47,7 @@ void __fastcall ConsumeMarker(void* renderContext,void* queue) {
     Marker marker{};
     std::memcpy(&marker,source,sizeof(marker));
     calls.pop(queue,2);
-    if(marker.magic!=kMarkerMagic || marker.eye>1 || marker.kind>1 || !marker.frame) {
+    if(marker.magic!=kMarkerMagic || marker.eye>2 || marker.kind>1 || !marker.frame) {
         invalidMarkers.fetch_add(1,std::memory_order_relaxed);return;
     }
     if(marker.kind==0) {
@@ -78,6 +78,10 @@ void StartSetup(void* context,void* owner,const void* flags,bool set,std::uintpt
         producer.phase=Phase::Right;
         if(callbacks.producerBegin)callbacks.producerBegin(producer.frame,1);
         QueueMarker(owner,producer.frame,1,0);
+    } else if(exactCaller && producer.phase==Phase::AwaitScope && producer.stack==stack && producer.owner==owner) {
+        producer.phase=Phase::Scope;
+        if(callbacks.producerBegin)callbacks.producerBegin(producer.frame,2);
+        QueueMarker(owner,producer.frame,2,0);
     } else if(exactCaller && producer.phase==Phase::Idle && owner && AllowPair()) {
         auto sequence=nextSequence.fetch_add(1,std::memory_order_relaxed)+1;
         if(!sequence) sequence=nextSequence.fetch_add(1,std::memory_order_relaxed)+1;
@@ -107,6 +111,17 @@ bool __fastcall FinishLoop(void* owner,std::uintptr_t stack,void* scene=nullptr)
         } else if(producer.phase==Phase::Right) {
             if(callbacks.producerEnd)callbacks.producerEnd(producer.frame,1,scene);
             QueueMarker(owner,producer.frame,1,1);
+            loops.fetch_add(1,std::memory_order_relaxed);
+            // The weapon scope's view: the same loop once more, as eye 2. It
+            // is decided here, after the pair, so a scope that cannot be drawn
+            // never touches the two eyes.
+            if(callbacks.allowScope && callbacks.allowScope()) {
+                producer.phase=Phase::AwaitScope;repeat=true;
+                scopes.fetch_add(1,std::memory_order_relaxed);
+            } else producer={};
+        } else if(producer.phase==Phase::Scope) {
+            if(callbacks.producerEnd)callbacks.producerEnd(producer.frame,2,scene);
+            QueueMarker(owner,producer.frame,2,1);
             loops.fetch_add(1,std::memory_order_relaxed);
             producer={};
         }
@@ -259,13 +274,13 @@ void SetNativeWorldQueueEnabled(bool value) noexcept {
     if(previous && !value)generation.fetch_add(1,std::memory_order_acq_rel);
 }
 int NativeWorldProducerEye() noexcept {
-    return producer.phase==Phase::Left?0:producer.phase==Phase::Right?1:-1;
+    return producer.phase==Phase::Left?0:producer.phase==Phase::Right?1:producer.phase==Phase::Scope?2:-1;
 }
 std::uint64_t NativeWorldProducerFrame() noexcept {return producer.frame;}
 bool NativeWorldFrameValid(std::uint64_t frame) noexcept {
     return frame && enabled.load(std::memory_order_acquire) && static_cast<std::uint32_t>(frame>>32)==generation.load(std::memory_order_acquire);
 }
 NativeWorldQueueStats NativeWorldQueueStatistics() noexcept {
-    return {pairs.load(std::memory_order_relaxed),loops.load(std::memory_order_relaxed),begins.load(std::memory_order_relaxed),ends.load(std::memory_order_relaxed),invalidMarkers.load(std::memory_order_relaxed)};
+    return {pairs.load(std::memory_order_relaxed),loops.load(std::memory_order_relaxed),begins.load(std::memory_order_relaxed),ends.load(std::memory_order_relaxed),invalidMarkers.load(std::memory_order_relaxed),scopes.load(std::memory_order_relaxed)};
 }
 }

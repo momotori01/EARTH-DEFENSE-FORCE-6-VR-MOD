@@ -43,6 +43,9 @@ void* AllocateNearThunk(const void* anchor, void* target) noexcept;
 // Rewrite one `call rel32`. Refuses unless the instruction and its current
 // target are exactly what the caller expects.
 bool RedirectCall(unsigned char* callSite, void* expectedTarget, void* replacement, bool& changed) noexcept;
+// The same for a `jmp rel32` (a tail call): the replacement returns to the
+// jumping function's caller, as the original target would have.
+bool RedirectJump(unsigned char* jumpSite, void* expectedTarget, void* replacement, bool& changed) noexcept;
 // Every byte this plugin changes in another module's memory, so two mods can
 // be checked for overlap without reading either one's code. ReplacePointer and
 // RedirectCall record themselves; hand-written patches call RecordPatch.

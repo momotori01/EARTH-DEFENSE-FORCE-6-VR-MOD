@@ -1,5 +1,49 @@
-﻿EDF6VR 2.1.8
+﻿EDF6VR 3.0.0
 =============================
+
+CHANGES IN 3.0.0
+New:
+- Scopes. When you zoom, the magnified view is shown on the weapon and the
+  rest of your view stays normal size:
+  - in the scope, matching its shape;
+  - on the Air Raider marker guns' own screens;
+  - on a small blue holographic monitor above the sights of zoom weapons
+    without a scope;
+  - for the Fencer, on a green panel in front of you, looking where the
+    zooming hand aims.
+  EDF6 VR setting.exe, Scope zoom:
+  - Native: sharp, costs frame rate while zoomed.
+  - Digital: no frame-rate cost, blurrier.
+  - Off: the old whole-view zoom.
+- Vehicles: aim with your gun hand. Point the right controller and the
+  vehicle's aim follows, as if you pushed the right stick; the stick still
+  works. On or off for each kind of vehicle under Extra VR settings, Vehicle
+  hand aim. The Depth and the Barga start off.
+- Proteus two-seater: the other rider sits in the cockpit as their own
+  soldier, with their own look and colours. Made from your game files with
+  Crew figures, Make (about 2 minutes), or together with the HD textures.
+- Lighter Kurul shots: the Kurul's shotgun pellets are drawn without the
+  ring that swells around each one, so big Kurul fights stay smooth.
+  - On by default. EDF6 VR setting.exe makes it from your game files when it
+    opens, or when you press Make.
+  - To turn it off: Extra VR settings, Lighter Kurul shots.
+Fixes:
+- White ground with HD textures on 23 maps, including mission 65. If you made
+  HD textures, press Make under HD textures once; only the 24 broken files are
+  made again.
+- Fencer shield:
+  - A shield in the left hand now guards where the left hand points. Before,
+    it guarded where the right hand pointed.
+  - A raised shield always comes up square in front of its controller.
+Small fixes:
+- The Brute's door gun no longer has up and down swapped.
+- Proteus two-seater:
+  - The information monitor no longer disappears.
+  - The base of the rear lever no longer flickers.
+- Cockpit hand levers sit further forward and are slimmer.
+- EDF6 VR setting.exe scrolls when it is taller than your screen.
+- Bundles EDF6MultiSlot 1.5.33. The only change is extra logging to find why
+  8-player missions sometimes drop everyone.
 
 CHANGES IN 2.1.8
 - Fixed: at a Picture size above 1.25, hands and weapons turned grey and
@@ -487,17 +531,23 @@ Main tab:
   VR mode         VR (headset) or Normal (monitor, no VR).
   Picture size    Low 0.8, Normal 1.0, High 1.25, or your own number from 0.5
                   to 2.0. See RAISING THE RESOLUTION.
+  Scope zoom      Native (sharp, costs frame rate while zoomed), Digital (no
+                  cost, blurrier) or Off (the old whole-view zoom).
   HD textures     Make or Delete the 2x textures. See HD TEXTURES.
+  Crew figures    Make or Delete the other rider of the Proteus two-seater
+                  (about 2 minutes). Making HD textures makes them too.
   Gun hand        Right or Left. See LEFT-HANDED MODE.
   Problem report  Puts the logs and settings into one zip, saved in the game
                   folder next to EDF6 VR setting.exe as
                   EDF6VR-logs-<date>-<time>.zip. Send it with a bug report.
 Extra VR settings tab:
-  VR cockpit, compact HUD (on or off, and where: the corner of your view or
-  the right or left wrist), aim mark size, recoil, shot vibration, desktop
-  mirror, and Reset: every VR setting back to how it came. Reset keeps your
+  VR cockpit, vehicle hand aim (on or off for each kind of vehicle), compact
+  HUD (on or off, and where: the corner of your view or the right or left
+  wrist), aim mark size, recoil, shot vibration, desktop mirror, lighter Kurul
+  shots, and Reset: every VR setting back to how it came. Reset keeps your
   picture size and gun hand, and keeps the old file as
   Mods/Plugins/EDF6VR.ini.reset-<date>-<time>.bak.
+  The window scrolls when it is taller than your screen.
 The first time you open it after downloading the ZIP with a web browser,
 Windows may say "Windows protected your PC": choose More info, then Run
 anyway. The program is not signed. Everything it changes can also be set by

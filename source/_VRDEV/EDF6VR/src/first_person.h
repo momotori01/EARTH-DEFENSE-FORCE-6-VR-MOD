@@ -18,6 +18,9 @@ using NodeLookup=void* (__fastcall*)(void*,const void*);
 bool CheckFirstPersonProfile(const ImageProfile&) noexcept;
 // Exact supported types only. HeavyArmor uses native pad aim and native weapon poses in the initial trial.
 bool IsSupportedSoldier(const ImageProfile&,const void* soldier) noexcept;
+// A player soldier's class by its exact vtable: 1 Ranger, 2 Wing Diver, 3 Air
+// Raider, 4 Fencer; 0 anything else. The object must be readable for 8 bytes.
+unsigned SoldierClassOf(const ImageProfile&,const void* object) noexcept;
 unsigned WeaponSlotCount(void* soldier) noexcept;
 struct EyeSettings { float headUp=0.15f; float fallbackHeight=1.70f; };
 struct PlayerPose {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EDF6MultiSlot VERSION 1.5.32 LANGUAGES CXX)
+project(EDF6MultiSlot VERSION 1.5.33 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -28,7 +28,7 @@ option(MULTISLOT_DIAGNOSTIC "Default the diagnostic settings to on" OFF)
 add_library(EDF6MultiSlot SHARED
     src/plugin.cpp src/patches.cpp src/rooms.cpp src/roomview.cpp src/fakemembers.cpp src/hostmode.cpp src/menulayout.cpp
     src/mission.cpp src/spawn.cpp src/joinlog.cpp src/armor.cpp src/midhook.cpp src/code.cpp src/crashlog.cpp src/log.cpp
-    src/netlog.cpp src/identity.cpp src/smoothing.cpp src/updatecheck.cpp src/traffic.cpp src/gaplog.cpp)
+    src/netlog.cpp src/identity.cpp src/smoothing.cpp src/updatecheck.cpp src/traffic.cpp src/gaplog.cpp src/packetsize.cpp)
 
 if(MULTISLOT_DIAGNOSTIC)
     target_compile_definitions(EDF6MultiSlot PRIVATE MULTISLOT_DIAGNOSTIC)
@@ -60,13 +60,13 @@ add_executable(HandshakeTests tests/handshake_test.cpp src/joinlog.cpp src/ident
 target_compile_options(HandshakeTests PRIVATE ${WARNINGS})
 add_test(NAME HandshakeUserSnapshots COMMAND HandshakeTests "${CMAKE_BINARY_DIR}/handshake-diagnostics-test.log")
 add_executable(NetLogForwardTests tests/netlog_forward_test.cpp src/joinlog.cpp src/identity.cpp src/log.cpp
-    src/traffic.cpp)
+    src/traffic.cpp src/packetsize.cpp)
 target_compile_options(NetLogForwardTests PRIVATE ${WARNINGS})
 add_test(NAME NetworkImportForwarding COMMAND NetLogForwardTests)
 set(EDF_DLL "${CMAKE_SOURCE_DIR}/../EDF.dll")
 
 add_executable(MultiSlotTests tests/tests.cpp src/patches.cpp src/rooms.cpp src/mission.cpp src/midhook.cpp src/code.cpp src/log.cpp src/smoothing.cpp
-    src/gaplog.cpp)
+    src/gaplog.cpp src/packetsize.cpp)
 target_compile_options(MultiSlotTests PRIVATE ${WARNINGS})
 add_test(NAME PatchTablesMatchEDF COMMAND MultiSlotTests "${EDF_DLL}")
 
@@ -119,9 +119,12 @@ add_test(NAME CrashDump COMMAND CrashDumpTests "${CMAKE_BINARY_DIR}/crashdumptes
 add_executable(TrafficTests tests/traffic_test.cpp src/traffic.cpp src/log.cpp)
 target_compile_options(TrafficTests PRIVATE ${WARNINGS})
 add_test(NAME TrafficMeter COMMAND TrafficTests "${CMAKE_BINARY_DIR}/traffictest")
+add_executable(PacketSizeTests tests/packetsize_test.cpp src/packetsize.cpp src/log.cpp)
+target_compile_options(PacketSizeTests PRIVATE ${WARNINGS})
+add_test(NAME PacketSizeHandler COMMAND PacketSizeTests "${EDF_DLL}" "${CMAKE_BINARY_DIR}/packetsizetest")
 
 add_executable(MultiSlotLoadTest tests/load_test.cpp src/patches.cpp src/midhook.cpp src/code.cpp
-    src/gaplog.cpp src/log.cpp)
+    src/gaplog.cpp src/packetsize.cpp src/log.cpp)
 target_include_directories(MultiSlotLoadTest PRIVATE ${MODLOADER_INCLUDE} "${CMAKE_BINARY_DIR}/generated")
 target_compile_options(MultiSlotLoadTest PRIVATE ${WARNINGS})
 add_dependencies(MultiSlotLoadTest EDF6MultiSlot)

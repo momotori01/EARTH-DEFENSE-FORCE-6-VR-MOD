@@ -342,36 +342,49 @@ def upscale_archive(blob, tools, work, cache, gpu=None, run=None):
 # is low, and it had enlarged the radio's RSO map besides. A pack made by
 # revision 1 has the archives holding either made again, from the game's own
 # files as always; the rest are kept.
-PACK_REVISION = 2
+#
+# Revision 3 (2026-10-01): textures holding several surfaces -- an array or a
+# cube map -- are left alone (dds.read). Revisions 1 and 2 enlarged their first
+# surface and dropped the rest: the terrain colour of 23 maps is an array of 2
+# to 19 slices, and the ground of mission 65 (IG_CAVE604_2, 8 slices) came out
+# white; one enemy's nebula cube lost five faces. Those 24 archives are made
+# again, the rest kept.
+PACK_REVISION = 3
 
 
-def source_widths(sources, directory, name):
-    """Width of every texture in the game's own copy of an archive, from its headers."""
+def source_textures(sources, directory, name):
+    """The header facts of every texture in the game's own copy of an archive."""
     for source in sources:
         entry = source.index.get((directory, name))
         if entry is None or int(entry['ExtractSize']) != int(entry['FileSize']):
             continue
         start = source.base + int(entry['FileOffset'])
-        return {(d, n): dds_module.read(head).width
+        return {(d, n): dds_module.read(head)
                 for d, n, head in rab_module.heads(source.path, start=start)}
     return None
 
 
-def made_wrong(path, original):
-    """True when a written archive holds a texture revision 1 enlarged wrongly.
+def made_wrong(path, original, revision=1):
+    """True when a written archive holds a texture an earlier revision enlarged wrongly.
 
-    Enlarged is told from the game's own copy: twice its width. Most archives
-    also carry alpha maps that were never enlarged, and those are fine.
+    Enlarged is told from the game's own copy: twice its width. Revision 1 got
+    alpha maps and RSO maps wrong; revisions 1 and 2 got every texture of more
+    than one surface wrong. Most archives also carry alpha maps that were never
+    enlarged, and those are fine.
     """
     if not original:
         return False
     for directory, name, head in rab_module.heads(path):
         if directory != 'HD-TEXTURE' or not name.upper().endswith('.DDS'):
             continue
+        game = original.get((directory, name))
         info = dds_module.read(head)
-        if not info.ok or info.width != 2 * original.get((directory, name), -1):
+        if game is None or not game.width or info.width != 2 * game.width:
             continue
-        if info.format in dds_module.HAS_ALPHA or marker(name.rsplit('.', 1)[0].lower()) == 'rso':
+        if game.surfaces > 1:
+            return True
+        if revision < 2 and (info.format in dds_module.HAS_ALPHA
+                             or marker(name.rsplit('.', 1)[0].lower()) == 'rso'):
             return True
     return False
 
@@ -394,9 +407,10 @@ def bring_up_to_date(root, work, cache, record, sources, say):
     for line in written:
         path = os.path.join(root, line)
         parts = line.split('/')   # written.txt keeps '/' (see where it is appended)
-        if len(parts) == 3 and os.path.isfile(path) and made_wrong(path, source_widths(sources, parts[1], parts[2])):
+        if len(parts) == 3 and os.path.isfile(path) and made_wrong(path, source_textures(sources, parts[1], parts[2]),
+                                                                    revision):
             stale.append(line)
-    if os.path.isdir(cache):
+    if revision < 2 and os.path.isdir(cache):
         for name in os.listdir(cache):
             path = os.path.join(cache, name)
             with open(path, 'rb') as handle:
@@ -406,8 +420,12 @@ def bring_up_to_date(root, work, cache, record, sources, say):
     for line in stale:
         os.remove(os.path.join(root, line))
     if stale:
-        say('%d of them are made again: textures with transparency had lost their colour' % len(stale))
-        say('when seen from further away. The other %d are kept.' % (len(written) - len(stale)))
+        if revision < 2:
+            say('%d of them are made again: textures with transparency had lost their colour' % len(stale))
+            say('when seen from further away, and some ground had turned white.')
+        else:
+            say('%d of them are made again: their ground had turned white.' % len(stale))
+        say('The other %d are kept.' % (len(written) - len(stale)))
         say('')
     os.makedirs(work, exist_ok=True)
     open(stamp, 'w', encoding='ascii').write('%d\n' % PACK_REVISION)

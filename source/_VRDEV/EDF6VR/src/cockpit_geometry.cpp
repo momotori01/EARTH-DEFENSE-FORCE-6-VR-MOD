@@ -225,14 +225,19 @@ void PalmLever(std::vector<CockpitVertex>& v,float side) {
     for(float z:{-.109f,.109f}) {
         auto stop=base;stop.c=Point(base,.067f,z,-.020f);GripBody(v,stop,.028f,.012f,.012f,Rubber);
     }
-    auto slide=base;slide.c=Point(base,.067f,-.040f,-.016f);GripBody(v,slide,.032f,.055f,.015f,Steel);
-    auto boot=base;boot.c=Point(base,.067f,-.040f,.009f);GripBody(v,boot,.031f,.042f,.014f,Rubber);
+    // The carriage at the front of its travel (the user, 2026-10-01: the
+    // seated crew figure sat cramped with it at -.040; every cabin with this
+    // lever gets the room): the lever above it moves forward with it.
+    constexpr float carriage=.075f;
+    const P travel=Mul(base.up,carriage+.040f);
+    auto slide=base;slide.c=Point(base,.067f,carriage,-.016f);GripBody(v,slide,.032f,.055f,.015f,Steel);
+    auto boot=base;boot.c=Point(base,.067f,carriage,.009f);GripBody(v,boot,.031f,.042f,.014f,Rubber);
     for(float x:{-.088f,.095f})for(float z:{-.145f,.145f})
         FrameBolt(v,Point(base,x,z,.0165f),{0,.987117f,-.16f},.0035f);
 
     // Reference grip: three round switches on the end face, one finger
     // trigger behind it, a knurled sleeve and a single outboard hinge.
-    const P pivot{.421f,-.37917635f,.18067110f};
+    const P pivot=Add(P{.421f,-.37917635f,.18067110f},travel);
     const P top{0,.81915204f,-.57357644f},front{0,.57357644f,.81915204f};
     auto point=[&](float x,float y,float z){return Add(pivot,Add(P{x,0,0},Add(Mul(top,y),Mul(front,z))));};
     auto localDirection=[&](P p){return Unit(Add(P{p[0],0,0},Add(Mul(top,p[1]),Mul(front,p[2]))));};
@@ -243,7 +248,8 @@ void PalmLever(std::vector<CockpitVertex>& v,float side) {
     // Fine diamond relief is real moulded geometry, with a flat crown and
     // sloping sides per lozenge. It wraps around the complete rubber sleeve.
     // End collars cover the boundary rows, so no lattice edges float free.
-    constexpr float gripBegin=-.126f,gripEnd=-.012f,ry=.022f,rz=.0205f;
+    // Slimmer than first drawn (was 2.2 by 2.05 cm radii; the user: too thick).
+    constexpr float gripBegin=-.126f,gripEnd=-.012f,ry=.017f,rz=.016f;
     auto gripPoint=[&](float x,float angle,float lift){return point(x,(ry+lift)*std::cos(angle),(rz+lift)*std::sin(angle));};
     auto gripNormal=[&](float angle){return Unit(Add(Mul(top,std::cos(angle)/ry),Mul(front,std::sin(angle)/rz)));};
     for(int k=0;k<32;++k) {
@@ -273,8 +279,8 @@ void PalmLever(std::vector<CockpitVertex>& v,float side) {
         for(int k=0;k<4;++k){const int n=(k+1)%4;facet(bottom[k],bottom[n],raised[n],raised[k],out,Rubber);}
     }
     for(float x:{-.125f,-.013f}) {
-        Axle(v,point(x,0,0),.011f,.027f,Hull);
-        Axle(v,point(x+(x<-.1f?.005f:-.005f),0,0),.003f,.0275f,Steel);
+        Axle(v,point(x,0,0),.011f,.022f,Hull);
+        Axle(v,point(x+(x<-.1f?.005f:-.005f),0,0),.003f,.0225f,Steel);
     }
     // Neck between the control block and the grip. Flat relieved shoulders
     // keep the silhouette mechanical, while the sleeve stays comfortable.
@@ -328,7 +334,7 @@ void PalmLever(std::vector<CockpitVertex>& v,float side) {
 
     // A thin arm connects the outboard collar directly to the existing
     // sliding carriage. Its round trunnion is part of the grip's end cap.
-    Beam(v,Point(base,.067f,-.040f,.016f),pivot,.017f,Bezel);
+    Beam(v,Point(base,.067f,carriage,.016f),pivot,.017f,Bezel);
     Axle(v,pivot,.034f,.024f,Steel);
     Axle(v,Add(pivot,{.020f,0,0}),.006f,.016f,Dark);
     FrameBolt(v,Add(pivot,{.025f,0,0}),{1,0,0},.006f);
