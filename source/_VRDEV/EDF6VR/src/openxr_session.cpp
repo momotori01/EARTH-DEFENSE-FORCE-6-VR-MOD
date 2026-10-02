@@ -204,6 +204,13 @@ uint32_t g_imageCountReticle=0;
 int g_reticleMade=0;
 UiClusterLayout g_clusterLayout;
 std::atomic<bool> g_clusterOn{false};
+// The subtitle box (SetSubtitles), under g_clusterLock.
+UiRect g_subtitleRects[3]; unsigned g_subtitleCount=0; float g_subtitleDy=0;
+std::atomic<bool> g_subtitlesOn{false};
+std::atomic<bool> g_clusterSuspended{false};
+std::atomic<ULONGLONG> g_clusterSuspendedAt{0};
+std::atomic<unsigned long long> g_clusterSuspendedFrames{0};
+std::atomic<unsigned long long> g_subtitleMoves{0},g_subtitleFailures{0};
 std::atomic<int> g_clusterPlace{0};
 std::atomic<float> g_clusterWristWidth{0.30f},g_clusterMarginRight{0.03f},g_clusterMarginBottom{0.05f};
 XrPosef g_clusterPose{{0,0,0,1},{0,0,0}};
@@ -2663,7 +2670,10 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
                 if(drew && g_desktopMirror.load()) SnapshotMirror(g_context,g_imagesUi[uiIndex],MirrorImage::Ui,static_cast<DXGI_FORMAT>(g_swapchainFormat));
                 // The compact HUD: its pieces are cut out of the panel here and
                 // drawn again, smaller and together, on a picture of their own.
-                if(drew && !cockpitHud && redirected && g_clusterOn.load(std::memory_order_relaxed)) {
+                const bool clusterSuspended=g_clusterSuspended.load(std::memory_order_relaxed)
+                    && GetTickCount64()-g_clusterSuspendedAt.load(std::memory_order_relaxed)<60000;
+                if(clusterSuspended) g_clusterSuspendedFrames.fetch_add(1,std::memory_order_relaxed);
+                if(drew && !cockpitHud && redirected && !clusterSuspended && g_clusterOn.load(std::memory_order_relaxed)) {
                     AcquireSRWLockShared(&g_clusterLock); clusterLayout=g_clusterLayout; ReleaseSRWLockShared(&g_clusterLock);
                     if(clusterLayout.count && clusterLayout.count<=8) {
                         UiRect cuts[8]; for(unsigned i=0;i<clusterLayout.count;++i) cuts[i]=clusterLayout.items[i].source;
@@ -2684,6 +2694,19 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
                         if(clusterDrew) g_clusterComposites.fetch_add(1,std::memory_order_relaxed);
                         else g_clusterFailures.fetch_add(1,std::memory_order_relaxed);
                     }
+                }
+                // The radio subtitles: cut from the bottom of the panel and drawn
+                // again nearer its middle, from the uncut HUD (after the compact
+                // HUD's cuts, which may have taken some of them).
+                if(drew && !cockpitHud && redirected && g_subtitlesOn.load(std::memory_order_relaxed)) {
+                    UiRect pieces[3]; unsigned count=0; float dy=0;
+                    AcquireSRWLockShared(&g_clusterLock);
+                    count=g_subtitleCount; for(unsigned i=0;i<count;++i) pieces[i]=g_subtitleRects[i]; dy=g_subtitleDy;
+                    ReleaseSRWLockShared(&g_clusterLock);
+                    if(count && CutUiRects(g_device,g_context,g_imagesUi[uiIndex],pieces,count)
+                       && MoveUiRects(g_device,g_context,redirected,g_imagesUi[uiIndex],pieces,count,dy))
+                        g_subtitleMoves.fetch_add(1,std::memory_order_relaxed);
+                    else g_subtitleFailures.fetch_add(1,std::memory_order_relaxed);
                 }
             }
             XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
@@ -3137,6 +3160,18 @@ void OpenXrRuntime::SetUiCluster(bool on,const UiClusterLayout& layout) noexcept
     AcquireSRWLockExclusive(&g_clusterLock); g_clusterLayout=layout; ReleaseSRWLockExclusive(&g_clusterLock);
     g_clusterOn.store(on && layout.count>0 && layout.count<=8);
 }
+void OpenXrRuntime::SuspendUiCluster(bool on) noexcept {
+    if(on && !g_clusterSuspended.load()) g_clusterSuspendedAt.store(GetTickCount64());
+    g_clusterSuspended.store(on);
+}
+void OpenXrRuntime::SetSubtitles(bool on,const UiRect* rects,unsigned count,float dy) noexcept {
+    AcquireSRWLockExclusive(&g_clusterLock);
+    g_subtitleCount=rects?(count<3?count:3):0;
+    for(unsigned i=0;i<g_subtitleCount;++i) g_subtitleRects[i]=rects[i];
+    g_subtitleDy=std::isfinite(dy)?dy:0;
+    ReleaseSRWLockExclusive(&g_clusterLock);
+    g_subtitlesOn.store(on && g_subtitleCount>0);
+}
 void OpenXrRuntime::SetUiClusterPlace(int place,float wristWidthMetres,float marginRight,float marginBottom) noexcept {
     g_clusterPlace.store(place>=0 && place<=2?place:0);
     if(wristWidthMetres>=0.05f && wristWidthMetres<=2.0f) g_clusterWristWidth.store(wristWidthMetres);
@@ -3155,6 +3190,10 @@ void OpenXrRuntime::SetUiClusterPose(const float position[3],const float orienta
 void UiClusterCounts(unsigned long long& composites,unsigned long long& failures) noexcept {
     composites=g_clusterComposites.load(); failures=g_clusterFailures.load();
 }
+void SubtitleCounts(unsigned long long& moves,unsigned long long& failures) noexcept {
+    moves=g_subtitleMoves.load(); failures=g_subtitleFailures.load();
+}
+unsigned long long UiClusterSuspendedFrames() noexcept { return g_clusterSuspendedFrames.load(); }
 void OpenXrRuntime::SetWarpNearest(float metres) noexcept {
     if(metres>=0.05f && metres<=5.0f) g_warpNearest.store(metres,std::memory_order_relaxed);
 }

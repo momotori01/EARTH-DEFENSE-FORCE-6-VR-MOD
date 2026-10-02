@@ -39,7 +39,7 @@
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.5.33";
+constexpr const char* kVersion = "1.5.34";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -182,6 +182,8 @@ bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int gho
         for (const auto& call : FakeMemberCalls()) redirects.push_back({call, FakeMemberCallHandler(call.rva)});
     if (diagnostics)
         for (const auto& call : DiagnosticCalls()) redirects.push_back({call, JoinLogCallHandler(call.rva)});
+    if (diagnostics)
+        for (const auto& call : SortieRecordCalls()) redirects.push_back({call, SortieRecordCallHandler(call.rva)});
     if (recovery)
         for (const auto& call : RecoveryCalls()) redirects.push_back({call, reinterpret_cast<void*>(&FinalHelloHook)});
     if (mission) {
@@ -618,9 +620,10 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("HandshakeRecovery=0: off");
     }
     if (netLog)
-        Log("Packet sizes: messages from the mission start and result sync, and any of 1000 bytes or more, are "
-            "logged with their size against EOS's 1170-byte packet limit (EDF6 never splits a message, and a "
-            "packet EOS refuses is dropped without a word), and so is every send EOS refuses. Logging only");
+        Log("Packet sizes: every loadout record of the mission start sync (written or read, host or guest) is "
+            "logged with the message's running size, as is any message of 1000 bytes or more and every send EOS "
+            "refuses - against EOS's 1170-byte packet limit (EDF6 never splits a message, and a packet EOS "
+            "refuses is dropped without a word). Logging only");
     if (trafficMeter)
         Log("Traffic meter: on; one line per minute says how much the game sends and receives per channel, "
             "against the roughly 320 kbps EDF6 keeps its routine sync under (Sync/TrafficMeter=0 turns it "

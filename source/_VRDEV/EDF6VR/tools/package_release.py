@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.0.2'
+VERSION = '3.1.0'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.33.zip'
-MULTISLOT_SHA = 'A3B92B7D390514BE1289D1F831B4186A24EE2775A4DEEDF0C6E56CBEA30644A1'
-MULTISLOT_DLL_SHA = '3C6D53BF111A031DE888836D6EE92B191AECAABD5B54FD7D5995C3EFFC4231AF'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.34.zip'
+MULTISLOT_SHA = 'FD534ADFF701D6352A24B65E24F27C0B579FF84CED3E961ABD20420BC95F9ED0'
+MULTISLOT_DLL_SHA = '66920D66AA0A52D2E97A91D34B27314408F721B759B826F9ED23A2B90709AEC9'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -79,8 +79,17 @@ MULTISLOT_DLL_SHA = '3C6D53BF111A031DE888836D6EE92B191AECAABD5B54FD7D5995C3EFFC4
 # sights as lenses, the Laser Guide Kit's three panels), each checked by the
 # user on textured model previews (research/scope) on 2026-10-02 rather than on
 # hardware. Same EDF6MultiSlot 1.5.33.
-VERIFIED_VR_SHA = '768D7A2247799942464EBA2CB95F974244B88B4F809A757E6AABAFB992C28CE5'
-VERIFIED_SETTINGS_SHA = '9E5531F600129C6FEB3786DB3E269B0AAAF71DDB9EDB13FC95FCB759228C164F'
+# 3.1.0 (the user: "v310"): Fencer melee weapons laid on the hand, with the
+# game's own swing while the attack animation plays; radio subtitles moved
+# toward the middle of the panel (pieces checked against the game's layouts);
+# quick chat bubbles drawn beside each player in the world, shrunk in VR about
+# the speaker's head; the Fencer compact HUD from the game's layouts (charge
+# and reload gauges); lowered shield on the controller; Power Blade sheath on
+# the shoulder; the compact HUD steps aside for the chat window. Each checked
+# on hardware 2026-10-02. With EDF6MultiSlot 1.5.34 (its logging fixed; ZIP
+# and DLL hashes checked here on 2026-10-02).
+VERIFIED_VR_SHA = 'DDD156490884C23762E49EB7370C38D0EEF2712ADFCED78D6452A6BDD632F3B9'
+VERIFIED_SETTINGS_SHA = 'F292E824DE631250810265A559E1679732BB9F0ACF04F0A3DC3501B841D5084C'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

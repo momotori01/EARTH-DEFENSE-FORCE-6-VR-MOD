@@ -46,6 +46,18 @@ std::vector<MidSite> PacketSizeHooks();
 MidHandler PacketSizeHookHandler(std::uint32_t rva);
 void InitPacketSize(unsigned char* gameBase);
 
+// The start sync's loadout records, measured where they are written and read (1.5.34). The stack test
+// above cannot see them: the sync functions queue their message and the 90 ms send loop (12CECC0) packs it
+// later, from its own stack. These four calls run inside the sync functions, so each record's size and the
+// message's running size are exact, and a guest sees the host's whole message as it reads it:
+//   78EE4F  every machine writes its own loadout for the host          (773840, writer position +0x5F0)
+//   78D6E3  the host reads each member's reply                         (773740, reader position +0x8)
+//   78D6FA  the host writes every member's record into one message     (773840)
+//   790873  a guest reads the host's message, record by record         (773740)
+// Each call is redirected to a wrapper that runs the game's own function and logs the difference.
+std::vector<CallSite> SortieRecordCalls();
+void* SortieRecordCallHandler(std::uint32_t rva);
+
 // From the SendPacket wrapper: EOS refused a packet, or was handed one over its limit.
 void NoteSendRefused(std::uint32_t bytes, std::uint8_t channel, std::int32_t reliability, int result,
                      std::uintptr_t callerRva);

@@ -26,7 +26,7 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
 - Laser sights and thrown-weapon guides leave the weapon in your hand, with
   the landing marker following the line, and they do not lean while you run
   or roll.
-- Fencers aim both weapons independently with the game's own heavy aim; hand weapons ride the controllers, shoulder weapons sit on your shoulders.
+- Fencers aim both weapons independently with the game's own heavy aim; hand weapons ride the controllers, shoulder weapons sit on your shoulders. Melee weapons follow the game's own swing while you attack.
 - **VR cockpits for every vehicle**, built per vehicle type into the machine's own hull: walkers (Nix, Depth Crawler,
   Barga, Proteus MK2, ...), tanks, combat vehicles, helicopters and trucks. The view stays open to the world, and your
   armour, ammunition and radar are on the cabin's screens. In the Proteus two-seater you see the other rider, seated, as
@@ -43,7 +43,7 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
 - **Lighter Kurul shots:** the Kurul's shotgun pellets are drawn without their swelling ring, so big fights stay smooth.
   It is on by default and can be turned off in EDF6 VR setting.exe.
 - Compact HUD: radar, armour and weapons sit together at the corner of your view, or on the inside of a wrist.
-- Menus float in the room; subtitles and messages sit on a panel in front of you. Other players' nameplates float over their heads and show through walls.
+- Menus float in the room; messages sit on a panel in front of you, with the radio subtitles near its middle. Other players' nameplates float over their heads and their quick chat bubbles beside them, both seen through walls.
 - Automatically collects all remaining items when a mission is cleared (F1).
 - Desktop mirror for recording and streaming.
 

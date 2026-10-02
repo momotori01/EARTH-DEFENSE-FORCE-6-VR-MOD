@@ -320,33 +320,6 @@ void FencerRestPose(unsigned hand,void* weapon,float c[3][3],int model=-1,float 
     const float x[3]={y[1]*z[2]-y[2]*z[1],y[2]*z[0]-y[0]*z[2],y[0]*z[1]-y[1]*z[0]};
     for(int k=0;k<3;++k) { c[0][k]=x[k]*length[0]; c[1][k]=y[k]*length[1]; c[2][k]=z[k]*length[2]; }
 }
-// The shield, in one of two poses of its own: raised while its hand's trigger
-// is held (the guard) and lowered otherwise.
-//
-// Until now it kept the game's animated pose, with the dash and the jump held
-// out of it (FencerSmoothPose). The user asked for the shoulder weapons' cure
-// here too (2026-09-26): up when guarding, and nothing from the dash or the
-// jump. So each pose is taken from the game's own -- rows in the aim frame, as
-// SHIELDPOSE logs them -- while he is on his feet, the trigger has been in that
-// state for 0.4 s (the raise has finished) and the rows are steady, and followed
-// slowly (FencerRestPose's times). From then on the shield shows the learned
-// pose of the state the trigger is in, whatever the body does, swinging between
-// the two in about a tenth of a second. A state not yet learned shows the game's
-// pose, smoothed as before. SHIELDREST reports each learned pose for a table.
-struct FencerShieldMemo {
-    void* weapon=nullptr;
-    float pose[2][3][3]{}; float anchor[2][3][3]{}; bool learned[2]{};
-    float reported[2][3][3]{}; bool haveReported[2]{};
-    float shown[3][3]{}; bool haveShown=false;
-    float last[3][3]{}; bool haveLast=false;
-    unsigned steadyRun=0,reportRun=0;
-    bool guard=false; double stateSince=0,at=0;
-};
-FencerShieldMemo g_fencerShield[4]{};
-unsigned g_fencerShieldNext=0;
-constexpr float kFencerShieldSwingSec=0.05f;      // the swing between lowered and raised
-constexpr double kFencerShieldSettleSec=0.4;      // after the trigger changes, before learning
-std::atomic<unsigned long long> g_fencerShieldLearnt[2]{},g_fencerShieldShown[2]{},g_fencerShieldReported{0};
 // The block test (HookGuardTest): every call, the ones run on the left aim, and
 // of those the hits it blocked; and how many of its four entries were redirected.
 std::atomic<unsigned long long> g_fencerGuardTests{0},g_fencerGuardLeft{0},g_fencerGuardLeftBlocked{0};
@@ -366,6 +339,27 @@ bool FencerSquareRows(const float in[3][3],const float length[3],float out[3][3]
     for(int k=0;k<3;++k) { out[0][k]=x[k]*length[0]; out[1][k]=y[k]*length[1]; out[2][k]=z[k]*length[2]; }
     return true;
 }
+// The shield, in one of two poses of its own, both fixed on the controller:
+// raised while its hand's trigger is held (the guard) and lowered otherwise.
+//
+// It kept the game's animated pose until 2026-09-26, then each pose was learned
+// from the game's own while he stood still. The user asked for it laid on the
+// controller in both (2026-10-02, "盾、下ろしている時もコントローラに直接固定に
+// ... 構えて正面、下ろしてる時は今と同じ側面で"): nothing of the game's arm reaches
+// it any more, so no dash, jump or swing of the other hand sways it. The
+// lowered pose is the mean of the 58 lowered poses learned on hardware on
+// 2026-10-01 (SHIELDREST, left hand; median 9 degrees from it), squared, and
+// its mirror image in the right hand. The shield swings between the two in
+// about a tenth of a second.
+struct FencerShieldMemo {
+    void* weapon=nullptr;
+    float shown[3][3]{}; bool haveShown=false;
+    bool guard=false; double at=0;
+};
+FencerShieldMemo g_fencerShield[4]{};
+unsigned g_fencerShieldNext=0;
+constexpr float kFencerShieldSwingSec=0.05f;      // the swing between lowered and raised
+std::atomic<unsigned long long> g_fencerShieldShown[2]{};
 void FencerShieldPose(unsigned hand,void* weapon,float c[3][3]) noexcept {
     if(hand>1) return;
     FencerShieldMemo* m=nullptr;
@@ -376,63 +370,30 @@ void FencerShieldPose(unsigned hand,void* weapon,float c[3][3]) noexcept {
     const double now=rate.QuadPart?static_cast<double>(ticks.QuadPart)/static_cast<double>(rate.QuadPart):0.0;
     const double dt=now-m->at; m->at=now;
     const float trigger=g_handTrigger[hand].load(std::memory_order_relaxed);
-    const bool guard=m->guard?trigger>0.35f:trigger>0.55f;
-    if(guard!=m->guard || m->stateSince==0) { m->guard=guard; m->stateSince=now; m->steadyRun=0; m->reportRun=0; }
-    const int state=guard?1:0;
-    float change=0;
-    if(m->haveLast) for(int i=0;i<3;++i) for(int k=0;k<3;++k) change=std::max(change,std::fabs(c[i][k]-m->last[i][k]));
-    std::memcpy(m->last,c,sizeof(m->last)); m->haveLast=true;
-    const bool steady=change<kFencerRestSteady;
-    if(g_fencerOnFeet && !g_gripHeld[hand] && steady && now-m->stateSince>=kFencerShieldSettleSec) {
-        if(m->steadyRun<kFencerRestFirstUpdates) ++m->steadyRun;
-        if(m->steadyRun>=kFencerRestFirstUpdates) {
-            if(!m->learned[state]) {
-                std::memcpy(m->pose[state],c,sizeof(m->pose[state])); m->learned[state]=true;
-                std::memcpy(m->anchor[state],c,sizeof(m->anchor[state]));
-                g_fencerShieldLearnt[state].fetch_add(1,std::memory_order_relaxed);
-            } else if(FencerRowsAngle(c,m->anchor[state])>kFencerRestAnchorDeg) {
-                g_fencerRestOffAnchor.fetch_add(1,std::memory_order_relaxed);
-            } else if(dt>0 && dt<0.5) {
-                const float follow=1.0f-std::exp(-static_cast<float>(dt)/kFencerRestLearnSec);
-                for(int i=0;i<3;++i) for(int k=0;k<3;++k) m->pose[state][i][k]+=(c[i][k]-m->pose[state][i][k])*follow;
-            }
-            if(m->reportRun<kFencerRestReportUpdates) ++m->reportRun;
-            if(m->reportRun>=kFencerRestReportUpdates) {
-                float moved=m->haveReported[state]?0.0f:1.0f;
-                for(int i=0;i<3;++i) for(int k=0;k<3;++k) moved=std::max(moved,std::fabs(m->pose[state][i][k]-m->reported[state][i][k]));
-                if(moved>0.03f) {
-                    std::memcpy(m->reported[state],m->pose[state],sizeof(m->reported[state])); m->haveReported[state]=true;
-                    g_fencerShieldReported.fetch_add(1,std::memory_order_relaxed);
-                    const auto& r=m->pose[state];
-                    Log("SHIELDREST hand=%u %s rows=%.4f,%.4f,%.4f;%.4f,%.4f,%.4f;%.4f,%.4f,%.4f",hand,guard?"guard":"lowered",
-                        r[0][0],r[0][1],r[0][2],r[1][0],r[1][1],r[1][2],r[2][0],r[2][1],r[2][2]);
-                }
-            }
-        }
-    } else { m->steadyRun=0; m->reportRun=0; }
+    m->guard=m->guard?trigger>0.35f:trigger>0.55f;
     float length[3]{};
     for(int i=0;i<3;++i) length[i]=std::sqrt(c[i][0]*c[i][0]+c[i][1]*c[i][1]+c[i][2]*c[i][2]);
-    float target[3][3]{};
-    // Guarding, the shield stands square in front of the controller, face
-    // forward, whatever the game's arm is doing: it often did not come to the
-    // front (hardware 2026-09-30: in a fight the guard is held briefly and on
-    // the move, so its pose was never learned -- one learnt in an hour -- and the
-    // game's own raised pose follows the soldier's aim, not the hand). Both
-    // shields seen (tower, deflection) learnt the same axes when raised: model x
-    // back toward the player, y to the right, z up, in the aim frame (left, up,
-    // forward). Lowered keeps the game's animation, so the jump to the front is
-    // what tells the player the guard is up.
+    // Rows in the aim frame (columns left, up, forward). Guarding, it stands
+    // square in front of the controller, face forward: both shields seen
+    // (tower, deflection) learnt these axes when raised -- model x back toward
+    // the player, y to the right, z up. Lowered, it hangs at the side as the
+    // game carries it.
+    //
+    // The right hand holds it as the mirror image, which for the same model is
+    // the left's rows with the left column negated and its y row turned round
+    // (still a rotation): the game's own poses, worked out from the Fencer's
+    // clips on P607_FENCER (stand_base + shield_poseAim_armL/R_add at a level
+    // aim, the shield on armsFlip_l/r), give the left within 3 degrees of the
+    // learned pose and the right within 3 degrees of this. The left's lowered
+    // pose on the right hand had the shield on the inside of the hand
+    // (hardware, 2026-10-02: "右手のシールドの通常時が、右手の内側"). The guard
+    // is its own mirror, and the game's raised poses (recoil_shield_armL/R_add)
+    // keep the same relation, so one guard serves both hands.
     constexpr float kGuardFront[3][3]={{0,0,-1},{-1,0,0},{0,1,0}};
-    if(guard) {
-        std::memcpy(target,kGuardFront,sizeof(target));
-        g_fencerShieldShown[state].fetch_add(1,std::memory_order_relaxed);
-    } else if(m->learned[state]) {
-        std::memcpy(target,m->pose[state],sizeof(target));
-        g_fencerShieldShown[state].fetch_add(1,std::memory_order_relaxed);
-    } else {
-        std::memcpy(target,c,sizeof(target));
-        FencerSmoothPose(hand,weapon,target);
-    }
+    constexpr float kLowered[3][3]={{-0.9429f,0.1130f,0.3135f},{-0.1768f,-0.9671f,-0.1829f},{0.2825f,-0.2279f,0.9318f}};
+    constexpr float kLoweredRight[3][3]={{0.9429f,0.1130f,0.3135f},{-0.1768f,0.9671f,0.1829f},{-0.2825f,-0.2279f,0.9318f}};
+    const auto& target=m->guard?kGuardFront:(hand==1?kLoweredRight:kLowered);
+    g_fencerShieldShown[m->guard?1:0].fetch_add(1,std::memory_order_relaxed);
     if(!m->haveShown || !(dt>0) || dt>0.5) { std::memcpy(m->shown,target,sizeof(m->shown)); m->haveShown=true; }
     else {
         const float follow=1.0f-std::exp(-static_cast<float>(dt)/kFencerShieldSwingSec);
@@ -847,6 +808,83 @@ int FencerBackModel(void* weapon,void* model,const void* nodes,unsigned count) n
     if(index>=0) { memo[next]={weapon,index}; next=(next+1)%8; }
     return index;
 }
+// A Fencer blade's sheath: the node "attach", which the game ties to the
+// soldier's backWeapon bone (sgott HWEAPON027 ModelConstraint: backWeapon ->
+// attach) while the hilt rides the hand. Carried with the rest it swung with the
+// sword (the user, 2026-10-02), so the draw leaves it where the game put it.
+// Blades are the models with both "attach" and "slide" (h_impact_blade03,
+// h_impact_618_blade04); h_cannon_titaniainferno01 has "attach" alone. Kept per
+// weapon; -1 when the weapon is not a blade.
+std::atomic<unsigned long long> g_fencerSheathsKept{0};
+int FencerBladeSheath(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
+    struct Memo { void* weapon=nullptr; int index=-1; };
+    static Memo memo[8]{}; static unsigned next=0;
+    for(const auto& m:memo) if(m.weapon==weapon && weapon) return m.index;
+    int index=-1;
+    if(FencerModelHasNode(model,nodes,count,L"slide")) index=FencerNodeIndex(model,nodes,count,L"attach");
+    memo[next]={weapon,index}; next=(next+1)%8;
+    if(index>0) Log("FENCERBLADE sheath node %d stays on backWeapon (weapon %p)",index,weapon);
+    return index;
+}
+// Where the sheath is drawn: on the player's shoulder, the way a back-mounted
+// weapon is (FencerShoulderOnHead) -- the eye plus the shoulder offsets in the
+// body's yaw frame, on the weapon's own side, turned as the back mounts sit
+// (kFencerShoulderRest, which is the backWeapon bone's pose, and the sheath
+// rides that bone). Left on the game's back mount, it went everywhere the
+// swing clips took the body (hardware 2026-10-02: "電磁刀は鞘が動いていました").
+// Written into the command in the frame of its hand (sheathAxes/sheathPos);
+// false (and the game's mount) without the body's yaw or with the shoulders
+// left on the game's mounts.
+bool FencerSheathCommand(unsigned hand,WeaponHoldCommand& out) noexcept {
+    out.sheathValid=false;
+    if(hand>1 || !g_fencerShoulderOnHead || !g_fencerBodyYawValid) return false;
+    float axes[3][3]{};
+    for(int k=0;k<3;++k) {
+        const float n=std::sqrt(out.hand.axes[k][0]*out.hand.axes[k][0]+out.hand.axes[k][1]*out.hand.axes[k][1]+out.hand.axes[k][2]*out.hand.axes[k][2]);
+        if(!std::isfinite(n) || n<1e-3f) return false;
+        for(int j=0;j<3;++j) axes[k][j]=out.hand.axes[k][j]/n;
+    }
+    // The body's yaw frame, columns of kFencerShoulderRest: left (+R, the
+    // body's left on hardware), up, forward.
+    const float body[3][3]={{std::cos(g_fencerBodyYaw),0,-std::sin(g_fencerBodyYaw)},{0,1,0},{std::sin(g_fencerBodyYaw),0,std::cos(g_fencerBodyYaw)}};
+    const float side=hand==1?-g_fencerShoulderSide:g_fencerShoulderSide;
+    float at[3]{};
+    for(int j=0;j<3;++j) at[j]=g_eyeWorld[j]+body[0][j]*side-body[2][j]*g_fencerShoulderBack-body[1][j]*g_fencerShoulderDown;
+    for(int i=0;i<3;++i) {
+        float row[3]{};
+        for(int j=0;j<3;++j) row[j]=kFencerShoulderRest[i][0]*body[0][j]+kFencerShoulderRest[i][1]*body[1][j]+kFencerShoulderRest[i][2]*body[2][j];
+        for(int k=0;k<3;++k) out.sheathAxes[i][k]=row[0]*axes[k][0]+row[1]*axes[k][1]+row[2]*axes[k][2];
+    }
+    for(int k=0;k<3;++k) {
+        float d=0; for(int j=0;j<3;++j) d+=(at[j]-out.hand.palm[j])*axes[k][j];
+        out.sheathPos[k]=d;
+    }
+    out.sheathValid=true;
+    return true;
+}
+// The draw: the sheath's palette matrix rebuilt against the hand as drawn,
+// each row keeping its own length and the W lanes kept.
+std::atomic<unsigned long long> g_fencerSheathsPlaced{0};
+void FencerPlaceSheath(const WeaponHoldCommand& command,edf6vr::Matrix& m) noexcept {
+    float axes[3][3]{};
+    for(int k=0;k<3;++k) {
+        const float n=std::sqrt(command.hand.axes[k][0]*command.hand.axes[k][0]+command.hand.axes[k][1]*command.hand.axes[k][1]+command.hand.axes[k][2]*command.hand.axes[k][2]);
+        if(!std::isfinite(n) || n<1e-3f) return;
+        for(int j=0;j<3;++j) axes[k][j]=command.hand.axes[k][j]/n;
+    }
+    edf6vr::Matrix out=m;
+    for(int i=0;i<3;++i) {
+        const float length=std::sqrt(m.m[i][0]*m.m[i][0]+m.m[i][1]*m.m[i][1]+m.m[i][2]*m.m[i][2]);
+        if(!std::isfinite(length) || length<1e-4f) return;
+        for(int j=0;j<3;++j) out.m[i][j]=(command.sheathAxes[i][0]*axes[0][j]+command.sheathAxes[i][1]*axes[1][j]+command.sheathAxes[i][2]*axes[2][j])*length;
+    }
+    for(int j=0;j<3;++j) {
+        out.m[3][j]=command.hand.palm[j]+command.sheathPos[0]*axes[0][j]+command.sheathPos[1]*axes[1][j]+command.sheathPos[2]*axes[2][j];
+        if(!std::isfinite(out.m[3][j])) return;
+    }
+    m=out;
+    g_fencerSheathsPlaced.fetch_add(1,std::memory_order_relaxed);
+}
 // A back mount's barrel hangs from its node "joint" (root -> body -> joint ->
 // the barrel's own parts, in every back model that has one), and the game ties
 // that node to the Fencer's backWeaponJoint bone (sgott: ModelConstraint
@@ -987,6 +1025,160 @@ bool FencerKnownSpear(const void* weapon) noexcept {
     for(const auto& m:g_fencerSpearMemo)
         if(weapon && m.weapon.load(std::memory_order_acquire)==weapon) return m.spear.load(std::memory_order_relaxed);
     return false;
+}
+// --- Melee swings: the game's own swing, only while it is swung -------------
+//
+// A hammer, a blade or the katana is laid on the hand like a spear (the model's
+// +Y up the controller, +Z ahead; these models stand along +Y from the grip).
+// While the game plays its swing, it is drawn as the game swings it instead
+// ("平常時はスピアと同じく手に固定、攻撃モーション中だけゲーム本来の振り回し",
+// 2026-10-02): its turn in the game's aim frame AND its hand's travel since the
+// swing began -- the clips are whole-body, and the arm carries it 1.5 m in a
+// smash -- both put on the controller, and not held back by the dash
+// smoothing, which froze it through the lunging attacks (the jump smash
+// carries the soldier 13 m). The change in and out is blended.
+//
+// The swing is the weapon's own word for it. Every Fencer weapon asks for an
+// arm animation through 6956C0 (the hammer: its charge state 6A0460 with layer
+// 1 and a loop, its swing state 6A0790 with layer 0 and the stage's speed),
+// which sets weapon+0xEC4/EC5 to 1, the clip at +0xED4, the speed at +0xED0,
+// the layer at +0xEC8; the soldier's arm state (5A2310) plays it and clears
+// +0xEC4 when the clip has run out, and the hammer's idle state (6A06E0) clears
+// it too. A press with no ammo, or while reloading, never leaves the hammer's
+// idle state (6A0736: the trigger, ammo +0xBE8 > 0), so it asks for nothing.
+// The charge (layer 1) is not a swing: it only unfolds the weapon (its own
+// bones, which the carry keeps), so the weapon stays laid on the hand.
+//
+// The other hand is left alone ("回転とかしなければ、固定する必要はない"): guns,
+// spears and these are laid on their controllers, the known back mounts use the
+// fixed table on the head (FencerRestPose), and the shield shows its guard or
+// its lowered pose, both fixed on the controller (FencerShieldPose) -- none of
+// which read the game's arm.
+constexpr float kFencerSwingInSec=0.05f,kFencerSwingOutSec=0.12f;
+enum FencerSwingKind { kFencerSwingNone=0,kFencerSwingHammer,kFencerSwingKatana };
+struct FencerSwing {
+    void* weapon=nullptr; int kind=kFencerSwingNone;
+    bool active=false,haveAt=false;
+    double at=0,since=0;
+    float refAt[3]{},ref[3][3]{};
+    float weight=0,shift[3]{};      // the fraction shown; the hand's travel since the start (aim frame)
+    float maxTurn=0,maxShift=0;
+};
+FencerSwing g_fencerSwing[2]{};
+std::atomic<unsigned long long> g_fencerSwings[2]{};
+// The weapon's arm animation request (weapon+0xEC4) and its layer (+0xEC8: 0 the
+// swing, 1 the hammer's charge).
+bool FencerArmAnimation(void* weapon,int& layer) noexcept {
+    layer=-1;
+    if(!weapon) return false;
+    __try {
+        const auto* w=static_cast<const unsigned char*>(weapon);
+        layer=*reinterpret_cast<const int*>(w+0xEC8);
+        return w[0xEC4]!=0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// Rows (unit axes) to a quaternion and back, the same convention both ways.
+edf6vr::Quat FencerRowsQuat(const float r[3][3]) noexcept {
+    edf6vr::Quat q{};
+    const float t=r[0][0]+r[1][1]+r[2][2];
+    if(t>0) {
+        const float s=std::sqrt(t+1.0f)*2; q.w=0.25f*s; q.x=(r[1][2]-r[2][1])/s; q.y=(r[2][0]-r[0][2])/s; q.z=(r[0][1]-r[1][0])/s;
+    } else if(r[0][0]>r[1][1] && r[0][0]>r[2][2]) {
+        const float s=std::sqrt(1.0f+r[0][0]-r[1][1]-r[2][2])*2; q.w=(r[1][2]-r[2][1])/s; q.x=0.25f*s; q.y=(r[1][0]+r[0][1])/s; q.z=(r[2][0]+r[0][2])/s;
+    } else if(r[1][1]>r[2][2]) {
+        const float s=std::sqrt(1.0f+r[1][1]-r[0][0]-r[2][2])*2; q.w=(r[2][0]-r[0][2])/s; q.x=(r[1][0]+r[0][1])/s; q.y=0.25f*s; q.z=(r[2][1]+r[1][2])/s;
+    } else {
+        const float s=std::sqrt(1.0f+r[2][2]-r[0][0]-r[1][1])*2; q.w=(r[0][1]-r[1][0])/s; q.x=(r[2][0]+r[0][2])/s; q.y=(r[2][1]+r[1][2])/s; q.z=0.25f*s;
+    }
+    return q;
+}
+void FencerQuatRows(const edf6vr::Quat& q,float r[3][3]) noexcept {
+    const float x=q.x,y=q.y,z=q.z,w=q.w;
+    r[0][0]=1-2*(y*y+z*z); r[0][1]=2*(x*y+w*z);   r[0][2]=2*(x*z-w*y);
+    r[1][0]=2*(x*y-w*z);   r[1][1]=1-2*(x*x+z*z); r[1][2]=2*(y*z+w*x);
+    r[2][0]=2*(x*z+w*y);   r[2][1]=2*(y*z-w*x);   r[2][2]=1-2*(x*x+y*y);
+}
+// From rows a to rows b by w along the shorter turn, each row its length from
+// `length`. False if either set is degenerate.
+bool FencerBlendRows(const float a[3][3],const float b[3][3],float w,const float length[3],float out[3][3]) noexcept {
+    const float one[3]={1,1,1};
+    float ua[3][3]{},ub[3][3]{};
+    if(!FencerSquareRows(a,one,ua) || !FencerSquareRows(b,one,ub)) return false;
+    edf6vr::Quat qa=FencerRowsQuat(ua),qb=FencerRowsQuat(ub);
+    float d=qa.x*qb.x+qa.y*qb.y+qa.z*qb.z+qa.w*qb.w;
+    if(d<0) { qb={-qb.x,-qb.y,-qb.z,-qb.w}; d=-d; }
+    float ka=1-w,kb=w;
+    if(d<0.9995f) {
+        const float angle=std::acos(std::clamp(d,-1.0f,1.0f)),s=std::sin(angle);
+        ka=std::sin((1-w)*angle)/s; kb=std::sin(w*angle)/s;
+    }
+    edf6vr::Quat q{qa.x*ka+qb.x*kb,qa.y*ka+qb.y*kb,qa.z*ka+qb.z*kb,qa.w*ka+qb.w*kb};
+    const float n=std::sqrt(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w);
+    if(!(n>1e-6f)) return false;
+    q={q.x/n,q.y/n,q.z/n,q.w/n};
+    float r[3][3]{}; FencerQuatRows(q,r);
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j) out[i][j]=r[i][j]*length[i];
+    return true;
+}
+// The weapon root's place from the body, in the axes of `frame`. From the
+// globalSRT bone rather than the soldier's position: whether the game moves the
+// soldier through a lunge or only that bone, the lunge is not the arm's swing.
+bool FencerBodyLocal(void* soldier,const float point[3],const float frame[3][3],float at[3]) noexcept {
+    float rows[3][3]{},o[3]{};
+    if(!soldier || !g_nodeLookup || !edf6vr::ReadNamedBoneFrame(soldier,g_nodeLookup,L"globalSRT",rows,o)) return false;
+    for(int k=0;k<3;++k) {
+        at[k]=0;
+        for(int j=0;j<3;++j) at[k]+=(point[j]-o[j])*frame[k][j];
+        if(!std::isfinite(at[k]) || std::fabs(at[k])>10) return false;
+    }
+    return true;
+}
+const char* FencerSwingName(int kind) noexcept {
+    return kind==kFencerSwingHammer?"hammer":kind==kFencerSwingKatana?"katana":"none";
+}
+void FencerSwingEnd(unsigned hand,FencerSwing& s,double now) noexcept {
+    Log("FENCERSWING hand=%c kind=%s length=%.2fs turn max=%.0fdeg hand travel max=%.2fm",
+        hand==1?'R':'L',FencerSwingName(s.kind),now-s.since,s.maxTurn,s.maxShift);
+    s.active=false;
+}
+// The watch for one hand (above). c: the weapon's rows in the game's aim frame;
+// at: its root from the body in the same frame, or null. Returns the fraction
+// of the game's swing to show.
+float FencerSwingUpdate(unsigned hand,void* weapon,int kind,const float c[3][3],const float* at) noexcept {
+    if(hand>1) return 0;
+    auto& s=g_fencerSwing[hand];
+    LARGE_INTEGER ticks{},rate{};
+    QueryPerformanceCounter(&ticks); QueryPerformanceFrequency(&rate);
+    const double now=rate.QuadPart?static_cast<double>(ticks.QuadPart)/static_cast<double>(rate.QuadPart):0.0;
+    if(s.weapon!=weapon || s.kind!=kind) {
+        if(s.active) FencerSwingEnd(hand,s,now);
+        s=FencerSwing{}; s.weapon=weapon; s.kind=kind; s.at=now;
+    }
+    const double dt=now-s.at; s.at=now;
+    int layer=-1;
+    const bool swinging=FencerArmAnimation(weapon,layer) && layer!=1;
+    if(swinging && !s.active) {
+        s.active=true; s.since=now; s.maxTurn=0; s.maxShift=0;
+        std::memcpy(s.ref,c,sizeof(s.ref)); s.haveAt=at!=nullptr;
+        for(int k=0;k<3;++k) { s.refAt[k]=at?at[k]:0; s.shift[k]=0; }
+        g_fencerSwings[hand].fetch_add(1,std::memory_order_relaxed);
+    } else if(!swinging && s.active) FencerSwingEnd(hand,s,now);
+    if(s.active) {
+        float shift=0;
+        if(at && s.haveAt) {
+            for(int k=0;k<3;++k) { s.shift[k]=at[k]-s.refAt[k]; shift+=s.shift[k]*s.shift[k]; }
+            shift=std::sqrt(shift);
+        }
+        s.maxTurn=std::max(s.maxTurn,FencerRowsAngle(c,s.ref)); s.maxShift=std::max(s.maxShift,shift);
+    }
+    const float target=s.active?1.0f:0.0f;
+    if(!(dt>0) || dt>0.5) s.weight=target;
+    else {
+        const float tau=target>s.weight?kFencerSwingInSec:kFencerSwingOutSec;
+        s.weight+=(target-s.weight)*(1.0f-std::exp(-static_cast<float>(dt)/tau));
+        if(std::fabs(target-s.weight)<1e-3f) s.weight=target;
+    }
+    return s.weight;
 }
 bool FencerRebuildRows(const float native[3][4],const float nativeDir[3],float wanted[3][3],float rows[3][4],FencerAxisMap* map=nullptr,void* weapon=nullptr,unsigned hand=2) noexcept {
     float from[3][3]{}; FencerAimFrame(nativeDir,from);
@@ -1252,22 +1444,40 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         // the shots, which go along the aim, landed low. The length of each
         // row is kept, in case a model is scaled.
         //
-        // Not the shield, the blades or the hammers. Laid on the hand the
-        // shield faced the front, but it no longer rose to guard or dropped to
-        // recover, and those are how the player tells whether it is up; a
-        // blade or a hammer laid on the hand loses its swing. They keep the
-        // game's pose, relative to its aim, put on the hand's frame -- with the
-        // dash smoothed out (FencerSmoothPose). A spear only thrusts along the
-        // aim, so it is laid on the hand like a gun ("spears can be fixed"): the
-        // Flashing Spear is Weapon_PileBanker, the others are Weapon_Swing and
-        // told from the katana that shares the class by their model
-        // (FencerIsSpear). As a posed weapon the Blast Hole Spear trailed every
-        // dash like the shield (2026-09-26).
+        // Not the shield. Laid on the hand the shield faced the front, but it
+        // no longer rose to guard or dropped to recover, and those are how the
+        // player tells whether it is up; it takes one of its two fixed poses,
+        // guard or lowered, on the hand's frame (FencerShieldPose). A spear only
+        // thrusts along the aim, so it is laid on the hand like a gun ("spears
+        // can be fixed"): the Flashing Spear is Weapon_PileBanker, the others
+        // are Weapon_Swing and told from the katana that shares the class by
+        // their model (FencerIsSpear). As a posed weapon the Blast Hole Spear
+        // trailed every dash like the shield (2026-09-26). The blades, hammers
+        // and the katana are laid on the hand too, and swing as the game swings
+        // them while they are swung (FencerSwingUpdate).
         const bool shield=edf6vr::HasType(g_image,wp.weapon,".?AVWeapon_Shield@@");
-        const bool posedByGame=shield || edf6vr::HasType(g_image,wp.weapon,".?AVWeapon_ImpactHammer@@")
-            || (edf6vr::HasType(g_image,wp.weapon,".?AVWeapon_Swing@@")
-                && !FencerIsSpear(wp.weapon,wp.model,wp.nodes,static_cast<unsigned>(wp.nodeCount)));
-        if(posedByGame) {
+        const bool hammer=edf6vr::HasType(g_image,wp.weapon,".?AVWeapon_ImpactHammer@@");
+        const bool melee=hammer || (edf6vr::HasType(g_image,wp.weapon,".?AVWeapon_Swing@@")
+            && !FencerIsSpear(wp.weapon,wp.model,wp.nodes,static_cast<unsigned>(wp.nodeCount)));
+        float swingRows[3][3]{},swingShift[3]{},swingWeight=0;
+        if(melee && hand<2) {
+            float posed[3][3]{};
+            FencerAimFrameYaw(nativeDir,nativeYaw,posed);
+            float c[3][3]{},fromBody[3]{};
+            for(int i=0;i<3;++i) for(int k=0;k<3;++k)
+                c[i][k]=turned[i][0]*posed[k][0]+turned[i][1]*posed[k][1]+turned[i][2]*posed[k][2];
+            const float point[3]={root.m[3][0],root.m[3][1],root.m[3][2]};
+            const bool haveBody=FencerBodyLocal(soldier,point,posed,fromBody);
+            swingWeight=FencerSwingUpdate(hand,wp.weapon,hammer?kFencerSwingHammer:kFencerSwingKatana,c,haveBody?fromBody:nullptr);
+            // The game's swing on the hand: its turn in the aim frame, and its
+            // hand's travel since the press, both on the hand's frame.
+            const auto& sw=g_fencerSwing[hand];
+            for(int i=0;i<3;++i) for(int j=0;j<3;++j) {
+                swingRows[i][j]=c[i][0]*frame[0][j]+c[i][1]*frame[1][j]+c[i][2]*frame[2][j];
+                swingShift[j]+=sw.shift[i]*frame[i][j]*swingWeight;
+            }
+        }
+        if(shield) {
             // A shield is re-expressed rather than snapped, the same cure the
             // shoulder weapons already have.
             //
@@ -1300,13 +1510,24 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
             for(int i=0;i<3;++i) for(int k=0;k<3;++k)
                 c[i][k]=turned[i][0]*posed[k][0]+turned[i][1]*posed[k][1]+turned[i][2]*posed[k][2];
             if(hand<2) {
-                if(shield) { std::memcpy(g_fencerShieldNative[hand],c,sizeof(c)); g_fencerShieldSeen[hand]=true; }
-                if(shield) FencerShieldPose(hand,wp.weapon,c); else FencerSmoothPose(hand,wp.weapon,c);
+                std::memcpy(g_fencerShieldNative[hand],c,sizeof(c)); g_fencerShieldSeen[hand]=true;
+                FencerShieldPose(hand,wp.weapon,c);
             }
             for(int i=0;i<3;++i) {
                 for(int j=0;j<3;++j) turned[i][j]=c[i][0]*frame[0][j]+c[i][1]*frame[1][j]+c[i][2]*frame[2][j];
                 turned[i][3]=0;
             }
+        } else if(melee) {
+            // Laid on the hand as below, the game's swing blended over it.
+            float length[3]{},laid[3][3]{},rows[3][3]{};
+            for(int k=0;k<3;++k) {
+                const float size=std::sqrt(turned[k][0]*turned[k][0]+turned[k][1]*turned[k][1]+turned[k][2]*turned[k][2]);
+                length[k]=std::isfinite(size) && size>1e-3f?size:1.0f;
+                for(int j=0;j<3;++j) laid[k][j]=frame[k][j]*length[k];
+            }
+            if(swingWeight>=1.0f) std::memcpy(rows,swingRows,sizeof(rows));
+            else if(swingWeight<=0.0f || !FencerBlendRows(laid,swingRows,swingWeight,length,rows)) std::memcpy(rows,laid,sizeof(rows));
+            for(int i=0;i<3;++i) { for(int j=0;j<3;++j) turned[i][j]=rows[i][j]; turned[i][3]=0; }
         } else if(g_fencerDirectAim) {
             for(int k=0;k<3;++k) {
                 const float size=std::sqrt(turned[k][0]*turned[k][0]+turned[k][1]*turned[k][1]+turned[k][2]*turned[k][2]);
@@ -1319,7 +1540,7 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         // is the body's LEFT (v6 moved the hands inward), so the right hand
         // goes along -frame[0].
         const float side=hand==1?-g_fencerHandOutward:g_fencerHandOutward;
-        for(unsigned j=0;j<3;++j) palm[j]=grip[j]+frame[2][j]*g_fencerHandAhead+upright[0][j]*side+upright[1][j]*g_fencerHandUp;
+        for(unsigned j=0;j<3;++j) palm[j]=grip[j]+frame[2][j]*g_fencerHandAhead+upright[0][j]*side+upright[1][j]*g_fencerHandUp+swingShift[j];
     } else if(shoulder || g_fencerHandWeapons) {
         // The mount's pose relative to the game's aim, put on the wanted frame
         // through the shield's dash smoothing. Laying it straight on the aim
@@ -1361,6 +1582,7 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         out.step[j]=g_soldierStep[j];
     }
     for(unsigned k=0;k<3;++k) for(unsigned j=0;j<3;++j) out.handAxes[k][j]=root.m[k][j];
+    if(FencerBladeSheath(wp.weapon,wp.model,wp.nodes,static_cast<unsigned>(wp.nodeCount))>0) FencerSheathCommand(hand,out);
     out.headRoom[0]=g_lastHeadXr.x; out.headRoom[1]=g_lastHeadXr.y; out.headRoom[2]=g_lastHeadXr.z;
     out.yawOffset=g_yawOffset;
     out.tracked=true; out.handIndex=hand; out.fencer=true; out.latch=false;
@@ -1594,10 +1816,10 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
             g_fencerGuideWatch[0].worst[0],g_fencerGuideWatch[0].worst[1],g_fencerGuideWatch[1].worst[0],g_fencerGuideWatch[1].worst[1],
             g_fencerGuideWatch[0].baseline,g_fencerGuideWatch[1].baseline,g_fencerGuideWatch[0].spikes,g_fencerGuideWatch[1].spikes);
         for(auto& w:g_fencerGuideWatch) { w.worst[0]=w.worst[1]=0; }
-        Log("SHIELDSTATE learnt lowered/guard=%llu/%llu shown lowered/guard=%llu/%llu reported=%llu offAnchor=%llu downs=%llu trigger L/R=%.2f/%.2f"
+        Log("SHIELDSTATE shown lowered/guard=%llu/%llu offAnchor=%llu downs=%llu trigger L/R=%.2f/%.2f"
             " guard tests=%llu on the left aim=%llu blocked there=%llu sites=%u/4",
-            g_fencerShieldLearnt[0].load(),g_fencerShieldLearnt[1].load(),g_fencerShieldShown[0].load(),g_fencerShieldShown[1].load(),
-            g_fencerShieldReported.load(),g_fencerRestOffAnchor.load(),g_fencerDowns.load(),g_handTrigger[0].load(),g_handTrigger[1].load(),
+            g_fencerShieldShown[0].load(),g_fencerShieldShown[1].load(),
+            g_fencerRestOffAnchor.load(),g_fencerDowns.load(),g_handTrigger[0].load(),g_handTrigger[1].load(),
             g_fencerGuardTests.load(),g_fencerGuardLeft.load(),g_fencerGuardLeftBlocked.load(),g_fencerGuardSites);
         for(unsigned h=0;h<2;++h) if(g_fencerShieldSeen[h]) {
             const auto& c=g_fencerShieldNative[h];

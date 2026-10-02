@@ -133,6 +133,74 @@ bool FollowsCall(const std::uint8_t* before) {
 
 bool InSyncFunctions(std::uint32_t rva) { return rva >= kSyncFirst && rva < kSyncEnd; }
 
+namespace {
+
+constexpr std::uint32_t kRecordWrite = 0x773840;  // (int* index, record, writer, clamp) -> true
+constexpr std::uint32_t kRecordRead = 0x773740;   // (int* index, record, reader) -> true
+constexpr std::uint32_t kWriterPosition = 0x5F0;  // 12B5404 `mov rax, [r8+0x5F0]`: bytes written so far
+constexpr std::uint32_t kReaderPosition = 0x8;    // 12B49DF `mov r11, [rcx+8]`: bytes read so far
+
+struct SortieSite {
+    std::uint32_t rva;
+    std::uint32_t target;
+    std::uint32_t position;
+    const char* what;
+};
+constexpr SortieSite kSortieSites[] = {
+    {0x78EE4F, kRecordWrite, kWriterPosition, "own loadout written for the host"},
+    {0x78D6E3, kRecordRead, kReaderPosition, "host: a member's reply read"},
+    {0x78D6FA, kRecordWrite, kWriterPosition, "host: a member's loadout written into the start message"},
+    {0x790873, kRecordRead, kReaderPosition, "start message from the host: a loadout read"},
+};
+std::atomic<int> sortieLines{0};
+
+using RecordFn = std::uint64_t (*)(void*, void*, void*, std::uint64_t);
+
+std::uint64_t StreamPosition(const void* stream, std::uint32_t field) {
+    __try {
+        return *reinterpret_cast<const std::uint64_t*>(static_cast<const std::uint8_t*>(stream) + field);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return ~0ull;
+    }
+}
+
+std::uint64_t MeasureRecord(std::size_t site, void* index, void* record, void* stream, std::uint64_t clamp) {
+    const SortieSite& s = kSortieSites[site];
+    const auto original = reinterpret_cast<RecordFn>(gameBase + s.target);
+    const std::uint64_t before = StreamPosition(stream, s.position);
+    const std::uint64_t result = original(index, record, stream, clamp);
+    const std::uint64_t after = StreamPosition(stream, s.position);
+    if (before == ~0ull || after == ~0ull || after < before || after - before > 0x10000) return result;
+    if (!Budget(sortieLines, kMaxLines, "start sync records")) return result;
+    Log("SORTIE %s: %llu B, the message %llu B so far (EOS carries %u with the game's 8-byte header)", s.what,
+        static_cast<unsigned long long>(after - before), static_cast<unsigned long long>(after),
+        kEosMaxPacket - kGamePacketHeader);
+    return result;
+}
+
+std::uint64_t OwnLoadout(void* a, void* b, void* c, std::uint64_t d) { return MeasureRecord(0, a, b, c, d); }
+std::uint64_t ReplyRead(void* a, void* b, void* c, std::uint64_t d) { return MeasureRecord(1, a, b, c, d); }
+std::uint64_t StartWritten(void* a, void* b, void* c, std::uint64_t d) { return MeasureRecord(2, a, b, c, d); }
+std::uint64_t StartRead(void* a, void* b, void* c, std::uint64_t d) { return MeasureRecord(3, a, b, c, d); }
+
+}  // namespace
+
+std::vector<CallSite> SortieRecordCalls() {
+    std::vector<CallSite> calls;
+    for (const auto& s : kSortieSites) calls.push_back({s.what, s.rva, s.target});
+    return calls;
+}
+
+void* SortieRecordCallHandler(std::uint32_t rva) {
+    switch (rva) {
+        case 0x78EE4F: return reinterpret_cast<void*>(&OwnLoadout);
+        case 0x78D6E3: return reinterpret_cast<void*>(&ReplyRead);
+        case 0x78D6FA: return reinterpret_cast<void*>(&StartWritten);
+        case 0x790873: return reinterpret_cast<void*>(&StartRead);
+    }
+    return nullptr;
+}
+
 std::vector<MidSite> PacketSizeHooks() {
     // `push rbx` (REX form), `push rbp`, `push rsi`, `push rdi`, `push r12`: seven position-independent bytes.
     return {{"message queued for a peer", kAppendRva, {0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x54}, 0, 7}};

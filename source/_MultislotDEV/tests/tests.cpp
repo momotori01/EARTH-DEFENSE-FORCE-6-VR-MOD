@@ -645,6 +645,21 @@ int main(int argc, char** argv) {
         Check(FollowsCall(image.At(after - 7, 7)), "a real return address is recognised", after);
     for (const std::uint32_t after : {0x12CFFDBu, 0x12D0017u, 0x12C8C5Du, 0x59FB7Eu})
         Check(!FollowsCall(image.At(after - 7, 7)), "an address after no call is not", after);
+    // The start sync's records (1.5.34): four calls into the record writer/reader, and the two position fields
+    // the wrappers read before and after.
+    const auto sortieCalls = SortieRecordCalls();
+    Check(sortieCalls.size() == 4, "four start sync record calls");
+    for (const auto& call : sortieCalls) {
+        Check(CallTargets(image.At(call.rva, 5), call.rva, call.target), call.name, call.rva);
+        Check(SortieRecordCallHandler(call.rva) != nullptr, "and a wrapper for it", call.rva);
+        Check(InSyncFunctions(call.rva), "inside the sync functions", call.rva);
+    }
+    Check(std::memcmp(image.At(0x12B5404, 7), "\x49\x8B\x80\xF0\x05\x00\x00", 7) == 0,
+          "the packet writer keeps its position at +0x5F0 (mov rax, [r8+0x5F0])", 0x12B5404);
+    Check(std::memcmp(image.At(0x12B49DF, 4), "\x4C\x8B\x59\x08", 4) == 0 &&
+              std::memcmp(image.At(0x12B49EC, 6), "\x45\x0F\xB6\x54\x0B\x10", 6) == 0,
+          "the packet reader keeps its position at +8 and its bytes from +0x10", 0x12B49DF);
+    Check(std::memcmp(image.At(0x773826, 2), "\xB0\x01", 2) == 0, "the record reader returns true", 0x773826);
     Check(ClassifyMessage(1092) == MessageFit::Shares && ClassifyMessage(1093) == MessageFit::OwnPacket &&
               ClassifyMessage(1162) == MessageFit::OwnPacket && ClassifyMessage(1163) == MessageFit::Dropped,
           "message size classes: 1092 shares a packet, 1093-1162 need their own, 1163 and up are dropped");
@@ -657,6 +672,7 @@ int main(int argc, char** argv) {
     allCalls.insert(allCalls.end(), diagnosticCalls.begin(), diagnosticCalls.end());
     const auto recoveryCalls = RecoveryCalls();
     allCalls.insert(allCalls.end(), recoveryCalls.begin(), recoveryCalls.end());
+    allCalls.insert(allCalls.end(), sortieCalls.begin(), sortieCalls.end());
     auto allHooks = missionHooks;
     allHooks.insert(allHooks.end(), spawnHooks.begin(), spawnHooks.end());
     const auto diagnosticHooks = DiagnosticHooks();

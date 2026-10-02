@@ -174,6 +174,14 @@ public:
     void SetUiCluster(bool on,const UiClusterLayout& layout) noexcept;
     void SetUiClusterPlace(int place,float wristWidthMetres,float marginRight,float marginBottom) noexcept;
     void SetUiClusterPose(const float position[3],const float orientation[4],bool valid) noexcept;
+    // The radio subtitles, moved up toward the middle of the panel: the box's
+    // pieces (fractions of the HUD picture, at most 3) and how far to move them
+    // (negative is up). Off with on=false or no pieces.
+    void SetSubtitles(bool on,const UiRect* rects,unsigned count,float dy) noexcept;
+    // While a window the compact HUD would cut into is open (the quick chat),
+    // the HUD is left whole on the panel and the cluster is not drawn. A
+    // suspension older than a minute is ignored, in case a close was missed.
+    void SuspendUiCluster(bool on) noexcept;
     void RecenterBoard() noexcept;
     // Where the near end of the parallax starts being compressed, and how much
     // of it is kept there. Beyond the first, nothing changes.
@@ -257,6 +265,8 @@ extern OpenXrRuntime g_openxr;
 // How often the world-anchored HUD was laid over an eye, and refusals.
 void WorldUiCompositeCounts(unsigned long long& composites,unsigned long long& failures) noexcept;
 void UiClusterCounts(unsigned long long& composites,unsigned long long& failures) noexcept;
+void SubtitleCounts(unsigned long long& moves,unsigned long long& failures) noexcept;
+unsigned long long UiClusterSuspendedFrames() noexcept;
 // Placement of that HUD over the eye: 1,1,0 is the game's own picture.
 // debug paints that HUD magenta so it can be told from the panel's copy.
 void SetWorldUiPlacement(float scaleX,float scaleY,float offsetY,bool debug) noexcept;

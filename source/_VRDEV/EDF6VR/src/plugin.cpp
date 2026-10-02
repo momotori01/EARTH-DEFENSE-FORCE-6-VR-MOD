@@ -470,6 +470,11 @@ struct WeaponHoldCommand {
     // frame node (its spec's `frame`, or 0, the root), -1 when the model lacks it.
     int surfaces=0;
     int surfaceNodes[edf6vr::kScopeMaxSurfaces]{};
+    // A blade's sheath on the player's shoulder (fencer_dual.h FencerPlaceSheath):
+    // its rows and place in the frame of `hand`, so the draw's yaw retiming
+    // carries it with the weapon.
+    bool sheathValid=false;
+    float sheathAxes[3][3]{},sheathPos[3]{};
 };
 WeaponHoldCommand g_holdCommand{}; // g_lock protects the command, never a borrow.
 // Identity-only rejection for the millions of unrelated native model draws.
@@ -615,6 +620,9 @@ edf6vr::GestureHold g_clusterHold{};
 bool g_uiCluster=true; int g_uiClusterPlace=0; int g_uiClusterClass=-1; unsigned g_uiClusterTick=0;
 float g_uiClusterWristWidth=0.30f,g_uiClusterMarginRight=0.03f,g_uiClusterMarginBottom=0.05f;
 float g_uiClusterRadarScale=0.667f,g_uiClusterArmorScale=0.667f,g_uiClusterWeaponScale=0.5f,g_uiClusterGaugeScale=0.667f;
+// The radio subtitles drawn nearer the middle of the panel ([Render] SubtitleCentre), the box's top there
+// (SubtitleTop, a fraction of the HUD's height; it sits at .648 where the game draws it).
+bool g_subtitleCentre=true; float g_subtitleTop=0.55f;
 float g_uiClusterWristInset=-0.05f,g_uiClusterWristRaise=0.02f;
 
 void PublishUiCluster() noexcept;
@@ -1517,8 +1525,8 @@ int UiClusterClass() noexcept {
 }
 // Where the game lays each HUD group out (fractions of its 16:9 screen), and
 // how they are packed: radar over the armour bar on the left of the canvas,
-// the weapon column to their right; the Fencer's two weapon groups go along
-// the bottom under radar and armour. Everything sits on the canvas bottom.
+// the weapon column to their right; the Fencer's two weapon groups along the
+// bottom with radar and armour over them. Everything sits on the canvas bottom.
 void PublishUiCluster() noexcept {
     const int cls=UiClusterClass();
     g_uiClusterClass=cls;
@@ -1531,15 +1539,48 @@ void PublishUiCluster() noexcept {
     struct Placed { edf6vr::UiRect r; float x,y,s; } placed[8]{}; unsigned n=0;
     float canvasW=0,canvasH=0;
     if(cls==3) {
-        // Fencer: radar beside the armour bar, the two weapon groups under them.
-        const edf6vr::UiRect left{0.004f,0.699f,0.352f,0.972f}, right{0.648f,0.699f,0.995f,0.972f};
-        const float rowW=W(radar,rs)+gap+W(armor,as), rowH=std::max(H(radar,rs),H(armor,as));
-        const float weaponsW=W(left,ws)+gap+W(right,ws), weaponsH=std::max(H(left,ws),H(right,ws));
-        canvasW=std::max(rowW,weaponsW); canvasH=rowH+gap+weaponsH;
-        placed[n++]={radar,canvasW-rowW,rowH-H(radar,rs),rs};
-        placed[n++]={armor,canvasW-W(armor,as),rowH-H(armor,as),as};
-        placed[n++]={left,canvasW-weaponsW,canvasH-H(left,ws),ws};
-        placed[n++]={right,canvasW-W(right,ws),canvasH-H(right,ws),ws};
+        // Fencer, packed as the user drew it (2026-10-02): the two weapon groups
+        // side by side along the bottom, each with its charge gauge at its outer
+        // end as the game has it; radar and armour over them, the radar inside
+        // the left gauge and the armour over the right one. The groups are drawn
+        // first and radar and armour over their empty upper insides (the copy
+        // is not blended, so the order matters).
+        //
+        // Measured from the game's own layouts (UI/LYT_HUDWEAPONGUAGEL/R.SGO,
+        // research/ui_cluster/sgo.py), on 1920x1080 at 100 px per model unit:
+        // Guage_Root at (96,1026) anchored bottom-left (the right one mirrored,
+        // flag 65536), so its children sit at (96,-54) + pos. The weapon box
+        // (WeaponGuage, 281,979, texture visible x .004-.732) spans x 107-502,
+        // y 873-957; its name, numbers and icon reach x 694 and y 960; the
+        // other set's small box tops out at y 785 (seen on the game's HUD); the
+        // charge gauge (HammerCharge, texture 139x340) stands at y 596-929 and
+        // reaches x 190 inside; the reload gauge shown while reloading
+        // (ReloadGuage, at the weapon box, texture visible v .129-.943) hangs
+        // below it to y 1026 from x 53 -- missed at first, and what the space
+        // the user had marked under the boxes was for. The armour
+        // (LYT_HUDPOWERGUAGE01) and the radar (LYT_HUDRADER01) come out where the
+        // user marked them.
+        //
+        // The Fencer's reload icons (CenterReloadIcon_Fencer, 300 px either side
+        // of the centre at y 540) were left on the panel as stray text; they are
+        // cut and not drawn.
+        const edf6vr::UiRect leftGroup{0.003f,0.54f,0.365f,0.962f}, rightGroup{0.635f,0.54f,0.997f,0.962f};
+        const edf6vr::UiRect reloadLeft{0.2760f,0.4491f,0.4115f,0.5509f}, reloadRight{0.5885f,0.4491f,0.7240f,0.5509f};
+        const float gaugeInner=0.099f-leftGroup.u0, gaugeTop=0.552f, boxesTop=0.722f, between=0.008f;
+        const float groupW=W(leftGroup,ws), groupH=H(leftGroup,ws);
+        const float radarX=gaugeInner*ws+gap, armorX=radarX+W(radar,rs)+gap;
+        canvasW=std::max(2*groupW+between,armorX+W(armor,as));
+        // Heights from the canvas bottom.
+        const float radarBottom=(leftGroup.v1-boxesTop)*ws+gap;
+        float armorBottom=radarBottom+(H(radar,rs)-H(armor,as))*0.5f;
+        if(armorX+W(armor,as)>canvasW-gaugeInner*ws) armorBottom=std::max(armorBottom,(leftGroup.v1-gaugeTop)*ws+gap);
+        canvasH=std::max({groupH,radarBottom+H(radar,rs),armorBottom+H(armor,as)});
+        placed[n++]={leftGroup,0,canvasH-groupH,ws};
+        placed[n++]={rightGroup,canvasW-groupW,canvasH-groupH,ws};
+        placed[n++]={radar,radarX,canvasH-radarBottom-H(radar,rs),rs};
+        placed[n++]={armor,armorX,canvasH-armorBottom-H(armor,as),as};
+        placed[n++]={reloadLeft,0,0,0};
+        placed[n++]={reloadRight,0,0,0};
     } else if(cls==1) {
         // Wing Diver: radar over armour with the energy gauge beside the radar;
         // items over weapons to the right. Two corners of the original layout
@@ -1572,10 +1613,31 @@ void PublishUiCluster() noexcept {
         placed[n++]={items,canvasW-W(items,ws),canvasH-rightH,ws};
         placed[n++]={weapons,canvasW-W(weapons,ws),canvasH-H(weapons,ws),ws};
     }
+    // The radio subtitle box (2026-10-02, measured on three game frames at
+    // 1920x1080): x 445-1475, top at y 705, one line per 43 px downward (lines
+    // at 727-757, 769-801, 812-844, 855-889), so four lines reach y 906. No
+    // layout file holds it -- the game draws it in code.
+    //
+    // Lines one to three (to y 845) are clear of every class's HUD, checked
+    // against each element's widest possible place from the layouts
+    // (research/ui_cluster/verify_cuts.py); the right edge stops at x 1460 (the
+    // text's end) for the Wing Diver's second weapon box, whose layout place
+    // reaches x 1463, and the bottom at 845 for its weapon name. The fourth line
+    // runs into the weapon HUD ("４段になると武器のUIと少し被る"): only its
+    // middle, x 700-1215, is clear of both weapon icons, which start a few px
+    // above their layout boxes (y 881; a thin slice of the Fencer's left icon
+    // rode up with the subtitle from a strip to y 880, hardware 2026-10-02) and
+    // reach x 700 on the left and from x 1220 on the right.
+    const edf6vr::UiRect subtitles[2]={{440.0f/1920,700.0f/1080,1460.0f/1920,845.0f/1080},
+                                       {700.0f/1920,845.0f/1080,1215.0f/1920,905.0f/1080}};
+    const bool moveSubtitles=g_subtitleCentre && g_uiLayer;
     edf6vr::UiClusterLayout layout{};
     layout.canvasWidth=canvasW; layout.canvasHeight=canvasH;
     for(unsigned i=0;i<n && layout.count<8;++i) layout.items[layout.count++]={placed[i].r,placed[i].x/canvasW,placed[i].y/canvasH,placed[i].s};
+    // The compact HUD copies none of the subtitles: they are shown on their own.
+    if(moveSubtitles) { for(unsigned i=0;i<2;++i) layout.exclude[i]=subtitles[i]; layout.excludeCount=2; }
     edf6vr::g_openxr.SetUiCluster(g_uiCluster && g_uiLayer,layout);
+    edf6vr::g_openxr.SetSubtitles(moveSubtitles,subtitles,2,g_subtitleTop-subtitles[0].v0);
 }
 void PublishUiClusterPlace() noexcept {
     edf6vr::g_openxr.SetUiClusterPlace(g_uiClusterPlace,g_uiClusterWristWidth,g_uiClusterMarginRight,g_uiClusterMarginBottom);
@@ -2343,6 +2405,7 @@ void UpdateScopeView() noexcept {
     edf6vr::PublishScopeView(view);
 }
 #include "guide_probe.h"
+#include "chat_probe.h"
 #include "action_weapon_visibility.h"
 #include "tracked_weapon_bounds.h"
 #include "audio_health.h"
@@ -4000,8 +4063,19 @@ __declspec(guard(ignore)) void __fastcall HookInputRead(void* soldier,void* cont
 // F11 off, no headset) the plates stay at the game's own size. Applied when
 // the INI is read and whenever VR turns on or off; 1.0 writes the shipped
 // bytes back.
-float g_nameplateAppliedPlate=-1,g_nameplateAppliedText=-1;
+float g_nameplateAppliedPlate=-1,g_nameplateAppliedText=-1,g_chatBubbleApplied=-1;
 void ApplyNameplateSizeForVr(bool force=false) noexcept {
+    // The chat bubbles the same way, only while they are drawn into the world
+    // in the headset; on the flat screen (VR off) they keep the game's size.
+    {
+        const bool bubbles=g_vrEnabled && g_worldNameplates && (g_worldNameplateMask&8u);
+        const float bubble=bubbles?g_chatBubbleSize:1.0f;
+        if(force || bubble!=g_chatBubbleApplied) {
+            edf6vr::ApplyChatBubbleScale(g_image,bubble,g_chatBubbleSizeNote,sizeof(g_chatBubbleSizeNote));
+            g_chatBubbleApplied=bubble;   // a refused signature is not retried every update
+            Log("CHATBUBBLESIZE vr=%d bubble=%.3f (%s)",g_vrEnabled?1:0,bubble,g_chatBubbleSizeNote);
+        }
+    }
     if(!g_image.base) return;
     const bool vr=g_vrEnabled && g_worldNameplates;
     const float plate=vr?g_nameplateSize:1.0f,text=vr?g_nameplateTextSize:1.0f;
@@ -4024,7 +4098,8 @@ void ReloadTunables() noexcept {
     edf6vr::EnableGpuSplit(GetPrivateProfileIntW(L"Diagnostics",L"GpuSplit",0,g_iniPath)!=0);
     g_devKeys=GetPrivateProfileIntW(L"Diagnostics",L"DevKeys",0,g_iniPath)!=0;
     g_worldNameplates=GetPrivateProfileIntW(L"Render",L"WorldNameplates",1,g_iniPath)!=0;
-    g_worldNameplateMask=static_cast<unsigned>(GetPrivateProfileIntW(L"Render",L"WorldNameplateClasses",7,g_iniPath));
+    g_worldNameplateMask=(static_cast<unsigned>(GetPrivateProfileIntW(L"Render",L"WorldNameplateClasses",7,g_iniPath))&7u)
+        |(GetPrivateProfileIntW(L"Render",L"WorldChatBubbles",1,g_iniPath)!=0?8u:0u);
     edf6vr::EnableWorldUi(g_worldNameplates);
     edf6vr::EnableWorldUiProbe(GetPrivateProfileIntW(L"Render",L"WorldNameplateProbe",0,g_iniPath)!=0);
     g_worldNameplateScaleX=ReadFloat(g_iniPath,L"WorldNameplateScaleX",1.0f,0.25f,4.0f,L"Render");
@@ -4033,6 +4108,7 @@ void ReloadTunables() noexcept {
     g_worldNameplateDebug=GetPrivateProfileIntW(L"Render",L"WorldNameplateDebug",0,g_iniPath)!=0;
     g_nameplateSize=ReadFloat(g_iniPath,L"WorldNameplateSize",0.25f,0.05f,4.0f,L"Render");
     g_nameplateTextSize=ReadFloat(g_iniPath,L"WorldNameplateTextSize",1.0f,0.05f,4.0f,L"Render");
+    g_chatBubbleSize=ReadFloat(g_iniPath,L"WorldChatBubbleSize",0.3f,0.05f,4.0f,L"Render");
     // The plate's own transform in the game, so it is applied with or without
     // the world routing; 1.0 leaves the shipped bytes as they are.
     ApplyNameplateSizeForVr(true);
@@ -4081,6 +4157,8 @@ void ReloadTunables() noexcept {
     g_uiClusterArmorScale=ReadFloat(g_iniPath,L"UiClusterArmorScale",0.667f,0.1f,2.0f,L"Render");
     g_uiClusterWeaponScale=ReadFloat(g_iniPath,L"UiClusterWeaponScale",0.5f,0.1f,2.0f,L"Render");
     g_uiClusterGaugeScale=ReadFloat(g_iniPath,L"UiClusterGaugeScale",0.667f,0.1f,2.0f,L"Render");
+    g_subtitleCentre=GetPrivateProfileIntW(L"Render",L"SubtitleCentre",1,g_iniPath)!=0;
+    g_subtitleTop=ReadFloat(g_iniPath,L"SubtitleTop",0.55f,0.0f,0.9f,L"Render");
     g_uiClusterWristInset=ReadFloat(g_iniPath,L"UiClusterWristInsetMetres",-0.05f,-0.3f,0.3f,L"Render");
     g_uiClusterWristRaise=ReadFloat(g_iniPath,L"UiClusterWristRaiseMetres",0.02f,-0.3f,0.3f,L"Render");
     PublishUiClusterPlace();
@@ -5504,20 +5582,31 @@ void AfterUpdate(void* camera) noexcept {
                 const auto world=edf6vr::ReadWorldUiStats();
                 unsigned long long composites=0,compositeFailures=0;
                 edf6vr::WorldUiCompositeCounts(composites,compositeFailures);
-                Log("NAMEPLATE on=%d draws status/follower/rescue=%llu/%llu/%llu scopes=%llu offThread=%llu binds=%llu frames=%llu composites=%llu compositeFailures=%llu",
-                    g_worldNameplates,g_nameplateCalls[0].load(),g_nameplateCalls[1].load(),g_nameplateCalls[2].load(),
+                Log("NAMEPLATE on=%d draws status/follower/rescue/chat=%llu/%llu/%llu/%llu scopes=%llu offThread=%llu binds=%llu frames=%llu composites=%llu compositeFailures=%llu",
+                    g_worldNameplates,g_nameplateCalls[0].load(),g_nameplateCalls[1].load(),g_nameplateCalls[2].load(),g_nameplateCalls[3].load(),
                     world.scopes,world.scopesOffThread,world.binds,world.frames,composites,compositeFailures);
                 char notes[512]{};
                 edf6vr::ReadWorldUiNotes(notes,sizeof(notes));
-                Log("NAMEPLATEWORLD context same/other=%llu/%llu callers=EDF.dll+%X/%X/%X lost status/follower/rescue=%llu/%llu/%llu debug=%d scale=%.2f,%.2f offsetY=%.3f size=[%s] %s",
+                Log("NAMEPLATEWORLD context same/other=%llu/%llu callers=EDF.dll+%X/%X/%X/%X lost status/follower/rescue/chat=%llu/%llu/%llu/%llu debug=%d scale=%.2f,%.2f offsetY=%.3f size=[%s] %s",
                     g_nameplateSameContext.load(),g_nameplateOtherContext.load(),g_nameplateCaller[0].load(),
-                    g_nameplateCaller[1].load(),g_nameplateCaller[2].load(),g_nameplateLost[0].load(),g_nameplateLost[1].load(),
-                    g_nameplateLost[2].load(),g_worldNameplateDebug,g_worldNameplateScaleX,g_worldNameplateScaleY,
+                    g_nameplateCaller[1].load(),g_nameplateCaller[2].load(),g_nameplateCaller[3].load(),g_nameplateLost[0].load(),g_nameplateLost[1].load(),
+                    g_nameplateLost[2].load(),g_nameplateLost[3].load(),g_worldNameplateDebug,g_worldNameplateScaleX,g_worldNameplateScaleY,
                     g_worldNameplateOffsetY,g_nameplateSizeNote,notes);
+                // Where the bubbles were shrunk about: the speaker's head, or (a
+                // bubble that projects no head) the tail's target; the last one's numbers.
+                const auto chat=edf6vr::ReadChatAnchorNote();
+                Log("CHATBUBBLE size=[%s] about head/tail=%llu/%llu last centre=(%.1f,%.1f) corner=(%.1f,%.1f)->(%.1f,%.1f)",
+                    g_chatBubbleSizeNote,chat.aboutHead,chat.aboutTail,chat.centre[0],chat.centre[1],
+                    chat.corner[0],chat.corner[1],chat.moved[0],chat.moved[1]);
                 unsigned long long clusterComposites=0,clusterFailures=0;
                 edf6vr::UiClusterCounts(clusterComposites,clusterFailures);
-                Log("UICLUSTER on=%d place=%d class=%d composites=%llu failures=%llu",g_uiCluster,g_uiClusterPlace,
-                    g_uiClusterClass,clusterComposites,clusterFailures);
+                unsigned long long subtitleMoves=0,subtitleFailures=0;
+                edf6vr::SubtitleCounts(subtitleMoves,subtitleFailures);
+                Log("UICLUSTER on=%d place=%d class=%d composites=%llu failures=%llu subtitles centre=%d top=%.3f moves=%llu failures=%llu "
+                    "chat windows open=%d opened=%llu closed=%llu frames stepped aside=%llu",
+                    g_uiCluster,g_uiClusterPlace,g_uiClusterClass,clusterComposites,clusterFailures,
+                    g_subtitleCentre?1:0,g_subtitleTop,subtitleMoves,subtitleFailures,
+                    g_chatAlive.load(),g_chatOpened.load(),g_chatClosed.load(),edf6vr::UiClusterSuspendedFrames());
             }
             const auto crosshair=edf6vr::ReadNativeCrosshairStats();
             Log("CROSSHAIR ready=%d calls=%llu hidden=%llu",edf6vr::NativeCrosshairReady(),
@@ -6619,6 +6708,16 @@ bool DrawHeldWeapon(void* model,void* renderContext,int pass,void* view) {
                 if(command.fencer && FencerStraightenJoint(command,kept,paletteCount,straight)) source=straight;
                 prepared=edf6vr::CarryWeaponBones(arm,command.hand,source,paletteCount,
                                                 wanted,sourceLever,wantedLever);
+                if(prepared && command.fencer) {
+                    // A blade's sheath stays on the shoulder (FencerBladeSheath,
+                    // FencerPlaceSheath); the game's back mount only if that is unknown.
+                    const int sheath=FencerBladeSheath(command.weapon,model,command.weaponNodes,static_cast<unsigned>(command.count));
+                    if(sheath>0 && static_cast<std::size_t>(sheath)<paletteCount) {
+                        wanted[sheath]=kept[sheath];
+                        if(command.sheathValid) FencerPlaceSheath(command,wanted[sheath]);
+                        g_fencerSheathsKept.fetch_add(1,std::memory_order_relaxed);
+                    }
+                }
                 if(prepared) {
                     const bool dual=RangerDualWeapon(command.weapon);
                     if(dual)++g_dualDraws[command.handIndex];
@@ -6956,7 +7055,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.0.2 cockpit loading, with EDF6MultiSlot 1.5.33. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 3.1.0 cockpit loading, with EDF6MultiSlot 1.5.34. Fencer weapons aim the barrel itself; no dead band on the aim.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7217,10 +7316,10 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         if(changed && !laserOK) g_faulted=true;
         changed=false;
         {
-            bool nameplateChanged=false;
-            const bool nameplatesOK=InstallNameplateHooks(nameplateChanged);
-            Log("NAMEPLATE hooks ready=%d classes=0x%X changed=%d (MultiPlayStatus 8077B0, FollowerDurability 8040E0, RescueMessage 808410)",
-                nameplatesOK,g_worldNameplateMask,nameplateChanged);
+            bool nameplateChanged=false; unsigned nameplateHooked=0;
+            const bool nameplatesOK=InstallNameplateHooks(nameplateChanged,&nameplateHooked);
+            Log("NAMEPLATE hooks ready=%d hooked=0x%X classes=0x%X changed=%d (MultiPlayStatus 8077B0, FollowerDurability 8040E0, RescueMessage 808410, Chat 802F10)",
+                nameplatesOK,nameplateHooked,g_worldNameplateMask,nameplateChanged);
         }
         const bool crosshairOK=edf6vr::InstallNativeCrosshair(g_image,changed);
         Log("CROSSHAIR hook ready=%d changed=%d state=EDF.dll+%X; the panel keeps its middle while the VR reticle is drawn",
@@ -7249,6 +7348,11 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         const bool carryOK=InstallGuideCarry(changed);
         Log("GUIDECARRY hooks ready=%d changed=%d arc=6888D9->6899F0 rays=688FFD->11BD380 (caller stack only; no weapon matrix is written)",carryOK,changed);
         if(changed && !carryOK) g_faulted=true;
+        changed=false;
+        changed=false;
+        const bool chatOK=InstallChatProbe(changed);
+        Log("CHATPROBE hooks ready=%d changed=%d create=17FFAC0+10/871E40 17FF058+10/865AF0 delete=17FFB08+28/8725D0 17FF1B0+28/867170 (the compact HUD steps aside while a quick chat window is open)",chatOK,changed);
+        if(changed && !chatOK) g_faulted=true;
         changed=false;
         const bool aimLineOK=InstallAimLineWidth(changed);
         Log("SIGHTLINE vehicle aim line width hook ready=%d changed=%d call=6B34C7->687CE0",aimLineOK,changed);

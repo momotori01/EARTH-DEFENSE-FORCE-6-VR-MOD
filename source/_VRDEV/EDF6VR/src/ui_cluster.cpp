@@ -3,6 +3,7 @@
 #include <wrl/client.h>
 #include <cstring>
 #include <algorithm>
+#include <cmath>
 namespace edf6vr {
 namespace {
 using Microsoft::WRL::ComPtr;
@@ -132,6 +133,16 @@ bool Begin(ID3D11Device* d,ID3D11DeviceContext* ctx,ID3D11Texture2D* target,ComP
     return true;
 }
 }
+unsigned SubtractUiRect(const UiRect& a,const UiRect& b,UiRect out[4]) noexcept {
+    const float u0=std::max(a.u0,b.u0),v0=std::max(a.v0,b.v0),u1=std::min(a.u1,b.u1),v1=std::min(a.v1,b.v1);
+    if(!(u0<u1) || !(v0<v1)) { out[0]=a; return 1; }   // apart: a whole
+    unsigned n=0;
+    if(a.v0<v0) out[n++]={a.u0,a.v0,a.u1,v0};          // the band above
+    if(v1<a.v1) out[n++]={a.u0,v1,a.u1,a.v1};          // the band below
+    if(a.u0<u0) out[n++]={a.u0,v0,u0,v1};              // left of it, between them
+    if(u1<a.u1) out[n++]={u1,v0,a.u1,v1};              // right of it
+    return n;
+}
 void ReleaseUiCluster() noexcept {
     vs.Reset(); psPass.Reset(); psEncode.Reset(); psDecode.Reset(); psZero.Reset(); blend.Reset(); depth.Reset();
     raster.Reset(); sampler.Reset(); constants.Reset(); view.Reset(); viewedTexture.Reset(); device.Reset();
@@ -158,11 +169,55 @@ bool ComposeUiCluster(ID3D11Device* d,ID3D11DeviceContext* ctx,ID3D11Texture2D* 
         auto* smp=sampler.Get(); ctx->PSSetSamplers(0,1,&smp);
         for(unsigned i=0;i<layout.count && ok;++i) {
             const auto& item=layout.items[i];
-            const float w=(item.source.u1-item.source.u0)*item.scale/layout.canvasWidth;
-            const float h=(item.source.v1-item.source.v0)*item.scale/layout.canvasHeight;
-            if(!(w>0) || !(h>0)) continue;
-            const float dst[4]={item.x,item.y,item.x+w,item.y+h};
-            const float src[4]={item.source.u0,item.source.v0,item.source.u1,item.source.v1};
+            if(!(item.scale>0) || !(item.source.u1>item.source.u0) || !(item.source.v1>item.source.v0)) continue;
+            // What is left of the source once the excluded areas are taken out.
+            UiRect pieces[64]; unsigned count=1; pieces[0]=item.source;
+            for(unsigned e=0;e<layout.excludeCount && e<3;++e) {
+                UiRect next[64]; unsigned m=0;
+                for(unsigned k=0;k<count;++k) {
+                    UiRect part[4]; const unsigned got=SubtractUiRect(pieces[k],layout.exclude[e],part);
+                    for(unsigned j=0;j<got && m<64;++j) next[m++]=part[j];
+                }
+                std::memcpy(pieces,next,sizeof(UiRect)*m); count=m;
+            }
+            for(unsigned k=0;k<count && ok;++k) {
+                const auto& r=pieces[k];
+                const float x=item.x+(r.u0-item.source.u0)*item.scale/layout.canvasWidth;
+                const float y=item.y+(r.v0-item.source.v0)*item.scale/layout.canvasHeight;
+                const float w=(r.u1-r.u0)*item.scale/layout.canvasWidth, h=(r.v1-r.v0)*item.scale/layout.canvasHeight;
+                if(!(w>0) || !(h>0)) continue;
+                const float dst[4]={x,y,x+w,y+h};
+                const float src[4]={r.u0,r.v0,r.u1,r.v1};
+                ok=SetRects(ctx,dst,src);
+                if(ok) ctx->Draw(6,0);
+            }
+        }
+    }
+    saved.Restore(ctx);
+    return ok;
+}
+bool MoveUiRects(ID3D11Device* d,ID3D11DeviceContext* ctx,ID3D11Texture2D* source,ID3D11Texture2D* target,
+                 const UiRect* rects,unsigned count,float dy) noexcept {
+    if(!d || !ctx || !source || !target || !rects || !count || !std::isfinite(dy)) return false;
+    D3D11_TEXTURE2D_DESC sd{}; source->GetDesc(&sd);
+    if(sd.SampleDesc.Count!=1) return false;
+    SavedState saved; saved.Take(ctx);
+    ComPtr<ID3D11RenderTargetView> rtv; D3D11_TEXTURE2D_DESC td{};
+    bool ok=Begin(d,ctx,target,rtv,td);
+    if(ok && viewedTexture.Get()!=source) {
+        view.Reset(); viewedTexture=source;
+        if(FAILED(d->CreateShaderResourceView(source,nullptr,&view))) { viewedTexture.Reset(); ok=false; }
+    }
+    if(ok) {
+        const bool srcSrgb=Srgb(sd.Format), dstSrgb=Srgb(TargetFormat(td.Format));
+        ctx->PSSetShader(srcSrgb==dstSrgb?psPass.Get():(srcSrgb?psEncode.Get():psDecode.Get()),nullptr,0);
+        auto* srv=view.Get(); ctx->PSSetShaderResources(0,1,&srv);
+        auto* smp=sampler.Get(); ctx->PSSetSamplers(0,1,&smp);
+        for(unsigned i=0;i<count && ok;++i) {
+            const auto& r=rects[i];
+            if(!(r.u1>r.u0) || !(r.v1>r.v0)) continue;
+            const float dst[4]={r.u0,r.v0+dy,r.u1,r.v1+dy};
+            const float src[4]={r.u0,r.v0,r.u1,r.v1};
             ok=SetRects(ctx,dst,src);
             if(ok) ctx->Draw(6,0);
         }

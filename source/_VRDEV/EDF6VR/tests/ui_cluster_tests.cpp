@@ -103,6 +103,41 @@ int main() {
         ReadAt(device.Get(),context.Get(),panel.Get(),13,2,px); CHECK(Near(px[2],255) && Near(px[3],128));
         CHECK(!edf6vr::CutUiRects(device.Get(),context.Get(),panel.Get(),nullptr,1));
     }
+    // Subtracting: apart gives a whole; a hole in the middle gives four pieces
+    // covering the rest; a band across the top leaves the part below.
+    {
+        edf6vr::UiRect out[4];
+        CHECK(edf6vr::SubtractUiRect({0,0,0.5f,0.5f},{0.6f,0.6f,1,1},out)==1 && out[0].u1==0.5f);
+        const unsigned holes=edf6vr::SubtractUiRect({0,0,1,1},{0.25f,0.25f,0.75f,0.75f},out);
+        float area=0; for(unsigned i=0;i<holes;++i) area+=(out[i].u1-out[i].u0)*(out[i].v1-out[i].v0);
+        CHECK(holes==4 && std::fabs(area-0.75f)<1e-5f);
+        CHECK(edf6vr::SubtractUiRect({0,0,1,1},{-1,-1,2,0.5f},out)==1 && out[0].v0==0.5f && out[0].v1==1);
+    }
+    // An excluded area: the item is drawn without it, the rest of it where it was.
+    {
+        edf6vr::UiClusterLayout layout; layout.canvasWidth=1; layout.canvasHeight=1;
+        layout.items[0]={{0,0,1,1},0,0,1.0f}; layout.count=1;
+        layout.exclude[0]={0.5f,0.5f,0.75f,0.75f}; layout.excludeCount=1;   // the red block
+        auto target=Make(device.Get(),8,DXGI_FORMAT_R8G8B8A8_UNORM,rtvBind,nullptr);
+        CHECK(edf6vr::ComposeUiCluster(device.Get(),context.Get(),source.Get(),target.Get(),layout));
+        unsigned char px[4]{};
+        ReadAt(device.Get(),context.Get(),target.Get(),4,4,px); CHECK(px[3]==0);                         // left out
+        ReadAt(device.Get(),context.Get(),target.Get(),1,1,px); CHECK(Near(px[2],255) && Near(px[3],128)); // kept
+        ReadAt(device.Get(),context.Get(),target.Get(),7,7,px); CHECK(Near(px[2],255));
+    }
+    // Moving: the red block drawn a quarter higher over the panel, what it
+    // does not cover left as it was.
+    {
+        unsigned char clear[16*16*4]{};
+        auto panel=Make(device.Get(),16,DXGI_FORMAT_R8G8B8A8_TYPELESS,rtvBind,clear);
+        const edf6vr::UiRect block{0.5f,0.5f,0.75f,0.75f};
+        CHECK(edf6vr::MoveUiRects(device.Get(),context.Get(),source.Get(),panel.Get(),&block,1,-0.25f));
+        unsigned char px[4]{};
+        ReadAt(device.Get(),context.Get(),panel.Get(),9,5,px); CHECK(Near(px[0],255) && px[3]==255);   // landed
+        ReadAt(device.Get(),context.Get(),panel.Get(),9,9,px); CHECK(px[3]==0);                         // not copied in place
+        ReadAt(device.Get(),context.Get(),panel.Get(),2,2,px); CHECK(px[3]==0);
+        CHECK(!edf6vr::MoveUiRects(device.Get(),context.Get(),source.Get(),panel.Get(),&block,0,0));
+    }
     // Refusals: no items, a multisampled target.
     {
         edf6vr::UiClusterLayout empty;
