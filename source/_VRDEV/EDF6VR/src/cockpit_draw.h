@@ -3,7 +3,11 @@
 #include <d3d11.h>
 namespace edf6vr {
 bool PrepareCockpitDraw(ID3D11Device*) noexcept;
-bool DrawCockpit(ID3D11DeviceContext*,ID3D11Texture2D*,const Matrix& view,const Matrix& projection,const CockpitPose&,ID3D11Texture2D* hud=nullptr,std::uint64_t frame=0) noexcept;
+// subtitleMode: the subtitle screen (source 3) shows `subtitles` (the radio
+// subtitles' own capture, ui_capture.h; nothing when null) instead of a crop of
+// the HUD.
+bool DrawCockpit(ID3D11DeviceContext*,ID3D11Texture2D*,const Matrix& view,const Matrix& projection,const CockpitPose&,ID3D11Texture2D* hud=nullptr,std::uint64_t frame=0,
+                 ID3D11Texture2D* subtitles=nullptr,bool subtitleMode=false) noexcept;
 // Joint closures are world geometry: use the current eye's native depth before
 // that depth is reused for the other eye. No depth copy or CPU readback.
 bool DrawCockpitJointCaps(ID3D11DeviceContext*,ID3D11Texture2D*,const Matrix& view,const Matrix& projection,const CockpitPose&,ID3D11DepthStencilView*,bool reverseDepth=false) noexcept;

@@ -18,7 +18,7 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
 - **EDF6 VR setting.exe**: one window for everything set outside the game -- update, VR or normal mode, picture size, HD textures, gun hand, a log zip for bug reports, and extra VR settings ([see Setup](#setup)).
 - One-handed and two-handed weapon aiming, all four soldier classes and vehicles.
 - **Scopes:** when you zoom, the magnified view is shown on the weapon, in its scope or screen, or on a small holographic monitor. The Fencer gets a panel in front of you. The rest of your view stays normal size.
-- **Vehicle aim with your gun hand:** point the right controller and the vehicle's aim follows. You can turn it on or off for each kind of vehicle.
+- **Vehicle aim with your gun hand:** point the right controller and the vehicle's aim follows. You can turn it on or off for each kind of vehicle. In combat frames the arms and shoulder weapons also point where you aim, ahead of the body.
 - **Left-handed mode** for Rangers, Wing Divers and Air Raiders: hold and fire the gun with the left hand ([how to switch it on](#left-handed-mode)).
 - Hand models for all four classes, with fingers that follow the trigger, grip and stick.
 - Recoil animation and per-hand firing vibration.
@@ -29,7 +29,7 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
 - Fencers aim both weapons independently with the game's own heavy aim; hand weapons ride the controllers, shoulder weapons sit on your shoulders. Melee weapons follow the game's own swing while you attack.
 - **VR cockpits for every vehicle**, built per vehicle type into the machine's own hull: walkers (Nix, Depth Crawler,
   Barga, Proteus MK2, ...), tanks, combat vehicles, helicopters and trucks. The view stays open to the world, and your
-  armour, ammunition and radar are on the cabin's screens. In the Proteus two-seater you see the other rider, seated, as
+  armour, ammunition and radar are on the cabin's screens. Combat frames show the radio subtitles on a screen of their own and smooth the walking bob out of your view. In the Proteus two-seater you see the other rider, seated, as
   their own soldier.
 - **8-player online co-op** (EDF6MultiSlot). It only applies when you host:
   unless you switch it on and make an eight-player room, ordinary online play

@@ -3,6 +3,14 @@
 #include <cmath>
 
 namespace edf6vr {
+bool ReferenceSpaceJumped(const Vec3& pa,const Quat& a,const Vec3& pb,const Quat& b,float metres,float degrees) noexcept {
+    const float dx=pb.x-pa.x,dy=pb.y-pa.y,dz=pb.z-pa.z;
+    const float dot=std::fabs(a.x*b.x+a.y*b.y+a.z*b.z+a.w*b.w);
+    if(!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dz) || !std::isfinite(dot)) return false;
+    if(dx*dx+dy*dy+dz*dz>metres*metres) return true;
+    // The angle between two unit quaternions' turns is 2 acos(|dot|).
+    return dot<std::cos(degrees*0.5f*3.14159265f/180.0f);
+}
 namespace {
 bool Finite(const Vec3& v) noexcept {
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);

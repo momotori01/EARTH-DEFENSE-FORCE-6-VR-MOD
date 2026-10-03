@@ -15,6 +15,9 @@ std::atomic<void*> g_dualWeapons[2]{},g_dualCleanupWeapon{nullptr};
 unsigned g_dualHandledSerial=0;
 using DualIndex=int(__fastcall*)(void*,int);
 using DualTick=void(__fastcall*)(void*,void*);
+// nix_arm_aim.h: a Nix weapon's tick, its transforms turned toward the aim first.
+bool NixArmWeaponTick(void* weapon,void* context,DualTick original) noexcept;
+bool NixArmFire(void* weapon,unsigned index,void* alternate,void* counter,bool consume) noexcept;
 using DualPose=void(__fastcall*)(void*,void*);
 using DualZoom=void(__fastcall*)(void*);
 DualIndex g_dualIndex=nullptr;
@@ -463,6 +466,8 @@ void __fastcall HookDualFire(void* weapon,unsigned index,void* alternate,void* c
         // The left gun has no native aim: fired without a tracked pose it
         // leaves from where it hangs on the back, straight up. Hold the shot.
         if(g_dualActive.load() && weapon && weapon==ReadRangerDual().weapons[0]) { ++g_dualHeldBack; return; }
+        // A Nix's gun fires from the turned barrel (nix_arm_aim.h).
+        if(NixArmFire(weapon,index,alternate,counter,consume)) return;
         g_dualFire(weapon,index,alternate,counter,consume);return;
     }
     auto entries=DualAt<unsigned char*>(weapon,0x1D0);
@@ -509,6 +514,7 @@ void __fastcall HookDualWeaponTick(void* weapon,void* context) {
         if(table==g_image.base+kDualWeapons[i].table) {original=g_dualOriginals[i];break;}
     if(!original) return; // only checked vtable slots enter this hook
     if(FencerWeaponActive(weapon)) { FencerWeaponTick(weapon,context,original); return; }
+    if(NixArmWeaponTick(weapon,context,original)) return;
     // The hook is shared by weapon classes. NPCs, other players and the other
     // soldier classes take no snapshot lock, tracking read, or extra game call.
     if(weapon!=g_dualWeapons[0].load() && weapon!=g_dualWeapons[1].load()

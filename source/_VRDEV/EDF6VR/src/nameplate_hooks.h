@@ -82,6 +82,44 @@ void* __fastcall NameplateDraw3(void* s,void* a,void* b,void* c) { return Namepl
 
 // Each class is checked and hooked on its own, so one whose table does not
 // match leaves the others working; `installed` gets a bit per class hooked.
+// The radio subtitles (the user, 2026-10-03: the Nix's subtitle screen showed
+// the weapon gauges' ends -- "字幕の分離って、兵士のモデルでこないだやったやつの
+// 応用ではダメなの？"). Each line is a UiDebugMessage: the talk code (5DD580)
+// takes the line's text, skips "***no_subtitle***", wraps it in 「 」 and news a
+// UiDebugMessage (0x100 bytes, ctor 7D7C20) with it. Its draw is the class's own
+// override of xgs::ui::Object's draw slot (vtable 17F4298+0x10 -> 7D8940, the
+// base's is pure): it scales its layout from the screen size to 1920x1080 and
+// draws the rounded box and the text. Wrapped in a subtitle scope while a
+// cockpit with a subtitle screen is in use (MarkSubtitleUi), its draws go to a
+// picture of their own -- the same means as the chat bubbles' world scope.
+constexpr unsigned kSubtitleVtable=0x17F4298,kSubtitleDraw=0x7D8940;
+using SubtitleDraw=void*(__fastcall*)(void*,void*,void*,void*);
+SubtitleDraw g_subtitleOriginal=nullptr;
+std::atomic<unsigned long long> g_subtitleCalls{0},g_subtitleScoped{0};
+void* __fastcall SubtitleDrawHook(void* self,void* a,void* b,void* c) {
+    g_subtitleCalls.fetch_add(1,std::memory_order_relaxed);
+    if(!g_vrEnabled || !edf6vr::SubtitleUiActive()) return g_subtitleOriginal(self,a,b,c);
+    g_subtitleScoped.fetch_add(1,std::memory_order_relaxed);
+    edf6vr::UiCaptureSubtitleScope(true);
+    void* result=nullptr;
+    __try { result=g_subtitleOriginal(self,a,b,c); }
+    __finally { edf6vr::UiCaptureSubtitleScope(false); }
+    return result;
+}
+bool InstallSubtitleHook(bool& changed) noexcept {
+    changed=false;
+    if(!g_image.base) return false;
+    bool match=false;
+    __try {
+        void* table=g_image.base+kSubtitleVtable;
+        match=edf6vr::HasType(g_image,&table,".?AVUiDebugMessage@@")
+            && *reinterpret_cast<void**>(g_image.base+kSubtitleVtable+0x10)==g_image.base+kSubtitleDraw;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    if(!match) return false;
+    g_subtitleOriginal=reinterpret_cast<SubtitleDraw>(g_image.base+kSubtitleDraw);
+    return edf6vr::ReplacePointer(reinterpret_cast<void**>(g_image.base+kSubtitleVtable+0x10),g_image.base+kSubtitleDraw,
+                                  reinterpret_cast<void*>(&SubtitleDrawHook),changed);
+}
 bool InstallNameplateHooks(bool& changed,unsigned* installed=nullptr) noexcept {
     changed=false;
     if(installed) *installed=0;

@@ -183,6 +183,27 @@ float4 ps():SV_Target{return tint;}
         ctx->OMGetRenderTargets(1,&bound,nullptr);CHECK(bound==drawTarget);Release(bound);
         UiCaptureWorldScope(false);FinishUiCapture();CHECK(CapturedWorldUi()==nullptr);
         EnableWorldUi(true);
+        // Subtitle scope: left on the panel until a cockpit marks it; then its
+        // draws land in their own picture, not on the panel nor in the world's.
+        ctx->OMSetBlendState(premultiplied,factors,~0u);ctx->OMSetDepthStencilState(flat,0);
+        ctx->OMSetRenderTargets(1,&backView,nullptr);UiCaptureTargets(ctx,1,&backView,nullptr,true);
+        UiCaptureGate();CHECK(routed);
+        subtitleMarkedAt.store(0);
+        UiCaptureSubtitleScope(true);
+        ctx->OMGetRenderTargets(1,&bound,nullptr);CHECK(bound==drawTarget);Release(bound);
+        UiCaptureSubtitleScope(false);
+        MarkSubtitleUi();CHECK(SubtitleUiActive());
+        UiCaptureSubtitleScope(true);
+        ctx->OMGetRenderTargets(1,&bound,nullptr);CHECK(bound && bound==scopeTargets[1].target);Release(bound);
+        paint(0,0,1,1,0); // a subtitle line
+        UiCaptureSubtitleScope(false);
+        ctx->OMGetRenderTargets(1,&bound,nullptr);CHECK(bound==drawTarget);Release(bound);
+        FinishUiCapture();
+        CHECK(CapturedSubtitleUi()!=nullptr && CapturedWorldUi()==nullptr);
+        if(CapturedSubtitleUi()) { pixel(CapturedSubtitleUi(),rgba);CHECK(rgba[2]>.99f && rgba[3]>.99f && rgba[0]<.01f); }
+        if(CapturedUi()) { pixel(CapturedUi(),rgba);CHECK(rgba[2]<.01f); }
+        CHECK(ReadSubtitleUiStats().frames>0);
+        subtitleMarkedAt.store(0);CHECK(!SubtitleUiActive());
         ctx->OMSetRenderTargets(0,nullptr,nullptr);
         Release(backView);Release(offView);Release(back);Release(offscreen);
     }

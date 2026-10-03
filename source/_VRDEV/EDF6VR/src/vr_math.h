@@ -29,6 +29,14 @@ struct HeadBasis {
 // Returns false for a non-finite or non-unit quaternion.
 bool HeadBasisFromXr(const Quat&, HeadBasis&) noexcept;
 
+// The headset's own recenter (SteamVR's long press, the Quest's, ...) moves the
+// runtime's LOCAL space against STAGE, and nothing else does: both are fixed
+// otherwise. So a step between two samples of LOCAL located in STAGE, beyond
+// these, is one (openxr_session: WatchRuntimeRecenter). q and -q are the same
+// turn; non-finite input is not a step.
+bool ReferenceSpaceJumped(const Vec3& positionA,const Quat& a,const Vec3& positionB,const Quat& b,
+                          float metres=0.02f,float degrees=2.0f) noexcept;
+
 // a then b, as rotations: QuatRotate(QuatMultiply(a,b),v)==QuatRotate(a,QuatRotate(b,v)).
 Quat QuatMultiply(const Quat& a,const Quat& b) noexcept;
 // The one-handed weapon trim as a turn of the controller itself, in its own

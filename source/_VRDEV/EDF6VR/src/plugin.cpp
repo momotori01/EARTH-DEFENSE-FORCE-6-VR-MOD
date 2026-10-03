@@ -1,4 +1,4 @@
-#include "motion_trace.h"
+﻿#include "motion_trace.h"
 #include "render_pose.h"
 #include "native_world.h"
 #include "native_world_view.h"
@@ -662,6 +662,7 @@ constexpr const char* kHandAimNames[kHandAimClasses]={"nix","depth","barga","tan
 constexpr bool kHandAimDefault[kHandAimClasses]={true,false,false,true,true,true,true,true};
 bool g_vehicleHandAimOn[kHandAimClasses]={true,false,false,true,true,true,true,true};
 float g_vehicleHandAimLevel=12.f,g_vehicleHandAimDead=10.f,g_vehicleHandAimFull=25.f,g_vehicleHandAimBuzz=.03f;
+bool NixArmAimActive() noexcept;   // nix_arm_aim.h
 // The seat's class (HandAimClass, -1 none), published with the cabin's heading.
 std::atomic<int> g_vehicleAimClass{-1};
 std::atomic<float> g_vehicleAimYaw{0};
@@ -681,6 +682,8 @@ bool g_vehicleReference=false,g_vehiclePositionReference=false;
 // Level the view once the eye is inside a cabin. Off restores the native
 // camera's own pitch, which frames the machine from above and so looks down.
 bool g_vehicleLevelView=true;
+// The Nix-type cabins' walking bob smoothed out (SteadyCabin, before ApplyVehicleCamera).
+float g_vehicleBobSeconds=0.35f;   // [VR] VehicleBobSmoothSeconds
 bool g_cockpitRequested=true,g_cockpitHooksReady=false;
 edf6vr::CockpitRig g_cockpitRig{};
 edf6vr::Quat g_vehicleHeadReference{};
@@ -821,6 +824,18 @@ void NoteRecoilShot(DWORD64 weapon) noexcept {
     AcquireSRWLockExclusive(&g_recoilLock);
     g_recoilKick[hand].Shot(now,g_recoilDecaySeconds);
     ReleaseSRWLockExclusive(&g_recoilLock);
+}
+// The Fencer's recoil as the game applies it to the aim each tick (weapon+F00
+// x soldier+1AAC, 59B070), for the log only: the weapon is drawn along that
+// aim, so this is how far the drawn weapon is turned by it (FENCERKICK). The
+// drawn kick on top stays one level per shot, as for every class: tried in
+// proportion to this on 2026-10-03 and put back ("今まで通り...違和感無かった").
+std::atomic<unsigned long long> g_fencerKickTicks[2]{};
+std::atomic<float> g_fencerKickLast[2]{};
+void NoteFencerKick(unsigned hand,float radians) noexcept {
+    if(hand>1 || !(radians>0) || !std::isfinite(radians)) return;
+    g_fencerKickTicks[hand].fetch_add(1,std::memory_order_relaxed);
+    g_fencerKickLast[hand].store(radians,std::memory_order_relaxed);
 }
 // Tilts the hand frame the weapon and hand are placed in by the current kick.
 void ApplyRecoilToHand(int hand,float axes[3][3],float palm[3]) noexcept {
@@ -1419,7 +1434,9 @@ void RefreshPadUnlocked() {
     // A weak hum on the gun hand all the while it pushes (the user), renewed
     // before it runs out; nothing else buzzes that hand in a vehicle. Not while
     // the hand is at the temple, where the stick is the d-pad and aims nothing.
-    const bool humming=aiming&&!g_gestureOn&&g_vehicleHandAimBuzz>0&&(handAim[0]!=0||handAim[1]!=0);
+    // Not in a Nix with its arms on the aim: they show the aim themselves.
+    const bool humming=aiming&&!g_gestureOn&&g_vehicleHandAimBuzz>0&&(handAim[0]!=0||handAim[1]!=0)
+        &&!(aimClass==static_cast<int>(edf6vr::HandAimClass::Nix)&&NixArmAimActive());
     if(humming) {
         if(now-g_handAimBuzzAt>=50){g_handAimBuzzAt=now;edf6vr::g_openxr.Buzz(1,.1f,g_vehicleHandAimBuzz);}
     } else if(g_handAimBuzzAt&&now-g_handAimBuzzAt<100) {
@@ -1667,6 +1684,7 @@ std::uint32_t g_vrSoldierId=0;
 ULONGLONG g_vrSoldierSeen=0;
 ULONGLONG g_vrInputCalls=0, g_vrAimWrites=0, g_vrMoveWrites=0;
 bool g_recenterRequested=true;
+unsigned g_runtimeRecentersSeen=0;   // edf6vr::RuntimeRecenterCount, handled
 std::atomic<bool> g_vrStartRequested{false}, g_vrStopRequested{false};
 LARGE_INTEGER g_frequency{};
 double g_previousTime=0;
@@ -2319,15 +2337,12 @@ void Settings() noexcept {
 #include "ranger_dual.h"
 #include "fencer_dual.h"
 // Which eyepiece (scope.h) a weapon model has, told by a node name; -1 none.
-// Kept per weapon, as FencerBackModel does. Update thread.
-int ScopeLensFor(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
-    struct Memo { void* weapon=nullptr; void* model=nullptr; int index=-1; };
-    static Memo memo[8]{}; static unsigned next=0;
-    for(const auto& m:memo) if(m.weapon==weapon && m.model==model && weapon) return m.index;
-    int index=-1;
-    for(int i=0;i<edf6vr::ScopeLensCount() && index<0;++i) if(FencerModelHasNode(model,nodes,count,edf6vr::ScopeLensAt(i)->node)) index=i;
-    memo[next]={weapon,model,index}; next=(next+1)%8;
-    return index;
+// Asked of the model each time, not kept per weapon: a weapon and its model can
+// both be made again at a freed one's addresses (see FencerModelTrusted).
+// Update thread.
+int ScopeLensFor(void*,void* model,const void* nodes,unsigned count) noexcept {
+    for(int i=0;i<edf6vr::ScopeLensCount();++i) if(FencerModelHasNode(model,nodes,count,edf6vr::ScopeLensAt(i)->node)) return i;
+    return -1;
 }
 // The walk the held weapon's laser was last carried by (laser_sight.cpp: the
 // soldier's position at the laser's update less the hold command's root). The
@@ -2717,6 +2732,22 @@ void PollInput() noexcept {
     const auto now=GetTickCount64();
     const float dt=g_inputTime ? std::min(static_cast<float>(now-g_inputTime)*0.001f,0.05f) : 0;
     g_inputTime=now;
+    // The headset's own recenter (SteamVR's long press and the like) does what
+    // F12 does: view, height and the menu. Ahead of the focus check, since the
+    // headset's menu may be what holds the focus.
+    if(const unsigned recenters=edf6vr::RuntimeRecenterCount(); recenters!=g_runtimeRecentersSeen) {
+        g_runtimeRecentersSeen=recenters;
+        if(g_vrEnabled) {
+            g_recenterRequested=true;
+            edf6vr::g_openxr.RecenterBoard();
+            unsigned long long events=0,jumps=0,dropped=0; bool watching=false;
+            float stepCm=0,stepDeg=0,gapMs=0;
+            edf6vr::RuntimeRecenterSigns(events,jumps,watching);
+            edf6vr::RuntimeRecenterStep(stepCm,stepDeg,gapMs,dropped);
+            Log("VR recenter from the headset's own recenter (%u; events=%llu steps=%llu localWatched=%d; last step %.1fcm %.1fdeg after a %.0fms gap; steps not counted=%llu)",
+                recenters,events,jumps,watching?1:0,stepCm,stepDeg,gapMs,dropped);
+        }
+    }
     DWORD pid=0; GetWindowThreadProcessId(GetForegroundWindow(),&pid);
     if(pid!=GetCurrentProcessId()) {
         for(int i=0;i<kKeyCount;++i) g_keys[i]=(GetAsyncKeyState(VK_F6+i)&0x8000)!=0;
@@ -3499,6 +3530,7 @@ LONG CALLBACK OnWatchHit(EXCEPTION_POINTERS* info) noexcept;
 #include "nameplate_hooks.h"
 #include "muzzle_flash.h"
 #include "vehicle_recoil.h"
+#include "nix_arm_aim.h"
 
 bool ServeFireSite(CONTEXT* context) noexcept {
     bool ours=false;
@@ -4089,6 +4121,7 @@ void ReloadTunables() noexcept {
     if(!g_iniPath[0]) return;
     ReadHandSettings();
     g_vehicleLevelView=GetPrivateProfileIntW(L"VR",L"VehicleLevelView",1,g_iniPath)!=0;
+    g_vehicleBobSeconds=ReadFloat(g_iniPath,L"VehicleBobSmoothSeconds",0.35f,0.0f,2.0f,L"VR");
     ReadVehicleHandAim(g_iniPath);
     ReadCrewFigureTest(g_iniPath);
     ReadScopeSettings();
@@ -4116,6 +4149,11 @@ void ReloadTunables() noexcept {
     g_recoilKickOn=GetPrivateProfileIntW(L"VR",L"RecoilKick",g_recoilKickOn,g_iniPath)!=0;
     g_vehicleRecoilOn=GetPrivateProfileIntW(L"VR",L"VehicleRecoil",g_vehicleRecoilOn,g_iniPath)!=0;
     g_vehicleRecoilScale=ReadFloat(g_iniPath,L"VehicleRecoilScale",g_vehicleRecoilScale,0.0f,4.0f,L"VR");
+    g_nixArmAimOn=GetPrivateProfileIntW(L"VR",L"NixArmAim",g_nixArmAimOn,g_iniPath)!=0;
+    g_nixArmAimDegrees=ReadFloat(g_iniPath,L"NixArmAimDegrees",g_nixArmAimDegrees,0.0f,45.0f,L"VR");
+    g_nixArmAimSeconds=ReadFloat(g_iniPath,L"NixArmAimLagSeconds",g_nixArmAimSeconds,0.0f,1.0f,L"VR");
+    g_nixArmAimSpeed=ReadFloat(g_iniPath,L"NixArmAimSpeed",g_nixArmAimSpeed,5.0f,720.0f,L"VR");
+    g_nixArmAimAccel=ReadFloat(g_iniPath,L"NixArmAimAcceleration",g_nixArmAimAccel,5.0f,2000.0f,L"VR");
     g_fencerSplitAim=GetPrivateProfileIntW(L"VR",L"FencerSplitAim",1,g_iniPath)!=0;
     g_fencerHandWeapons=GetPrivateProfileIntW(L"VR",L"FencerHandWeapons",1,g_iniPath)!=0;
     g_fencerDirectAim=GetPrivateProfileIntW(L"VR",L"FencerDirectAim",1,g_iniPath)!=0;
@@ -4466,6 +4504,96 @@ void ReportCrewFigure(bool entered) noexcept {
         static_cast<int>(g_cockpitRig.kind),figures.builds,figures.failures,figures.draws,figures.note);
 }
 // Runs under the existing camera-update lock; no game transforms are written.
+// Walking bob out of the cabin (the user, 2026-10-03: "歩行の揺れが激しいので、
+// 歩行程度のヘッドボブを除去できますか？コクピットが機体に固定されてるから除去入れると
+// コクピットがめっちゃ揺れる感じになる？"). The cabin (PlaceVehicleCockpit: the
+// animated chest bone) is taken in the machine's own frame (vehicle+0x60, unit
+// rows); its point and its tilt follow with a lag of VehicleBobSmoothSeconds,
+// its heading at once -- so travel, turns and the body's own turn pass straight
+// through and the step's bounce and rock do not. The camera and the drawn
+// cockpit both hang on the result, so the cockpit stays still around you; only
+// the game's own arms and legs outside keep the bob. A fall or a knock-down is
+// no bob: the lag is held within 0.35 m and 12 degrees. 0 turns it off.
+struct CabinSteady { float point[3]{}; float up[3]{}; double at=0; bool have=false; void* vehicle=nullptr; };
+CabinSteady g_cabinSteady{};   // update thread only
+void SteadyCabin(void* vehicle,edf6vr::Matrix& cabin) noexcept {
+    auto& s=g_cabinSteady;
+    if(!(g_vehicleBobSeconds>0.001f) || !vehicle) { s.have=false; return; }
+    edf6vr::Matrix root{};
+    __try {
+        auto* v=static_cast<unsigned char*>(vehicle);
+        if(!edf6vr::Readable(v+0x60,sizeof(root))) { s.have=false; return; }
+        root=*reinterpret_cast<const edf6vr::Matrix*>(v+0x60);
+    } __except(EXCEPTION_EXECUTE_HANDLER) { s.have=false; return; }
+    for(int i=0;i<3;++i) {
+        float n=0; for(int k=0;k<3;++k) n+=root.m[i][k]*root.m[i][k];
+        n=std::sqrt(n); if(!(n>1e-4f) || !std::isfinite(n)) { s.have=false; return; }
+        for(int k=0;k<3;++k) root.m[i][k]/=n;
+    }
+    // The cabin in the machine's frame: local = (world - origin) R^T.
+    float point[3]{},rows[3][3]{},len[3]{};
+    for(int j=0;j<3;++j) for(int k=0;k<3;++k) point[j]+=(cabin.m[3][k]-root.m[3][k])*root.m[j][k];
+    for(int i=0;i<3;++i) {
+        for(int j=0;j<3;++j) { rows[i][j]=0; for(int k=0;k<3;++k) rows[i][j]+=cabin.m[i][k]*root.m[j][k]; }
+        len[i]=std::sqrt(rows[i][0]*rows[i][0]+rows[i][1]*rows[i][1]+rows[i][2]*rows[i][2]);
+        if(!(len[i]>1e-4f) || !std::isfinite(len[i])) { s.have=false; return; }
+    }
+    const float up[3]={rows[1][0]/len[1],rows[1][1]/len[1],rows[1][2]/len[1]};
+    const float ahead[3]={rows[2][0]/len[2],rows[2][1]/len[2],rows[2][2]/len[2]};
+    const double now=Now();
+    if(!s.have || s.vehicle!=vehicle || now-s.at>0.25 || now<s.at) {
+        for(int j=0;j<3;++j) { s.point[j]=point[j]; s.up[j]=up[j]; }
+        s.have=true; s.vehicle=vehicle; s.at=now;
+        return;
+    }
+    const float k=1.0f-std::exp(-static_cast<float>(now-s.at)/g_vehicleBobSeconds);
+    s.at=now;
+    float n=0;
+    for(int j=0;j<3;++j) { s.point[j]+=(point[j]-s.point[j])*k; s.up[j]+=(up[j]-s.up[j])*k; n+=s.up[j]*s.up[j]; }
+    n=std::sqrt(n);
+    if(n>1e-4f) for(float& c:s.up) c/=n; else for(int j=0;j<3;++j) s.up[j]=up[j];
+    float off[3]={s.point[0]-point[0],s.point[1]-point[1],s.point[2]-point[2]};
+    const float apart=std::sqrt(off[0]*off[0]+off[1]*off[1]+off[2]*off[2]);
+    if(apart>0.35f) for(int j=0;j<3;++j) s.point[j]=point[j]+off[j]*(0.35f/apart);
+    const float limit=std::cos(12.0f*0.01745329252f);
+    const float c=std::clamp(s.up[0]*up[0]+s.up[1]*up[1]+s.up[2]*up[2],-1.0f,1.0f);
+    if(c<limit) {
+        float side[3]={s.up[0]-c*up[0],s.up[1]-c*up[1],s.up[2]-c*up[2]};
+        const float sl=std::sqrt(side[0]*side[0]+side[1]*side[1]+side[2]*side[2]);
+        const float sn=std::sqrt(1.0f-limit*limit);
+        if(sl>1e-5f) for(int j=0;j<3;++j) s.up[j]=up[j]*limit+side[j]/sl*sn; else for(int j=0;j<3;++j) s.up[j]=up[j];
+    }
+    static ULONGLONG reportAt=0; static float pointMax=0,tiltMax=0;
+    pointMax=(std::max)(pointMax,(std::min)(apart,0.35f));
+    tiltMax=(std::max)(tiltMax,std::acos(std::clamp(s.up[0]*up[0]+s.up[1]*up[1]+s.up[2]*up[2],-1.0f,1.0f))*57.29578f);
+    if(GetTickCount64()-reportAt>5000) {
+        reportAt=GetTickCount64();
+        const auto subtitles=edf6vr::ReadSubtitleUiStats();
+        Log("VEHICLEBOB smoothing %.2f s: bob taken out of the cabin, at most %.1f cm and %.1f deg (last 5 s); head draws moved with it %llu; "
+            "SUBTITLES draws=%llu scoped=%llu scopes=%llu binds=%llu frames=%llu",
+            g_vehicleBobSeconds,pointMax*100.0f,tiltMax,g_cabinHeadDrawn.load(),g_subtitleCalls.load(),g_subtitleScoped.load(),
+            subtitles.scopes,subtitles.binds,subtitles.frames);
+        pointMax=tiltMax=0;
+    }
+    // Rebuilt: the heading as it is, the steady up made square to it, the side
+    // from both with the cabin's own handedness, each row its own length.
+    float u[3]={s.up[0],s.up[1],s.up[2]};
+    const float along=u[0]*ahead[0]+u[1]*ahead[1]+u[2]*ahead[2];
+    for(int j=0;j<3;++j) u[j]-=along*ahead[j];
+    n=std::sqrt(u[0]*u[0]+u[1]*u[1]+u[2]*u[2]);
+    if(n>1e-4f) for(float& v:u) v/=n; else for(int j=0;j<3;++j) u[j]=up[j];
+    float r[3]={u[1]*ahead[2]-u[2]*ahead[1],u[2]*ahead[0]-u[0]*ahead[2],u[0]*ahead[1]-u[1]*ahead[0]};
+    if(r[0]*rows[0][0]+r[1]*rows[0][1]+r[2]*rows[0][2]<0) for(float& v:r) v=-v;
+    const float* local[3]={r,u,ahead};
+    for(int i=0;i<3;++i) for(int kk=0;kk<3;++kk) {
+        float w=0; for(int j=0;j<3;++j) w+=local[i][j]*root.m[j][kk];
+        cabin.m[i][kk]=w*len[i];
+    }
+    for(int kk=0;kk<3;++kk) {
+        float w=root.m[3][kk]; for(int j=0;j<3;++j) w+=s.point[j]*root.m[j][kk];
+        cabin.m[3][kk]=w;
+    }
+}
 bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
                         edf6vr::Matrix nativeCamera,edf6vr::PlayerPose& rider,bool& detected) noexcept {
     detected=false;
@@ -4571,6 +4699,17 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
         anchored=true;
     }
     else edf6vr::ClearCockpitPose();
+    // The Nix-type cabins' walking bob (SteadyCabin), before anything hangs on the cabin.
+    // This, the arm aim (NixArmAimTarget below) and the subtitle screen go by the
+    // cabin alone, never by the hand aim's switch for the seat (VehicleHandAimNix,
+    // the settings program's Nix box): unticked, the body turns on the stick and
+    // the rest stays (the user, 2026-10-03).
+    if(cockpit&&edf6vr::HandAimClassOf(g_cockpitRig.kind)==edf6vr::HandAimClass::Nix) {
+        edf6vr::MarkSubtitleUi();   // the cabin's lower screen shows the radio subtitles alone
+        const auto raw=base;
+        SteadyCabin(seat.vehicle,base);
+        PublishCabinHeadFix(seat.vehicle,raw,base);   // the head follows the cabin (vehicle_recoil.h)
+    } else { g_cabinSteady.have=false; ClearCabinHeadFix(); }
     // The Brute's door guns (the user, 2026-09-27): the game's own stick (its
     // up and down no longer inverted, 2026-10-01), the base out of the door and
     // a pass over the bottom (AssistBruteGun). Only the gun changes: the
@@ -4600,6 +4739,11 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
         edf6vr::ReadPlayerPose(g_image,soldier,g_nodeLookup,g_eyeSettings,rider,true)&&rider.headFound;
     edf6vr::Matrix result{};float yaw=0;
     const auto eyeBase=cockpit?edf6vr::CockpitSeatedCamera(base):base;
+    // The Nix's arms follow the gun hand's ray (nix_arm_aim.h), put in the
+    // world as the view is.
+    NixArmAimTarget(cockpit&&edf6vr::HandAimClassOf(g_cockpitRig.kind)==edf6vr::HandAimClass::Nix,eyeBase,
+                    g_vehicleHeadReference,g_vehiclePosition,g_vehiclePositionReference);
+    NixArmAimReport();
     if(!edf6vr::ComposeVehicleCamera(eyeBase,g_vehicleHeadReference,sample.orientation,delta,result,yaw)) return false;
     auto state=State(camera);if(!state) return false;
     // The left stick drives by the machine's own forward (the hull, or a
@@ -5598,6 +5742,19 @@ void AfterUpdate(void* camera) noexcept {
                 Log("CHATBUBBLE size=[%s] about head/tail=%llu/%llu last centre=(%.1f,%.1f) corner=(%.1f,%.1f)->(%.1f,%.1f)",
                     g_chatBubbleSizeNote,chat.aboutHead,chat.aboutTail,chat.centre[0],chat.centre[1],
                     chat.corner[0],chat.corner[1],chat.moved[0],chat.moved[1]);
+                // The headset-recenter watch, when anything in it moved (steps
+                // not counted are the would-be misfires).
+                {
+                    static unsigned long long seen=~0ull;
+                    unsigned long long events=0,jumps=0,dropped=0; bool watching=false; float cm=0,deg=0,gap=0;
+                    edf6vr::RuntimeRecenterSigns(events,jumps,watching);
+                    edf6vr::RuntimeRecenterStep(cm,deg,gap,dropped);
+                    const unsigned long long sum=events+jumps*1000+dropped*1000000;
+                    if(sum!=seen) {
+                        seen=sum;
+                        Log("RECENTERWATCH events=%llu steps=%llu notCounted=%llu localWatched=%d",events,jumps,dropped,watching?1:0);
+                    }
+                }
                 unsigned long long clusterComposites=0,clusterFailures=0;
                 edf6vr::UiClusterCounts(clusterComposites,clusterFailures);
                 unsigned long long subtitleMoves=0,subtitleFailures=0;
@@ -5965,6 +6122,16 @@ void AfterUpdate(void* camera) noexcept {
                 }
                 if(const unsigned support=g_supportKicks.exchange(0,std::memory_order_relaxed))
                     Log("RECOILHAND the steadying hand kicked with the weapon in %u hand draws",support);
+                {
+                    // The Fencer's drawn kick from the game's recoil (NoteFencerKick).
+                    static unsigned long long seen[2]{};
+                    const unsigned long long ticks[2]={g_fencerKickTicks[0].load(),g_fencerKickTicks[1].load()};
+                    if(ticks[0]!=seen[0] || ticks[1]!=seen[1]) {
+                        Log("FENCERKICK game recoil ticks L/R=+%llu/+%llu last L/R=%.4f/%.4f rad (%.2f/%.2f deg)",ticks[0]-seen[0],ticks[1]-seen[1],
+                            g_fencerKickLast[0].load(),g_fencerKickLast[1].load(),g_fencerKickLast[0].load()*57.29578f,g_fencerKickLast[1].load()*57.29578f);
+                        seen[0]=ticks[0]; seen[1]=ticks[1];
+                    }
+                }
                 if(g_radioHeld.load(std::memory_order_relaxed))
                     Log("RADIOPROBE held=%llu chosen=%llu model=%p draws=%llu passes=0x%X fastPath=%llu carried=%llu captured=%llu replayed=%llu "
                         "heldDraws by pass=%llu/%llu/%llu/%llu knownSiteDraws by pass=%llu/%llu/%llu/%llu",
@@ -7055,7 +7222,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.1.0 cockpit loading, with EDF6MultiSlot 1.5.34. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 3.1.5 cockpit loading, with EDF6MultiSlot 1.5.34. Fencer weapons aim the barrel itself; no dead band on the aim.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7293,6 +7460,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         g_fpsReady,edf6vr::kModelDrawSlotRva,edf6vr::kModelDrawRva,edf6vr::kBodyModelOffset,edf6vr::kNodeLookupRva);
     if(g_fpsReady && !g_faulted && edf6vr::CheckAimProfile(g_image)) {
         g_dualReady=InstallRangerDual();
+        Log("NIXARM aim line hooks %s",InstallNixArmAimLine()?"installed":"REFUSED (slot differs)");
         Log("RANGERDUAL hooks ready=%d; left shoulder grip / independent fire / reload paused / zoom disabled",g_dualReady);
         g_inputOriginal=reinterpret_cast<InputRead>(g_image.base+edf6vr::kInputReadRva);
         changed=false;
@@ -7320,6 +7488,10 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             const bool nameplatesOK=InstallNameplateHooks(nameplateChanged,&nameplateHooked);
             Log("NAMEPLATE hooks ready=%d hooked=0x%X classes=0x%X changed=%d (MultiPlayStatus 8077B0, FollowerDurability 8040E0, RescueMessage 808410, Chat 802F10)",
                 nameplatesOK,nameplateHooked,g_worldNameplateMask,nameplateChanged);
+            bool subtitleChanged=false;
+            const bool subtitleOK=InstallSubtitleHook(subtitleChanged);
+            Log("SUBTITLE hook ready=%d changed=%d (UiDebugMessage draw 17F4298+0x10 -> 7D8940): the Nix's subtitle screen gets the radio lines alone",
+                subtitleOK,subtitleChanged);
         }
         const bool crosshairOK=edf6vr::InstallNativeCrosshair(g_image,changed);
         Log("CROSSHAIR hook ready=%d changed=%d state=EDF.dll+%X; the panel keeps its middle while the VR reticle is drawn",

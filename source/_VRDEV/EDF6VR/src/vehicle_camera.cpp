@@ -953,6 +953,67 @@ bool ComposeVehicleCamera(const Matrix& nativeCamera,const Quat& reference,
     localYaw=std::atan2(relative.m[2][0],relative.m[2][2]);
     return ValidCamera(output);
 }
+bool VehicleReferenceToWorld(const Matrix& nativeCamera,const Quat& reference,const Vec3& delta,
+    const Vec3& xrDirection,Vec3& point,Vec3& direction) noexcept {
+    Matrix ref{};
+    if(!ValidCamera(nativeCamera) || !Basis(reference,ref)) return false;
+    if(!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z)
+       || !std::isfinite(xrDirection.x) || !std::isfinite(xrDirection.y) || !std::isfinite(xrDirection.z)) return false;
+    // As ComposeVehicleCamera: game axes, then the reference's rows give the
+    // seat's own axes, and the seat camera's rows the world.
+    auto toWorld=[&](const Vec3& xr,float out[3]) {
+        const auto g=XrToGame(xr); const float d[3]={g.x,g.y,g.z};
+        float local[3]{};
+        for(int i=0;i<3;++i) for(int k=0;k<3;++k) local[i]+=d[k]*ref.m[i][k];
+        for(int j=0;j<3;++j) { out[j]=0; for(int k=0;k<3;++k) out[j]+=local[k]*nativeCamera.m[k][j]; }
+    };
+    float p[3]{},d[3]{};
+    toWorld(delta,p); toWorld(xrDirection,d);
+    const float n=std::sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
+    if(!(n>1e-4f) || !std::isfinite(n)) return false;
+    point={nativeCamera.m[3][0]+p[0],nativeCamera.m[3][1]+p[1],nativeCamera.m[3][2]+p[2]};
+    direction={d[0]/n,d[1]/n,d[2]/n};
+    return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
+}
+bool AimCone(const Vec3& from,const Vec3& toward,float maxRadians,Vec3& out,bool* clamped) noexcept {
+    if(clamped) *clamped=false;
+    const float lf=std::sqrt(from.x*from.x+from.y*from.y+from.z*from.z),lt=std::sqrt(toward.x*toward.x+toward.y*toward.y+toward.z*toward.z);
+    if(!(lf>1e-4f) || !(lt>1e-4f) || !std::isfinite(lf) || !std::isfinite(lt) || !std::isfinite(maxRadians) || maxRadians<0) return false;
+    const float f[3]={from.x/lf,from.y/lf,from.z/lf},t[3]={toward.x/lt,toward.y/lt,toward.z/lt};
+    // The frame of `from`: a side square to it and the world's up, and the up
+    // square to both (pointing straight up or down, any side will do).
+    float r[3]={f[2],0,-f[0]};
+    const float rl=std::sqrt(r[0]*r[0]+r[2]*r[2]);
+    if(rl<1e-3f) { r[0]=1; r[2]=0; } else { r[0]/=rl; r[2]/=rl; }
+    const float u[3]={f[1]*r[2]-f[2]*r[1],f[2]*r[0]-f[0]*r[2],f[0]*r[1]-f[1]*r[0]};
+    const float x=t[0]*r[0]+t[1]*r[1]+t[2]*r[2],y=t[0]*u[0]+t[1]*u[1]+t[2]*u[2],z=t[0]*f[0]+t[1]*f[1]+t[2]*f[2];
+    float side=std::atan2(x,z),up=std::atan2(y,std::sqrt(x*x+z*z));
+    bool cut=false;
+    if(std::fabs(side)>maxRadians) { side=std::copysign(maxRadians,side); cut=true; }
+    if(std::fabs(up)>maxRadians) { up=std::copysign(maxRadians,up); cut=true; }
+    const float cu=std::cos(up),su=std::sin(up),cs=std::cos(side),ss=std::sin(side);
+    out={f[0]*cu*cs+r[0]*cu*ss+u[0]*su,f[1]*cu*cs+r[1]*cu*ss+u[1]*su,f[2]*cu*cs+r[2]*cu*ss+u[2]*su};
+    if(clamped) *clamped=cut;
+    return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z);
+}
+bool TurnBetween(const Vec3& from,const Vec3& to,float M[3][3]) noexcept {
+    const float la=std::sqrt(from.x*from.x+from.y*from.y+from.z*from.z),lb=std::sqrt(to.x*to.x+to.y*to.y+to.z*to.z);
+    if(!(la>1e-4f) || !(lb>1e-4f) || !std::isfinite(la) || !std::isfinite(lb)) return false;
+    const float a[3]={from.x/la,from.y/la,from.z/la},b[3]={to.x/lb,to.y/lb,to.z/lb};
+    const float k[3]={a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};
+    const float s=std::sqrt(k[0]*k[0]+k[1]*k[1]+k[2]*k[2]),c=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+    float R[3][3]={{1,0,0},{0,1,0},{0,0,1}};
+    if(s>1e-7f) {
+        if(c<-0.999f) return false;
+        const float n[3]={k[0]/s,k[1]/s,k[2]/s};
+        // Rodrigues, for column vectors: R = c I + s [n]x + (1-c) n n^T.
+        const float K[3][3]={{0,-n[2],n[1]},{n[2],0,-n[0]},{-n[1],n[0],0}};
+        for(int i=0;i<3;++i) for(int j=0;j<3;++j) R[i][j]=(i==j?c:0)+s*K[i][j]+(1-c)*n[i]*n[j];
+    } else if(c<0) return false;
+    // Row vectors turn by the transpose: (v M)_j = sum_i v_i R[j][i].
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j) M[i][j]=R[j][i];
+    return true;
+}
 void RebaseVehicleStick(float yaw,float& x,float& y) noexcept {
     if(!std::isfinite(yaw) || !std::isfinite(x) || !std::isfinite(y)) { x=y=0;return; }
     // XInput +X is right, while EDF positive yaw turns left.

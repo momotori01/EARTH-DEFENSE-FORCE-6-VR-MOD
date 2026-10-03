@@ -438,6 +438,62 @@ static void TestScope() {
 }
 
 int main() {
+    {
+        // The Nix's arm aim: a controller's ray into the world exactly as the
+        // view is put there (the head's own forward lands on the view's).
+        Matrix seat{};
+        const float yawSeat=0.7f;
+        seat.m[0][0]=std::cos(yawSeat); seat.m[0][2]=-std::sin(yawSeat);
+        seat.m[1][1]=1;
+        seat.m[2][0]=std::sin(yawSeat); seat.m[2][2]=std::cos(yawSeat);
+        seat.m[3][0]=10; seat.m[3][1]=7; seat.m[3][2]=-3; seat.m[3][3]=1;
+        const Quat reference=FromAxisAngle(0,1,0,0.4f);
+        const Quat head=FromAxisAngle(0.3f,0.9f,0.2f,0.8f);
+        const float hl=std::sqrt(head.x*head.x+head.y*head.y+head.z*head.z+head.w*head.w);
+        const Quat q{head.x/hl,head.y/hl,head.z/hl,head.w/hl};
+        Matrix view{}; float localYaw=0;
+        CHECK(ComposeVehicleCamera(seat,reference,q,Vec3{0.1f,-0.2f,0.3f},view,localYaw));
+        Vec3 point{},direction{};
+        CHECK(VehicleReferenceToWorld(seat,reference,Vec3{0.1f,-0.2f,0.3f},QuatRotate(q,Vec3{0,0,-1}),point,direction));
+        CHECK(std::fabs(direction.x-view.m[2][0])<1e-4f && std::fabs(direction.y-view.m[2][1])<1e-4f && std::fabs(direction.z-view.m[2][2])<1e-4f);
+        CHECK(std::fabs(point.x-view.m[3][0])<1e-4f && std::fabs(point.y-view.m[3][1])<1e-4f && std::fabs(point.z-view.m[3][2])<1e-4f);
+        // The cone: 45 degrees to the side cut to 20, 30 up cut to 20, 5 left alone.
+        const float d=3.14159265f/180.0f;
+        Vec3 out{}; bool cut=false;
+        CHECK(AimCone(Vec3{0,0,1},Vec3{1,0,1},20*d,out,&cut) && cut);
+        CHECK(std::fabs(std::acos(out.z)-20*d)<1e-3f && std::fabs(out.y)<1e-5f && out.x>0);
+        CHECK(AimCone(Vec3{0,0,1},Vec3{0,std::sin(30*d),std::cos(30*d)},20*d,out,&cut) && cut && std::fabs(out.y-std::sin(20*d))<1e-4f);
+        CHECK(AimCone(Vec3{0,0,1},Vec3{std::sin(5*d),0,std::cos(5*d)},20*d,out,&cut) && !cut
+              && std::fabs(out.x-std::sin(5*d))<1e-4f && std::fabs(out.z-std::cos(5*d))<1e-4f);
+        // Behind: still only 20 degrees round.
+        CHECK(AimCone(Vec3{0,0,1},Vec3{0.1f,0,-1},20*d,out,&cut) && cut && std::fabs(std::acos(out.z)-20*d)<1e-3f);
+        // The turn takes the one direction onto the other and is a rotation.
+        float M[3][3]{};
+        const Vec3 a{0.2f,-0.1f,1.0f},b{0.5f,0.2f,0.8f};
+        CHECK(TurnBetween(a,b,M));
+        const float la=std::sqrt(a.x*a.x+a.y*a.y+a.z*a.z),lb=std::sqrt(b.x*b.x+b.y*b.y+b.z*b.z);
+        float turned[3]{};
+        for(int j=0;j<3;++j) turned[j]=(a.x*M[0][j]+a.y*M[1][j]+a.z*M[2][j])/la;
+        CHECK(std::fabs(turned[0]-b.x/lb)<1e-4f && std::fabs(turned[1]-b.y/lb)<1e-4f && std::fabs(turned[2]-b.z/lb)<1e-4f);
+        const float det=M[0][0]*(M[1][1]*M[2][2]-M[1][2]*M[2][1])-M[0][1]*(M[1][0]*M[2][2]-M[1][2]*M[2][0])+M[0][2]*(M[1][0]*M[2][1]-M[1][1]*M[2][0]);
+        CHECK(std::fabs(det-1)<1e-4f);
+        CHECK(TurnBetween(a,a,M) && M[0][0]==1 && M[1][1]==1 && M[2][2]==1 && M[0][1]==0);
+        CHECK(!TurnBetween(Vec3{0,0,1},Vec3{0,0,-1},M));
+    }
+    {
+        // The headset's own recenter seen as LOCAL stepping against STAGE.
+        const Vec3 p{1,0,2};
+        const Quat q=FromAxisAngle(0,1,0,0.5f);
+        CHECK(!ReferenceSpaceJumped(p,q,p,q));
+        CHECK(!ReferenceSpaceJumped(p,q,Vec3{1.01f,0,2},q));            // 1 cm
+        CHECK(ReferenceSpaceJumped(p,q,Vec3{1.05f,0,2},q));             // 5 cm
+        CHECK(!ReferenceSpaceJumped(p,q,p,FromAxisAngle(0,1,0,0.5f+0.017f)));   // 1 degree
+        CHECK(ReferenceSpaceJumped(p,q,p,FromAxisAngle(0,1,0,0.5f+0.06f)));     // 3.4 degrees
+        CHECK(ReferenceSpaceJumped(p,q,p,FromAxisAngle(0,1,0,0.5f+3.14159f)));  // turned round
+        const Quat minus{-q.x,-q.y,-q.z,-q.w};
+        CHECK(!ReferenceSpaceJumped(p,q,p,minus));                      // the same turn
+        CHECK(!ReferenceSpaceJumped(p,q,Vec3{std::numeric_limits<float>::quiet_NaN(),0,2},q));
+    }
     TestTrimIsRigid();
     TestLateralSupportKeepsPitch();
     // Same soldier shot at different recenter headings has the same tracking

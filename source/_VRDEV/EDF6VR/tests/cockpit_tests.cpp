@@ -724,12 +724,14 @@ void GpuTest(const std::filesystem::path& folder) {
         CHECK(shown[ammo]>225&&shown[ammo+1]<16&&shown[ammo+2]>225);
         if(!folder.empty())Bitmap(folder/(eye?L"cockpit_routing_right.bmp":L"cockpit_routing_left.bmp"),shown,width,height);
     }
-    // Long health bars, the first/last of four weapons and a lower-panel
-    // message must all survive their crops. Test actual rasterized markers
-    // against premultiplied blending, including a half-alpha message glyph.
+    // Long health bars, the first/last of four weapons and a subtitle line on
+    // the lower panel (source 3 shows only the subtitle box, 440..1460 x
+    // 700..905 of 1920x1080) must all survive their crops. Test actual
+    // rasterized markers against premultiplied blending, including a
+    // half-alpha subtitle glyph.
     struct Marker {unsigned source;float u,v;unsigned rgba;};
     const Marker marks[]={{1,.46f,.13f,0xff0000ff},{2,.20f,.39f,0xffff00ff},
-        {2,.20f,.92f,0xff00ffff},{0,.875f,.17f,0xff00ff00},{3,.62f,.56f,0x80808080}};
+        {2,.20f,.92f,0xff00ffff},{0,.875f,.17f,0xff00ff00},{3,.60f,.70f,0x80808080}};
     std::fill(hudPixels.begin(),hudPixels.end(),0u);
     for(const auto& m:marks)for(unsigned y=0;y<90;++y)for(unsigned x=0;x<160;++x)
         if(std::fabs((x+.5f)/160-m.u)<.03f&&std::fabs((y+.5f)/90-m.v)<.035f)hudPixels[y*160+x]=m.rgba;

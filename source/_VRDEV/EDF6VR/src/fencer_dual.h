@@ -778,6 +778,41 @@ int FencerNodeIndex(void* model,const void* nodes,unsigned count,const wchar_t* 
 bool FencerModelHasNode(void* model,const void* nodes,unsigned count,const wchar_t* key) noexcept {
     return FencerNodeIndex(model,nodes,count,key)>=0;
 }
+// What a weapon is, as told by its model, is asked of the model every time, not
+// kept per weapon pointer for good. A weapon freed at the end of a mission and
+// another made later at the same address inherited the old one's answer: on
+// hardware 2026-10-02 the right hand's spear of one mission (weapon EFB9A750,
+// a 5-node model) and the right hand's Power Blade of a later one got the same
+// address, and the blade was taken for a spear -- laid like one, never swung,
+// its sheath not split off, so the game's sheath animation played around the
+// hand. A node lookup is the game's own registry find, cheap per draw.
+//
+// A lookup is only trusted when the model's node table is the one given and it
+// knows "body" or "polymesh" (every weapon but the two pillows has one); for a
+// frame where it cannot be asked, the last trusted answer for that weapon is
+// used (FencerAnswers), and that is refreshed on every trusted ask.
+bool FencerModelTrusted(void* model,const void* nodes,unsigned count) noexcept {
+    return FencerModelHasNode(model,nodes,count,L"body") || FencerModelHasNode(model,nodes,count,L"polymesh");
+}
+struct FencerAnswer { std::atomic<const void*> weapon{nullptr}; std::atomic<int> value{-1}; };
+struct FencerAnswers {
+    FencerAnswer slot[8]{};
+    std::atomic<unsigned> next{0};
+    bool Find(const void* weapon,int& value) const noexcept {
+        for(const auto& s:slot)
+            if(weapon && s.weapon.load(std::memory_order_acquire)==weapon) { value=s.value.load(std::memory_order_relaxed); return true; }
+        return false;
+    }
+    void Put(const void* weapon,int value) noexcept {
+        if(!weapon) return;
+        for(auto& s:slot)
+            if(s.weapon.load(std::memory_order_acquire)==weapon) { s.value.store(value,std::memory_order_relaxed); return; }
+        auto& s=slot[next.fetch_add(1,std::memory_order_relaxed)%8];
+        s.weapon.store(nullptr,std::memory_order_release);
+        s.value.store(value,std::memory_order_relaxed);
+        s.weapon.store(weapon,std::memory_order_release);
+    }
+};
 std::atomic<unsigned> g_fencerSpearsSeen{0};
 // Back-mounted, told by the model: every h_attach_* model and the shoulder
 // cannon (h_cannon_shoulder01) -- the ones sgott data/6/weapon attaches to
@@ -787,43 +822,35 @@ std::atomic<unsigned> g_fencerSpearsSeen{0};
 // the lookup cannot be trusted: it must first find "body" or "polymesh", one of
 // which every weapon but the two pillows has, and those are hand by class.
 std::atomic<unsigned> g_fencerMountByModel[2]{};
-int FencerBackMounted(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
-    struct Memo { void* weapon=nullptr; int mounted=-1; };
-    static Memo memo[8]{}; static unsigned next=0;
-    for(const auto& m:memo) if(m.weapon==weapon && weapon) return m.mounted;
-    if(!FencerModelHasNode(model,nodes,count,L"body") && !FencerModelHasNode(model,nodes,count,L"polymesh")) return -1;
-    const int mounted=FencerModelHasNode(model,nodes,count,L"joint") || FencerModelHasNode(model,nodes,count,L"hatch")
+int FencerBackMounted(void*,void* model,const void* nodes,unsigned count) noexcept {
+    if(!FencerModelTrusted(model,nodes,count)) return -1;
+    return FencerModelHasNode(model,nodes,count,L"joint") || FencerModelHasNode(model,nodes,count,L"hatch")
         || FencerModelHasNode(model,nodes,count,L"hatch_c_0")?1:0;
-    memo[next]={weapon,mounted}; next=(next+1)%8;
-    return mounted;
 }
 // Which back-mounted model (kFencerBackModels) this is, by its root node's
-// name; -1 when none answers. Kept per weapon once known.
-int FencerBackModel(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
-    struct Memo { void* weapon=nullptr; int index=-1; };
-    static Memo memo[8]{}; static unsigned next=0;
-    for(const auto& m:memo) if(m.weapon==weapon && weapon) return m.index;
-    int index=-1;
-    for(int i=0;i<kFencerBackModelCount && index<0;++i) if(FencerModelHasNode(model,nodes,count,kFencerBackModels[i])) index=i;
-    if(index>=0) { memo[next]={weapon,index}; next=(next+1)%8; }
-    return index;
+// name; -1 when none answers.
+int FencerBackModel(void*,void* model,const void* nodes,unsigned count) noexcept {
+    for(int i=0;i<kFencerBackModelCount;++i) if(FencerModelHasNode(model,nodes,count,kFencerBackModels[i])) return i;
+    return -1;
 }
 // A Fencer blade's sheath: the node "attach", which the game ties to the
 // soldier's backWeapon bone (sgott HWEAPON027 ModelConstraint: backWeapon ->
 // attach) while the hilt rides the hand. Carried with the rest it swung with the
 // sword (the user, 2026-10-02), so the draw leaves it where the game put it.
 // Blades are the models with both "attach" and "slide" (h_impact_blade03,
-// h_impact_618_blade04); h_cannon_titaniainferno01 has "attach" alone. Kept per
-// weapon; -1 when the weapon is not a blade.
+// h_impact_618_blade04); h_cannon_titaniainferno01 has "attach" alone. -1 when
+// the weapon is not a blade (asked each time, see FencerModelTrusted).
 std::atomic<unsigned long long> g_fencerSheathsKept{0};
+FencerAnswers g_fencerSheathAnswers;
 int FencerBladeSheath(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
-    struct Memo { void* weapon=nullptr; int index=-1; };
-    static Memo memo[8]{}; static unsigned next=0;
-    for(const auto& m:memo) if(m.weapon==weapon && weapon) return m.index;
-    int index=-1;
-    if(FencerModelHasNode(model,nodes,count,L"slide")) index=FencerNodeIndex(model,nodes,count,L"attach");
-    memo[next]={weapon,index}; next=(next+1)%8;
-    if(index>0) Log("FENCERBLADE sheath node %d stays on backWeapon (weapon %p)",index,weapon);
+    int was=-1;
+    const bool known=g_fencerSheathAnswers.Find(weapon,was);
+    if(!FencerModelTrusted(model,nodes,count)) return known?was:-1;
+    const int index=FencerModelHasNode(model,nodes,count,L"slide")?FencerNodeIndex(model,nodes,count,L"attach"):-1;
+    if(!known || was!=index) {
+        g_fencerSheathAnswers.Put(weapon,index);
+        if(index>0) Log("FENCERBLADE sheath node %d stays on backWeapon (weapon %p)",index,weapon);
+    }
     return index;
 }
 // Where the sheath is drawn: on the player's shoulder, the way a back-mounted
@@ -898,18 +925,12 @@ void FencerPlaceSheath(const WeaponHoldCommand& command,edf6vr::Matrix& m) noexc
 //
 // The joint's subtree runs from the joint to the node before the last: the last
 // node is the mesh, a child of the root (h_attach_* and h_cannon_shoulder01
-// MDBs, 2026-09-26). Kept per weapon once found.
+// MDBs, 2026-09-26).
 struct FencerJoint { int index=-1; unsigned end=0; };
-FencerJoint FencerBackJoint(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
-    struct Memo { void* weapon=nullptr; FencerJoint joint{}; };
-    static Memo memo[8]{}; static unsigned next=0;
-    for(const auto& m:memo) if(m.weapon==weapon && weapon) return m.joint;
+FencerJoint FencerBackJoint(void*,void* model,const void* nodes,unsigned count) noexcept {
     FencerJoint joint{};
     const int index=FencerNodeIndex(model,nodes,count,L"joint");
-    if(index>=1 && count>=3 && static_cast<unsigned>(index)<=count-2) {
-        joint.index=index; joint.end=count-2;
-        memo[next]={weapon,joint}; next=(next+1)%8;
-    }
+    if(index>=1 && count>=3 && static_cast<unsigned>(index)<=count-2) { joint.index=index; joint.end=count-2; }
     return joint;
 }
 // The joint's rows wanted in the root's frame. The root keeps kFencerShoulderRest
@@ -1004,27 +1025,24 @@ bool FencerStraightenJoint(const WeaponHoldCommand& command,const edf6vr::Matrix
     g_fencerJointDraws.fetch_add(1,std::memory_order_relaxed);
     return true;
 }
-struct FencerSpearMemo { std::atomic<const void*> weapon{nullptr}; std::atomic<bool> spear{false}; };
-FencerSpearMemo g_fencerSpearMemo[4]{};
-unsigned g_fencerSpearNext=0;
+FencerAnswers g_fencerSpearAnswers;
 bool FencerIsSpear(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
-    for(const auto& m:g_fencerSpearMemo)
-        if(weapon && m.weapon.load(std::memory_order_acquire)==weapon) return m.spear.load(std::memory_order_relaxed);
+    int was=0;
+    const bool known=g_fencerSpearAnswers.Find(weapon,was);
+    if(!FencerModelTrusted(model,nodes,count)) return known && was>0;
     const bool spear=FencerModelHasNode(model,nodes,count,L"pile_attack") || FencerModelHasNode(model,nodes,count,L"pile_top");
-    auto& slot=g_fencerSpearMemo[g_fencerSpearNext]; g_fencerSpearNext=(g_fencerSpearNext+1)%4;
-    slot.weapon.store(nullptr,std::memory_order_release);
-    slot.spear.store(spear,std::memory_order_relaxed);
-    slot.weapon.store(weapon,std::memory_order_release);
-    if(spear) g_fencerSpearsSeen.fetch_add(1,std::memory_order_relaxed);
+    if(!known || (was>0)!=spear) {
+        g_fencerSpearAnswers.Put(weapon,spear?1:0);
+        if(spear) g_fencerSpearsSeen.fetch_add(1,std::memory_order_relaxed);
+    }
     return spear;
 }
-// The answer FencerIsSpear gave for a weapon that has been drawn; false for one
-// it has not seen. For the shot hook, which has no model or node table to hand
-// and runs on the game's thread while the draw fills the memo.
+// The answer FencerIsSpear last gave for a weapon; false for one it has not
+// seen. For the shot hook, which has no model or node table to hand and runs on
+// the game's thread while the update refreshes the answer.
 bool FencerKnownSpear(const void* weapon) noexcept {
-    for(const auto& m:g_fencerSpearMemo)
-        if(weapon && m.weapon.load(std::memory_order_acquire)==weapon) return m.spear.load(std::memory_order_relaxed);
-    return false;
+    int was=0;
+    return g_fencerSpearAnswers.Find(weapon,was) && was>0;
 }
 // --- Melee swings: the game's own swing, only while it is swung -------------
 //
@@ -2186,6 +2204,17 @@ void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept {
     __finally {
         g_fencerSwapLive=false;
         if(poseValid) FencerCarryAdopt(weapon,hand);
+        // The game's recoil this tick, for the log (NoteFencerKick), either
+        // hand, before the left's is moved onto the left aim below.
+        __try {
+            if(soldier && edf6vr::Readable(bytes+0xEE0,0x30,true) && (*reinterpret_cast<unsigned*>(bytes+0xEE0)&0x20u)
+               && edf6vr::Readable(soldier+0x1AAC,4)) {
+                const float* k=reinterpret_cast<const float*>(bytes+0xF00);
+                const float scale=*reinterpret_cast<const float*>(soldier+0x1AAC);
+                const float radians=std::sqrt(k[0]*k[0]+k[1]*k[1]+k[2]*k[2])*std::fabs(scale);
+                if(std::isfinite(radians) && radians>1e-5f) NoteFencerKick(hand,radians);
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
         if(swapped) {
             __try {
                 FencerShadow after{};

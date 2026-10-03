@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.1.0'
+VERSION = '3.1.5'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.34.zip'
@@ -88,8 +88,15 @@ MULTISLOT_DLL_SHA = '66920D66AA0A52D2E97A91D34B27314408F721B759B826F9ED23A2B9070
 # the shoulder; the compact HUD steps aside for the chat window. Each checked
 # on hardware 2026-10-02. With EDF6MultiSlot 1.5.34 (its logging fixed; ZIP
 # and DLL hashes checked here on 2026-10-02).
-VERIFIED_VR_SHA = 'DDD156490884C23762E49EB7370C38D0EEF2712ADFCED78D6452A6BDD632F3B9'
-VERIFIED_SETTINGS_SHA = 'F292E824DE631250810265A559E1679732BB9F0ACF04F0A3DC3501B841D5084C'
+# 3.1.5 (the user: "v005"): combat frames -- the walking bob smoothed out of the
+# view, cockpit and head with it; the arms and shoulder weapons aim where the
+# right controller points, set per machine on boarding (Nix and Eiren); the
+# lower screen shows the radio subtitles alone (their own capture). Fixes: the
+# headset's own recenter resets like F12; the Power Blade's swing no longer
+# lands on the sheath. Each checked on hardware 2026-10-02/03. Same
+# EDF6MultiSlot 1.5.34.
+VERIFIED_VR_SHA = '9F771DEFC2CC2D10AE9E4FEA5D25F3CAE697057A75D9725CEE7EDCEC887CBAB0'
+VERIFIED_SETTINGS_SHA = '12390DD1AA029FC89EBBFB85E8B4D241B812A8EBCFF02BA53135698F9E40A444'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

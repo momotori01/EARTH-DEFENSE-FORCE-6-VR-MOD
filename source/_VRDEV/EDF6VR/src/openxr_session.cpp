@@ -165,6 +165,26 @@ XrInstance g_instance=XR_NULL_HANDLE;
 XrSession g_session=XR_NULL_HANDLE;
 XrSpace g_viewSpace=XR_NULL_HANDLE;
 XrSpace g_refSpace=XR_NULL_HANDLE;
+// The headset's own recenter (SteamVR's long press, the Quest's, ...) moves the
+// runtime's LOCAL space, not STAGE, which everything here is located in -- so on
+// its own it changed nothing. Two signs of one are watched: the runtime's
+// reference-space-change event, and LOCAL stepping against STAGE (only made
+// when STAGE is the reference). Either counts one recenter, 0.2 s after the
+// change takes effect and at most one a second; the game side then does what
+// F12 does (RuntimeRecenterCount).
+//
+// A step counts only between frames that follow each other (no stall between
+// the two samples) and once the new place has held for 0.3 s: on hardware
+// 2026-10-02 one step was seen at a mission's start with no recenter pressed.
+// The size of the last counted step and the gap before it go to the log.
+XrSpace g_localSpace=XR_NULL_HANDLE;
+std::atomic<unsigned> g_runtimeRecenters{0};
+std::atomic<unsigned long long> g_recenterEvents{0},g_recenterJumps{0},g_recenterStepsDropped{0};
+std::atomic<float> g_lastStepCm{0},g_lastStepDeg{0},g_lastStepGapMs{0};
+XrTime g_recenterDue=0,g_recenterFired=0;   // XR thread only
+XrPosef g_localInStage{},g_stepFrom{},g_stepTo{};
+XrTime g_localSampleAt=0,g_stepAt=0,g_stepGap=0;
+bool g_localInStageValid=false,g_stepPending=false;
 XrSystemId g_system=XR_NULL_SYSTEM_ID;
 XrVersion g_runtimeApiVersion=0;
 ID3D11Device* g_device=nullptr;          // ours in TrackingOnly, the game's in HeadsetDisplay
@@ -1279,6 +1299,13 @@ bool CreateSession() noexcept {
     result=g_api.createSpace(g_session,&spaceInfo,&g_refSpace);
     if(XR_FAILED(result)) { SetStatusf("reference space creation failed (%d)",static_cast<int>(result)); return false; }
     g_stage.store(stage);
+    g_localInStageValid=false; g_stepPending=false; g_recenterDue=0; g_recenterFired=0;
+    if(stage) {
+        XrReferenceSpaceCreateInfo localInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+        localInfo.poseInReferenceSpace.orientation.w=1;
+        localInfo.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;
+        if(XR_FAILED(g_api.createSpace(g_session,&localInfo,&g_localSpace))) g_localSpace=XR_NULL_HANDLE;   // the event still works
+    }
     spaceInfo.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;
     result=g_api.createSpace(g_session,&spaceInfo,&g_viewSpace);
     if(XR_FAILED(result)) { SetStatusf("view space creation failed (%d)",static_cast<int>(result)); return false; }
@@ -1670,6 +1697,61 @@ void FinishPreparedFrameEmpty() noexcept {
     if(XR_FAILED(result)) g_endFrameFailures.fetch_add(1,std::memory_order_relaxed);
 }
 
+constexpr XrTime kRecenterSettle=200000000;   // 0.2 s, in XrTime's nanoseconds
+void ScheduleRuntimeRecenter(XrTime at) noexcept {
+    const XrTime due=at+kRecenterSettle;
+    if(!g_recenterDue || due<g_recenterDue) g_recenterDue=due;
+}
+bool PosesJumped(const XrPosef& a,const XrPosef& b) noexcept {
+    return ReferenceSpaceJumped(Vec3{a.position.x,a.position.y,a.position.z},
+        Quat{a.orientation.x,a.orientation.y,a.orientation.z,a.orientation.w},
+        Vec3{b.position.x,b.position.y,b.position.z},
+        Quat{b.orientation.x,b.orientation.y,b.orientation.z,b.orientation.w});
+}
+constexpr XrTime kStepGapLimit=250000000;     // 0.25 s between two samples at most
+constexpr XrTime kStepHold=300000000;         // and the new place held 0.3 s
+// After the head is located each frame (XR thread).
+void WatchRuntimeRecenter(XrTime when) noexcept {
+    if(g_localSpace && g_refSpace) {
+        XrSpaceLocation local{XR_TYPE_SPACE_LOCATION};
+        constexpr XrSpaceLocationFlags valid=XR_SPACE_LOCATION_POSITION_VALID_BIT|XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+        if(XR_SUCCEEDED(g_api.locateSpace(g_localSpace,g_refSpace,when,&local)) && (local.locationFlags&valid)==valid) {
+            const auto& pose=local.pose;
+            const XrTime gap=g_localInStageValid?when-g_localSampleAt:0;
+            if(g_stepPending) {
+                if(PosesJumped(g_stepTo,pose)) {
+                    // Moved on again before it held: not one recenter.
+                    g_stepPending=false;
+                    g_recenterStepsDropped.fetch_add(1,std::memory_order_relaxed);
+                } else if(when-g_stepAt>=kStepHold) {
+                    g_stepPending=false;
+                    const float dx=g_stepTo.position.x-g_stepFrom.position.x,dy=g_stepTo.position.y-g_stepFrom.position.y,
+                                dz=g_stepTo.position.z-g_stepFrom.position.z;
+                    const float dot=std::fabs(g_stepTo.orientation.x*g_stepFrom.orientation.x+g_stepTo.orientation.y*g_stepFrom.orientation.y
+                                              +g_stepTo.orientation.z*g_stepFrom.orientation.z+g_stepTo.orientation.w*g_stepFrom.orientation.w);
+                    g_lastStepCm.store(std::sqrt(dx*dx+dy*dy+dz*dz)*100.0f,std::memory_order_relaxed);
+                    g_lastStepDeg.store(2.0f*std::acos(std::min(dot,1.0f))*57.29578f,std::memory_order_relaxed);
+                    g_lastStepGapMs.store(static_cast<float>(g_stepGap)/1e6f,std::memory_order_relaxed);
+                    g_recenterJumps.fetch_add(1,std::memory_order_relaxed);
+                    ScheduleRuntimeRecenter(when);
+                }
+            } else if(g_localInStageValid && PosesJumped(g_localInStage,pose)) {
+                if(gap>0 && gap<=kStepGapLimit) {
+                    g_stepPending=true; g_stepAt=when; g_stepGap=gap; g_stepFrom=g_localInStage; g_stepTo=pose;
+                } else g_recenterStepsDropped.fetch_add(1,std::memory_order_relaxed);   // across a stall
+            }
+            g_localInStage=pose; g_localInStageValid=true; g_localSampleAt=when;
+        }
+    }
+    if(g_recenterDue && when>=g_recenterDue) {
+        g_recenterDue=0;
+        if(!g_recenterFired || when-g_recenterFired>1000000000) {
+            g_recenterFired=when;
+            g_runtimeRecenters.fetch_add(1,std::memory_order_release);
+        }
+    }
+}
+
 void PollSessionEvents(bool& sessionRunning) noexcept {
     for(;;) {
         XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
@@ -1698,6 +1780,10 @@ void PollSessionEvents(bool& sessionRunning) noexcept {
                 sessionRunning=false;
                 g_stop.store(true);
             }
+        } else if(event.type==XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+            const auto* change=reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(&event);
+            g_recenterEvents.fetch_add(1,std::memory_order_relaxed);
+            ScheduleRuntimeRecenter(change->changeTime);
         } else if(event.type==XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
             ReportInputProfiles();
         } else if(event.type==XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
@@ -1740,9 +1826,12 @@ void Teardown() noexcept {
     if(g_api.destroySpace) {
         if(g_viewSpace) g_api.destroySpace(g_viewSpace);
         if(g_refSpace) g_api.destroySpace(g_refSpace);
+        if(g_localSpace) g_api.destroySpace(g_localSpace);
     }
     g_viewSpace=XR_NULL_HANDLE;
     g_refSpace=XR_NULL_HANDLE;
+    g_localSpace=XR_NULL_HANDLE;
+    g_localInStageValid=false; g_stepPending=false; g_recenterDue=0;
     if(g_session && g_api.destroySession) g_api.destroySession(g_session);
     g_session=XR_NULL_HANDLE;
     if(g_instance && g_api.destroyInstance) g_api.destroyInstance(g_instance);
@@ -1846,6 +1935,7 @@ void OpenXrRuntime::ThreadMain() noexcept {
         ReadHands(frameState.predictedDisplayTime);
         if(XR_SUCCEEDED(g_api.locateSpace(g_viewSpace,g_refSpace,frameState.predictedDisplayTime,&location)))
             { g_lastViewPose=location.pose; Publish(location,frameState.predictedDisplayTime); }
+        WatchRuntimeRecenter(frameState.predictedDisplayTime);
         // No layers are submitted yet: this milestone only needs head tracking.
         XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
         endInfo.displayTime=frameState.predictedDisplayTime;
@@ -2289,8 +2379,14 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
     bool cockpitHud=false;
     if(nativeImages.ready && nativeImages.cockpitMatched) {
         auto* hud=g_uiLayer.load()?UiTexture():nullptr;
-        const bool left=DrawCockpit(g_context,nativeImages.eye[0].Get(),nativeImages.view[0],nativeImages.projection[0],nativeImages.cockpit,hud,nativeImages.frame);
-        const bool right=DrawCockpit(g_context,nativeImages.eye[1].Get(),nativeImages.view[1],nativeImages.projection[1],nativeImages.cockpit,hud,nativeImages.frame);
+        // A cockpit with a subtitle screen: the radio subtitles from their own
+        // capture (ui_capture.h), none when there is no line this frame -- once
+        // that capture has worked at all; till then (or should the game's draw
+        // ever escape the scope) the screen keeps its crop of the HUD.
+        const bool subtitleMode=hud&&SubtitleUiActive()&&ReadSubtitleUiStats().frames>0;
+        auto* subtitles=subtitleMode?CapturedSubtitleUi():nullptr;
+        const bool left=DrawCockpit(g_context,nativeImages.eye[0].Get(),nativeImages.view[0],nativeImages.projection[0],nativeImages.cockpit,hud,nativeImages.frame,subtitles,subtitleMode);
+        const bool right=DrawCockpit(g_context,nativeImages.eye[1].Get(),nativeImages.view[1],nativeImages.projection[1],nativeImages.cockpit,hud,nativeImages.frame,subtitles,subtitleMode);
         nativeImages.ready=left&&right;cockpitHud=nativeImages.ready&&hud;
     }
     DiscardCockpitLighting(); // retain small private CBs, release native resources each display frame
@@ -2315,6 +2411,7 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
         ReadHands(frameState.predictedDisplayTime);
         if(XR_SUCCEEDED(g_api.locateSpace(g_viewSpace,g_refSpace,frameState.predictedDisplayTime,&location)))
             { g_lastViewPose=location.pose; Publish(location,frameState.predictedDisplayTime); }
+        WatchRuntimeRecenter(frameState.predictedDisplayTime);
     });
 
     // Every mode needs the eye frusta: the projection layer submits them, and
@@ -3152,6 +3249,18 @@ void OpenXrRuntime::SetBoardWorldLocked(bool on) noexcept {
     if(g_boardWorldLocked.exchange(on)!=on) g_boardRecenter.store(true);
 }
 void OpenXrRuntime::RecenterBoard() noexcept { g_boardRecenter.store(true); }
+unsigned RuntimeRecenterCount() noexcept { return g_runtimeRecenters.load(std::memory_order_acquire); }
+void RuntimeRecenterSigns(unsigned long long& events,unsigned long long& jumps,bool& watchingLocal) noexcept {
+    events=g_recenterEvents.load(std::memory_order_relaxed);
+    jumps=g_recenterJumps.load(std::memory_order_relaxed);
+    watchingLocal=g_localSpace!=XR_NULL_HANDLE;
+}
+void RuntimeRecenterStep(float& centimetres,float& degrees,float& gapMs,unsigned long long& dropped) noexcept {
+    centimetres=g_lastStepCm.load(std::memory_order_relaxed);
+    degrees=g_lastStepDeg.load(std::memory_order_relaxed);
+    gapMs=g_lastStepGapMs.load(std::memory_order_relaxed);
+    dropped=g_recenterStepsDropped.load(std::memory_order_relaxed);
+}
 void OpenXrRuntime::SetBoard(float widthMetres,float distanceMetres) noexcept {
     if(std::isfinite(widthMetres) && widthMetres>=0.3f && widthMetres<=10.0f) g_quadWidth=widthMetres;
     if(std::isfinite(distanceMetres) && distanceMetres>=0.3f && distanceMetres<=20.0f) g_quadDistance=distanceMetres;

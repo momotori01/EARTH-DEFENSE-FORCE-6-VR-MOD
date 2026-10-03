@@ -28,6 +28,17 @@ WorldUiStats ReadWorldUiStats() noexcept;
 // Why scopes did not redirect, what the game drew into, and (with the probe
 // on, a read-back every 5 s) where in the world image the plates landed.
 void ReadWorldUiNotes(char* out,size_t size) noexcept;
+// The radio subtitles: draws inside a subtitle scope go to a target of their
+// own (as the world scope's do), for a cockpit's subtitle screen. Only while
+// MarkSubtitleUi has been called in the last half second (a cockpit with that
+// screen is in use); otherwise the subtitles stay on the HUD.
+void UiCaptureSubtitleScope(bool enter) noexcept;
+void EnableSubtitleUi(bool on) noexcept;
+void MarkSubtitleUi() noexcept;
+bool SubtitleUiActive() noexcept;
+ID3D11Texture2D* CapturedSubtitleUi() noexcept;
+struct SubtitleUiStats { unsigned long long scopes=0,binds=0,frames=0; };
+SubtitleUiStats ReadSubtitleUiStats() noexcept;
 void EnableWorldUiProbe(bool on) noexcept;
 ID3D11DeviceContext* UiCaptureContext() noexcept;
 const char* UiCaptureStatus() noexcept;

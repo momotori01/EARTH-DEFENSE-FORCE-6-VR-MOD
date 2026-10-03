@@ -31,13 +31,32 @@ ID3D11RenderTargetView* drawTarget=nullptr;
 // draw. Binding once on entry is therefore not enough: while a scope is active
 // every target the game binds is remembered and replaced by the world target,
 // and on exit the game's own binding is put back so its state cache stays true.
+//
+// The radio subtitles get a target of their own the same way (a subtitle
+// scope, around the game's draw of the subtitle window): a cockpit shows them
+// on a screen of their own, apart from the HUD.
 thread_local int worldScope=0;
 std::atomic<bool> worldEnabled{true};
-bool worldActive=false,worldTouched=false,worldReady=false;
-ID3D11Texture2D *worldTexture=nullptr,*worldResolved=nullptr,*worldProbe=nullptr;
-ID3D11RenderTargetView* worldTarget=nullptr;
-D3D11_TEXTURE2D_DESC worldDesc{};
-DXGI_FORMAT worldFormat=DXGI_FORMAT_UNKNOWN;
+std::atomic<bool> subtitleEnabled{true};
+std::atomic<ULONGLONG> subtitleMarkedAt{0};
+struct ScopeTarget {
+    ID3D11Texture2D *texture=nullptr,*resolved=nullptr,*probe=nullptr;
+    ID3D11RenderTargetView* target=nullptr;
+    D3D11_TEXTURE2D_DESC desc{};
+    DXGI_FORMAT format=DXGI_FORMAT_UNKNOWN;
+    bool touched=false,ready=false;
+};
+ScopeTarget scopeTargets[2];          // 0 the world-anchored HUD, 1 the subtitles
+ScopeTarget* scopeTarget=&scopeTargets[0];   // the open scope's
+bool worldActive=false;
+#define worldTexture (scopeTarget->texture)
+#define worldResolved (scopeTarget->resolved)
+#define worldProbe (scopeTarget->probe)
+#define worldTarget (scopeTarget->target)
+#define worldDesc (scopeTarget->desc)
+#define worldFormat (scopeTarget->format)
+#define worldTouched (scopeTarget->touched)
+std::atomic<unsigned long long> subtitleScopes{0},subtitleFrames{0},subtitleBinds{0};
 ID3D11RenderTargetView* gameTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
 ID3D11DepthStencilView* gameDepth=nullptr;
 ID3D11BlendState* gameBlend=nullptr;
@@ -309,9 +328,11 @@ void RedirectToWorld() noexcept {
     captureContext->OMSetRenderTargets(1,&worldTarget,nullptr);
     blendOriginal(captureContext,blend,gameFactors,gameMask);
     worldBound=true;
-    ++worldBinds;
+    if(scopeTarget==&scopeTargets[1]) ++subtitleBinds; else ++worldBinds;
 }
 void ProbeWorld() noexcept {
+    ScopeTarget* const saved=scopeTarget; scopeTarget=&scopeTargets[0];
+    struct Back { ScopeTarget* s; ~Back() { scopeTarget=s; } } back{saved};
     if(!worldProbeOn.load(std::memory_order_relaxed) || !worldResolved) return;
     const auto now=GetTickCount64();
     if(now-worldProbeAt<5000) return;
@@ -403,14 +424,18 @@ bool InstallUiCapture(ID3D11DeviceContext* ctx) noexcept {
 }
 void EnableUiCapture(bool on) noexcept { enabled.store(on); }
 void EnableWorldUi(bool on) noexcept { worldEnabled.store(on); }
-void UiCaptureWorldScope(bool enter) noexcept {
+bool SubtitleUiOn() noexcept {
+    return subtitleEnabled.load() && GetTickCount64()-subtitleMarkedAt.load()<500;
+}
+void ScopeChange(bool enter,unsigned kind) noexcept {
     if(enter) {
         if(worldScope++>0) return;
-        ++worldScopes;
+        if(kind) ++subtitleScopes; else ++worldScopes;
         if(!captureContext) { ++worldBailNoContext;return; }
         if(GetCurrentThreadId()!=renderThread) { ++worldScopesOffThread;return; }
         if(internal || paused) { ++worldBailPaused;return; }
-        if(!enabled.load() || !worldEnabled.load()) { ++worldBailDisabled;return; }
+        if(!enabled.load() || !(kind?SubtitleUiOn():worldEnabled.load())) { ++worldBailDisabled;return; }
+        scopeTarget=&scopeTargets[kind?1:0];
         // The panel capture lets go of its binding; the game's own is what
         // gets remembered and put back.
         RestoreTarget(true);
@@ -433,6 +458,17 @@ void UiCaptureWorldScope(bool enter) noexcept {
     if(same && hudPhase && nativeTarget) RouteCurrent();
     else if(!same) DropBinding(false);
 }
+void UiCaptureWorldScope(bool enter) noexcept { ScopeChange(enter,0); }
+void UiCaptureSubtitleScope(bool enter) noexcept { ScopeChange(enter,1); }
+void EnableSubtitleUi(bool on) noexcept { subtitleEnabled.store(on); }
+void MarkSubtitleUi() noexcept { subtitleMarkedAt.store(GetTickCount64()); }
+bool SubtitleUiActive() noexcept { return enabled.load() && SubtitleUiOn(); }
+ID3D11Texture2D* CapturedSubtitleUi() noexcept {
+    return enabled.load() && SubtitleUiOn() && scopeTargets[1].ready?scopeTargets[1].resolved:nullptr;
+}
+SubtitleUiStats ReadSubtitleUiStats() noexcept {
+    return {subtitleScopes.load(),subtitleBinds.load(),subtitleFrames.load()};
+}
 ID3D11DeviceContext* UiCaptureContext() noexcept { return captureContext; }
 void EnableWorldUiProbe(bool on) noexcept { worldProbeOn.store(on); }
 void ReadWorldUiNotes(char* out,size_t size) noexcept {
@@ -445,7 +481,7 @@ void ReadWorldUiNotes(char* out,size_t size) noexcept {
     if(used<0) out[0]=0;
 }
 ID3D11Texture2D* CapturedWorldUi() noexcept {
-    return enabled.load() && worldEnabled.load() && worldReady?worldResolved:nullptr;
+    return enabled.load() && worldEnabled.load() && scopeTargets[0].ready?scopeTargets[0].resolved:nullptr;
 }
 WorldUiStats ReadWorldUiStats() noexcept {
     return {worldScopes.load(),worldScopesOffThread.load(),worldBinds.load(),worldFrames.load(),worldExitsLost.load()};
@@ -475,7 +511,7 @@ void UiCaptureGate() noexcept {
 }
 void FinishUiCapture() noexcept {
     if(!captureContext) return;
-    DropBinding(true);ready=false;worldReady=false;
+    DropBinding(true);ready=false;scopeTargets[0].ready=scopeTargets[1].ready=false;
     if(touched && enabled.load() && resolvedTexture) {
         Internal guard;
         if(drawDesc.SampleDesc.Count>1) captureContext->ResolveSubresource(resolvedTexture,0,drawTexture,0,drawFormat);
@@ -483,13 +519,16 @@ void FinishUiCapture() noexcept {
         ready=true;++directFrames;
     }
     if(worldActive) { worldActive=false;RestoreGameBinding();Release(entryTarget); } // a scope left open by a fault
-    if(worldTouched && enabled.load() && worldResolved) {
+    for(unsigned kind=0;kind<2;++kind) {
+        auto& s=scopeTargets[kind];
+        if(!s.touched || !enabled.load() || !s.resolved) continue;
         Internal guard;
-        if(worldDesc.SampleDesc.Count>1) captureContext->ResolveSubresource(worldResolved,0,worldTexture,0,worldFormat);
-        else captureContext->CopyResource(worldResolved,worldTexture);
-        worldReady=true;++worldFrames;
-        ProbeWorld();
+        if(s.desc.SampleDesc.Count>1) captureContext->ResolveSubresource(s.resolved,0,s.texture,0,s.format);
+        else captureContext->CopyResource(s.resolved,s.texture);
+        s.ready=true;
+        if(kind) ++subtitleFrames; else { ++worldFrames;ProbeWorld(); }
     }
+    scopeTarget=&scopeTargets[0];
     AcquireSRWLockExclusive(&statusLock);
     int used=std::snprintf(status,sizeof(status),"%s frames=%llu samples=%u kept=%llu failures=%llu rebinds=%llu worldFrames=%llu worldBinds=%llu keptStates=",
         !enabled.load()?"off":(ready?"direct":"waiting-gate"),directFrames,drawDesc.SampleDesc.Count,depthKept,failures,rebinds,
@@ -504,7 +543,7 @@ void FinishUiCapture() noexcept {
         used+=std::snprintf(status+used,sizeof(status)-used,"[%s %.0f,%.0f %.0fx%.0f x%llu]",v.routed?"hud":"kept",v.x,v.y,v.w,v.h,v.count);
     }
     ReleaseSRWLockExclusive(&statusLock);
-    hudPhase=touched=worldTouched=false;
+    hudPhase=touched=false;scopeTargets[0].touched=scopeTargets[1].touched=false;
 }
 ID3D11Texture2D* CapturedUi() noexcept { return enabled.load() && ready?resolvedTexture:nullptr; }
 const char* UiCaptureStatus() noexcept {

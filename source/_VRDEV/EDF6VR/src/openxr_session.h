@@ -267,6 +267,14 @@ void WorldUiCompositeCounts(unsigned long long& composites,unsigned long long& f
 void UiClusterCounts(unsigned long long& composites,unsigned long long& failures) noexcept;
 void SubtitleCounts(unsigned long long& moves,unsigned long long& failures) noexcept;
 unsigned long long UiClusterSuspendedFrames() noexcept;
+// The headset's own recenters seen so far (the runtime's event, or its LOCAL
+// space stepping against STAGE); the game side recenters when it changes. The
+// signs, for the log: events, steps, and whether LOCAL is watched at all.
+unsigned RuntimeRecenterCount() noexcept;
+void RuntimeRecenterSigns(unsigned long long& events,unsigned long long& jumps,bool& watchingLocal) noexcept;
+// The last counted step of LOCAL against STAGE (size, and the frame gap before
+// it), and the steps not counted (across a stall, or not held 0.3 s).
+void RuntimeRecenterStep(float& centimetres,float& degrees,float& gapMs,unsigned long long& dropped) noexcept;
 // Placement of that HUD over the eye: 1,1,0 is the game's own picture.
 // debug paints that HUD magenta so it can be told from the panel's copy.
 void SetWorldUiPlacement(float scaleX,float scaleY,float offsetY,bool debug) noexcept;

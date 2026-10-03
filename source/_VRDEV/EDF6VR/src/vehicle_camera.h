@@ -102,6 +102,21 @@ bool LevelVehicleAtEntry(VehicleEntryLevel&,const Matrix&,Matrix&) noexcept;
 bool ComposeVehicleCamera(const Matrix& nativeCamera,const Quat& reference,
     const Quat& head,const Vec3& positionDelta,Matrix& output,float& localYaw) noexcept;
 void RebaseVehicleStick(float yaw,float& x,float& y) noexcept;
+// A point and a direction given in the headset's reference space, put in the
+// world the way ComposeVehicleCamera puts the view: the offset from the
+// position reference (positionDelta) and the direction, both turned off the
+// heading reference into the seat camera's own axes (nativeCamera's rows) and
+// the point added to its origin. For a controller's ray in a vehicle (the Nix's
+// arm aim). direction comes back unit length; false for a bad input.
+bool VehicleReferenceToWorld(const Matrix& nativeCamera,const Quat& reference,const Vec3& positionDelta,
+    const Vec3& xrDirection,Vec3& point,Vec3& direction) noexcept;
+// `toward` kept within maxRadians of `from`: its angle to the side (about the
+// world's up) and its angle up or down, each cut to maxRadians on its own.
+// clamped, when given, says whether either was cut. False for a degenerate input.
+bool AimCone(const Vec3& from,const Vec3& toward,float maxRadians,Vec3& out,bool* clamped=nullptr) noexcept;
+// The shortest turn from one direction to another, as a matrix for row vectors
+// (v M, the way a bone's rows turn). False when they are opposite or degenerate.
+bool TurnBetween(const Vec3& from,const Vec3& to,float M[3][3]) noexcept;
 // The gun hand pointed like a laser, read as the right stick in a vehicle (the
 // user, 2026-10-01): its pointing direction's angle above `level` pushes up,
 // its angle to the left of the cabin's front pushes left. Only the

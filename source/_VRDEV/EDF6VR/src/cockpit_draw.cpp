@@ -47,6 +47,10 @@ ComPtr<ID3D11Texture2D> zbuffer;
 ComPtr<ID3D11DepthStencilView> zview;
 ComPtr<ID3D11ShaderResourceView> atlas[4],hudView;
 ComPtr<ID3D11Texture2D> hudTexture;
+// The subtitle screen's picture (the radio subtitles' own capture), and an
+// empty one for the frames with no subtitle.
+ComPtr<ID3D11ShaderResourceView> subtitleView,blankView;
+ComPtr<ID3D11Texture2D> subtitleTexture,blankTexture;
 ComPtr<ID3D11SamplerState> sampler;
 ComPtr<ID3D11SamplerState> environmentSampler;
 UINT zwidth=0,zheight=0;
@@ -77,6 +81,7 @@ cbuffer NativeExtra:register(b2) {float4 nativeExtra[25];}
 cbuffer NativeEnvironment:register(b3) {float4 envInfo[6];}
 Texture2D<float4> Base:register(t0);Texture2D<float4> Emission:register(t1);Texture2D<float4> Roughness:register(t2);Texture2D<float4> Hud:register(t3);
 Texture2D<float4> Normal:register(t5);
+Texture2D<float4> Subtitles:register(t12);
 Texture2D<float> WorldDepth:register(t8);
 TextureCubeArray<float4> Environment:register(t6);
 struct EnvCell {uint4 maps0;uint4 maps1;uint4 corners0;uint4 corners1;uint4 count;};
@@ -191,7 +196,19 @@ float4 fragment(Output i):SV_Target {
    float2 fit=sourceAspect>aspect?float2(.93,.93*aspect/sourceAspect):float2(.93*sourceAspect/aspect,.93);
    float2 local=.5+(uv-.5)/fit;
    float4 h=0;
-   if(options.x>.5&&all(local>=0)&&all(local<=1))h=Hud.SampleLevel(Smooth,lerp(rect.xy,rect.zw,local),0);
+   float2 at=lerp(rect.xy,rect.zw,local);
+   // The subtitle screen from the subtitles' own picture when there is one
+   // (bound only then): nothing of the HUD around them.
+   uint subtitleWidth=0,subtitleHeight=0;Subtitles.GetDimensions(subtitleWidth,subtitleHeight);
+   bool own=id==3&&subtitleWidth>0;
+   if(own){if(all(local>=0)&&all(local<=1))h=Subtitles.SampleLevel(Smooth,at,0);}
+   else if(options.x>.5&&all(local>=0)&&all(local<=1))h=Hud.SampleLevel(Smooth,at,0);
+   // Cropped from the HUD instead: below 845 of 1080 only the fourth line's
+   // own width (700..1215 of 1920) -- the weapon icons sit either side of it;
+   // and by the lines' first characters the Nix's weapon gauges' green ends
+   // (vehicle weapon layout, x 311..515) go -- the subtitles are white.
+   if(!own&&id==3&&at.y>845.0/1080&&(at.x<700.0/1920||at.x>1215.0/1920))h=0;
+   if(!own&&id==3&&at.x<520.0/1920&&h.a>.01){float3 c=h.rgb/max(h.a,1e-3);if(c.g>c.r*1.35+.02&&c.g>c.b*1.1+.02)h=0;}
    if(options.z>.5&&options.y<.5)h.rgb=encode(h.rgb);
    if(options.z<.5&&options.y>.5)h.rgb=decode(h.rgb);
    h*=.96;
@@ -346,7 +363,8 @@ void BuildMesh(ID3D11DeviceContext* ctx,Mesh& mesh) {
 }
 }
 void DiscardCockpitFrame() noexcept {
-    DiscardCockpitLighting();hudView.Reset();hudTexture.Reset();nativeCapDepth={};capWorldDepth.Reset();capWorldTexture.Reset();
+    DiscardCockpitLighting();hudView.Reset();hudTexture.Reset();subtitleView.Reset();subtitleTexture.Reset();
+    nativeCapDepth={};capWorldDepth.Reset();capWorldTexture.Reset();
 }
 void ReleaseCockpitDraw() noexcept {
     DiscardCockpitFrame();
@@ -357,6 +375,7 @@ void ReleaseCockpitDraw() noexcept {
     cropShader.Reset();cropBuffer.Reset();cropView.Reset();cropOutput.Reset();
     zbuffer.Reset();zview.Reset();device.Reset();zwidth=zheight=0;
     for(auto& t:atlas)t.Reset();hudView.Reset();hudTexture.Reset();sampler.Reset();environmentSampler.Reset();atlasReady=false;
+    blankView.Reset();blankTexture.Reset();
     if(crewJob.future.valid())crewJob.future.wait();crewJob=CrewJob{};for(auto& entry:crewCache)entry=CrewGpu{};crewSampler.Reset();crewFailedKey=~0u;
     meshes.clear();meshRig={};stats.meshes=stats.keptTriangles=stats.removedTriangles=0;
     ResetLid();
@@ -376,7 +395,14 @@ bool PrepareCockpitDraw(ID3D11Device* d) noexcept {
     if(FAILED(d->CreateVertexShader(v->GetBufferPointer(),v->GetBufferSize(),nullptr,&vs))||
         FAILED(d->CreatePixelShader(p->GetBufferPointer(),p->GetBufferSize(),nullptr,&ps))||
         FAILED(d->CreateComputeShader(cropCode->GetBufferPointer(),cropCode->GetBufferSize(),nullptr,&cropShader)))return false;
-    const float rects[4][4]={{.775f,0,.977f,.335f},{0,0,.52f,.30f},{0,.30f,.50f,1},{0,0,1,1}};
+    // The Nix-type cabins' lower monitor (source 3) shows only the subtitles
+    // (the user, 2026-10-03: "下部の情報モニター…字幕だけ表示して、普段は何も表示
+    // してないモニター"): the box the game prints them in, measured on the 16:9
+    // layout (plugin.cpp, the floating panel's subtitle pieces, 440..1460 x
+    // 700..905 of 1920x1080); the shader keeps the weapon icons beside the fourth
+    // line out. With no subtitle there is nothing in it, and the screen is bare.
+    const float rects[4][4]={{.775f,0,.977f,.335f},{0,0,.52f,.30f},{0,.30f,.50f,1},
+                             {440.f/1920,700.f/1080,1460.f/1920,905.f/1080}};
     D3D11_BUFFER_DESC rb{};rb.ByteWidth=sizeof(rects);rb.BindFlags=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS;
     rb.MiscFlags=D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;rb.StructureByteStride=16;D3D11_SUBRESOURCE_DATA rd{rects,0,0};
     if(FAILED(d->CreateBuffer(&rb,&rd,&cropBuffer))||FAILED(d->CreateShaderResourceView(cropBuffer.Get(),nullptr,&cropView))||
@@ -432,7 +458,8 @@ bool PrepareCockpitDraw(ID3D11Device* d) noexcept {
         SUCCEEDED(d->CreateBlendState(&b,&blend))&&SUCCEEDED(d->CreateDepthStencilState(&z,&depth))&&
         SUCCEEDED(d->CreateBlendState(&hb,&hologramBlend))&&SUCCEEDED(d->CreateDepthStencilState(&hz,&hologramDepth))&&SUCCEEDED(d->CreateRasterizerState(&r,&raster));
 }
-static bool DrawCockpitPass(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,const Matrix& view,const Matrix& projection,const CockpitPose& pose,ID3D11Texture2D* hud,std::uint64_t frame,ID3D11DepthStencilView* nativeDepth,bool capsOnly,bool reverseDepth) noexcept {
+static bool DrawCockpitPass(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,const Matrix& view,const Matrix& projection,const CockpitPose& pose,ID3D11Texture2D* hud,std::uint64_t frame,ID3D11DepthStencilView* nativeDepth,bool capsOnly,bool reverseDepth,
+                            ID3D11Texture2D* subtitles=nullptr,bool subtitleMode=false) noexcept {
     if(!ctx||!target||!ValidCamera(view)||!ValidCamera(pose.cabin))return false;
     ComPtr<ID3D11Device> d;ctx->GetDevice(&d);if(!PrepareCockpitDraw(d.Get()))return false;
     D3D11_TEXTURE2D_DESC td{};target->GetDesc(&td);if(!td.Width||!td.Height||td.SampleDesc.Count!=1)return false;
@@ -461,6 +488,25 @@ static bool DrawCockpitPass(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,con
     if(hudTexture.Get()!=hud) {
         hudView.Reset();hudTexture=hud;
         if(hud && FAILED(d->CreateShaderResourceView(hud,nullptr,&hudView))) {hudTexture.Reset();return false;}
+    }
+    ID3D11ShaderResourceView* subtitleInput=nullptr;
+    if(subtitleMode&&!capsOnly) {
+        if(subtitles) {
+            if(subtitleTexture.Get()!=subtitles) {
+                subtitleView.Reset();subtitleTexture=subtitles;
+                if(FAILED(d->CreateShaderResourceView(subtitles,nullptr,&subtitleView))) subtitleTexture.Reset();
+            }
+            subtitleInput=subtitleView.Get();
+        }
+        if(!subtitleInput) {
+            if(!blankView) {
+                D3D11_TEXTURE2D_DESC bd{};bd.Width=bd.Height=1;bd.MipLevels=bd.ArraySize=1;bd.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+                bd.SampleDesc={1,0};bd.Usage=D3D11_USAGE_IMMUTABLE;bd.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+                const std::uint32_t clear=0;D3D11_SUBRESOURCE_DATA bdata{&clear,4,0};
+                if(SUCCEEDED(d->CreateTexture2D(&bd,&bdata,&blankTexture)))d->CreateShaderResourceView(blankTexture.Get(),nullptr,&blankView);
+            }
+            subtitleInput=blankView.Get();
+        }
     }
     // A tank's barrel caps are closed solids in the open air: drawn against the
     // world's depth alone, nothing stops a cap's collar and back plate painting
@@ -548,6 +594,7 @@ static bool DrawCockpitPass(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,con
     ComPtr<ID3D11DepthStencilState> oldDepth;UINT ref=0;ctx->OMGetDepthStencilState(&oldDepth,&ref);
     ComPtr<ID3D11BlendState> oldBlend;float factors[4]{};UINT mask=0;ctx->OMGetBlendState(&oldBlend,factors,&mask);
     ID3D11ShaderResourceView* oldInputs[9]{};ctx->PSGetShaderResources(0,9,oldInputs);
+    ID3D11ShaderResourceView* oldSubtitles=nullptr;ctx->PSGetShaderResources(12,1,&oldSubtitles);
     ComPtr<ID3D11SamplerState> oldSampler,oldEnvSampler;ctx->PSGetSamplers(0,1,&oldSampler);ctx->PSGetSamplers(1,1,&oldEnvSampler);
     ComPtr<ID3D11Buffer> oldPixelCb;ctx->PSGetConstantBuffers(0,1,&oldPixelCb);
     ID3D11Buffer* oldLighting[3]{};ctx->PSGetConstantBuffers(1,3,oldLighting);
@@ -572,6 +619,7 @@ static bool DrawCockpitPass(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,con
     ctx->IASetInputLayout(layout.Get());ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ctx->VSSetShader(vs.Get(),nullptr,0);ctx->PSSetShader(ps.Get(),nullptr,0);ctx->GSSetShader(nullptr,nullptr,0);ctx->HSSetShader(nullptr,nullptr,0);ctx->DSSetShader(nullptr,nullptr,0);
     ID3D11ShaderResourceView* inputs[]={atlas[0].Get(),atlas[1].Get(),atlas[2].Get(),hudView.Get(),cropView.Get(),atlas[3].Get(),lighting.cubes.Get(),lighting.grid.Get(),ownDepth?capWorldDepth.Get():nullptr};ctx->PSSetShaderResources(0,9,inputs);
+    ctx->PSSetShaderResources(12,1,&subtitleInput);
     auto* smp=sampler.Get();ctx->PSSetSamplers(0,1,&smp);
     smp=environmentSampler.Get();ctx->PSSetSamplers(1,1,&smp);
     auto* cb=constants.Get();ctx->VSSetConstantBuffers(0,1,&cb);ctx->PSSetConstantBuffers(0,1,&cb);
@@ -606,6 +654,7 @@ static bool DrawCockpitPass(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,con
     ID3D11ShaderResourceView* empty[9]{};ctx->PSSetShaderResources(0,9,empty);
     ctx->OMSetRenderTargets(8,rt,oldDsv.Get());cb=oldCb.Get();ctx->VSSetConstantBuffers(0,1,&cb);vb=oldVb.Get();ctx->IASetVertexBuffers(0,1,&vb,&stride,&offset);
     ctx->PSSetShaderResources(0,9,oldInputs);smp=oldSampler.Get();ctx->PSSetSamplers(0,1,&smp);cb=oldPixelCb.Get();ctx->PSSetConstantBuffers(0,1,&cb);
+    ctx->PSSetShaderResources(12,1,&oldSubtitles);if(oldSubtitles)oldSubtitles->Release();
     smp=oldEnvSampler.Get();ctx->PSSetSamplers(1,1,&smp);ctx->PSSetConstantBuffers(1,3,oldLighting);
     for(auto* b:oldLighting)if(b)b->Release();
     for(auto* srv:oldInputs)if(srv)srv->Release();
@@ -616,8 +665,9 @@ static bool DrawCockpitPass(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,con
     for(UINT i=0;i<gn;++i)if(gi[i])gi[i]->Release();for(UINT i=0;i<hn;++i)if(hi[i])hi[i]->Release();for(UINT i=0;i<dn;++i)if(di[i])di[i]->Release();
     return true;
 }
-bool DrawCockpit(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,const Matrix& view,const Matrix& projection,const CockpitPose& pose,ID3D11Texture2D* hud,std::uint64_t frame) noexcept {
-    return DrawCockpitPass(ctx,target,view,projection,pose,hud,frame,nullptr,false,false);
+bool DrawCockpit(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,const Matrix& view,const Matrix& projection,const CockpitPose& pose,ID3D11Texture2D* hud,std::uint64_t frame,
+                 ID3D11Texture2D* subtitles,bool subtitleMode) noexcept {
+    return DrawCockpitPass(ctx,target,view,projection,pose,hud,frame,nullptr,false,false,subtitles,subtitleMode);
 }
 bool DrawCockpitJointCaps(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,const Matrix& view,const Matrix& projection,const CockpitPose& pose,ID3D11DepthStencilView* nativeDepth,bool reversed) noexcept {
     return DrawCockpitPass(ctx,target,view,projection,pose,nullptr,0,nativeDepth,true,reversed);
