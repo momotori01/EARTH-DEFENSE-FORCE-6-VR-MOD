@@ -23,10 +23,31 @@ constexpr std::size_t kTextSize = 8192;
 std::uintptr_t gameBase = 0;
 std::uintptr_t gameEnd = 0;
 // First-chance exceptions can be normal elsewhere, so each source gets its own small budget
-// and a noisy module cannot use up the entries a real crash in EDF.dll needs.
+// and a noisy module cannot use up the entries a real crash in EDF.dll needs. The budgets count
+// faulting places, not faults (1.6.7): EDF6VR faults at the same few places at every mission start
+// and the game goes on, and on 2026-10-04 those repeats had used up all four entries of the "other"
+// budget by the time a player's game died, so nothing said where. A place is recorded once.
 std::atomic<int> gameBudget{16};
 std::atomic<int> cppBudget{6};
-std::atomic<int> otherBudget{4};
+std::atomic<int> otherBudget{8};
+constexpr int kSeenSites = 64;
+std::atomic<std::uintptr_t> seenSites[kSeenSites]{};
+
+// True the first time `rip` faults; a full table lets everything through to the budgets.
+bool FirstAtSite(std::uintptr_t rip) {
+    for (auto& site : seenSites) {
+        std::uintptr_t current = site.load();
+        if (current == rip) return false;
+        if (current == 0) {
+            if (site.compare_exchange_strong(current, rip)) return true;
+            if (current == rip) return false;
+        }
+    }
+    return true;
+}
+
+// The handler the game had before this one, called after the last-chance report.
+LPTOP_LEVEL_EXCEPTION_FILTER previousFilter = nullptr;
 
 // Minidump of the first access violation inside EDF.dll. DbgHelp is resolved at install time, never
 // from inside the handler: loading a DLL while unwinding a fault is its own way to crash.
@@ -148,6 +169,7 @@ bool ThrownForGame(CONTEXT context) {
 }
 
 std::atomic<DWORD> writerThread{0};
+void Report(EXCEPTION_POINTERS* info, bool fatal);
 
 // Called with the report lock held, from the handler, at most once per launch.
 void WriteMiniDump(EXCEPTION_POINTERS* info) {
@@ -189,9 +211,28 @@ LONG CALLBACK OnException(EXCEPTION_POINTERS* info) {
     if (writerThread.load() == thread) return EXCEPTION_CONTINUE_SEARCH;
     const std::uintptr_t rip = info->ContextRecord->Rip;
     const bool inGame = rip >= gameBase && rip < gameEnd;
+    // Every C++ throw raises from the same place in the runtime, so those keep a plain count.
+    if (code != kCppException && !FirstAtSite(rip)) return EXCEPTION_CONTINUE_SEARCH;
     auto& budget = code == kCppException ? cppBudget : (inGame ? gameBudget : otherBudget);
     if (budget.fetch_sub(1) <= 0) return EXCEPTION_CONTINUE_SEARCH;
+    Report(info, false);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 
+// Last chance: whatever ends the process - in any module, of any kind - is written down, whether or not
+// its place was seen before (1.6.7; the 2026-10-04 crashes left a log that simply stopped).
+LONG WINAPI OnUnhandled(EXCEPTION_POINTERS* info) {
+    if (writerThread.load() != GetCurrentThreadId()) Report(info, true);
+    return previousFilter ? previousFilter(info) : EXCEPTION_CONTINUE_SEARCH;
+}
+
+// One report: the line, registers and unwound stack, and the dump when this is the one it is armed for.
+void Report(EXCEPTION_POINTERS* info, bool fatal) {
+    const EXCEPTION_RECORD* record = info->ExceptionRecord;
+    const DWORD code = record->ExceptionCode;
+    const DWORD thread = GetCurrentThreadId();
+    const std::uintptr_t rip = info->ContextRecord->Rip;
+    const bool inGame = rip >= gameBase && rip < gameEnd;
     static Text text;  // exception paths may run deep in a thread's stack; keep 8 KB off it
     static SRWLOCK lock = SRWLOCK_INIT;
     AcquireSRWLockExclusive(&lock);
@@ -199,8 +240,9 @@ LONG CALLBACK OnException(EXCEPTION_POINTERS* info) {
     text.length = 0;
     SYSTEMTIME now{};
     GetLocalTime(&now);
-    text.Add("[%04u-%02u-%02u %02u:%02u:%02u.%03u] EXCEPTION %08lX thread %lu at ", now.wYear, now.wMonth, now.wDay,
-             now.wHour, now.wMinute, now.wSecond, now.wMilliseconds, code, thread);
+    text.Add("[%04u-%02u-%02u %02u:%02u:%02u.%03u] %s %08lX thread %lu at ", now.wYear, now.wMonth, now.wDay,
+             now.wHour, now.wMinute, now.wSecond, now.wMilliseconds,
+             fatal ? "FATAL unhandled exception" : "EXCEPTION", code, thread);
     Where(text, rip);
     if ((code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR) && record->NumberParameters >= 2) {
         const auto kind = record->ExceptionInformation[0];
@@ -215,14 +257,13 @@ LONG CALLBACK OnException(EXCEPTION_POINTERS* info) {
     text.Add("  r12=%016llX r13=%016llX r14=%016llX r15=%016llX\r\n", c.R12, c.R13, c.R14, c.R15);
     Stack(text, c);
     LogWrite(text.data, text.length);
-    // Only an access violation in the game's own code, and only once per launch: everything else the
-    // handler sees is either another module's business or a fault the game goes on to handle.
-    if (inGame && code == EXCEPTION_ACCESS_VIOLATION && writeDump && dumpPathW[0] &&
+    // Only an access violation in the game's own code, or whatever ends the process, and only once per
+    // launch: everything else the handler sees is another module's business or a fault the game handles.
+    if ((fatal || (inGame && code == EXCEPTION_ACCESS_VIOLATION)) && writeDump && dumpPathW[0] &&
         dumpBudget.fetch_sub(1) > 0)
         WriteMiniDump(info);
     writerThread.store(0);
     ReleaseSRWLockExclusive(&lock);
-    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 }  // namespace
@@ -244,7 +285,10 @@ void InstallCrashLog(HMODULE game, const wchar_t* dumpPath) {
         }
     }
     AddVectoredExceptionHandler(1, &OnException);
+    previousFilter = SetUnhandledExceptionFilter(&OnUnhandled);
 }
+
+LONG CrashLogLastChanceForTest(EXCEPTION_POINTERS* info) { return OnUnhandled(info); }
 
 bool CrashDumpArmed() { return writeDump != nullptr && dumpPathW[0] != 0; }
 

@@ -15,7 +15,14 @@ namespace multislot {
 // frame has to be looked at. One dump per launch, that one file overwritten, and only for an access
 // violation whose faulting instruction is in EDF.dll - a first-chance fault in another module (the
 // VR mod records several the game survives) writes nothing.
+//
+// 1.6.7: each faulting place is recorded once (repeats of a known place no longer use up the entries),
+// and a last-chance filter records whatever ends the process - any module, any kind of exception -
+// as a "FATAL unhandled exception" line, with a dump when one is armed and none was written yet.
 void InstallCrashLog(HMODULE game, const wchar_t* dumpPath);
+
+// The last-chance filter itself, for the tests.
+LONG CrashLogLastChanceForTest(EXCEPTION_POINTERS* info);
 
 // True when a minidump will be written for the first access violation in EDF.dll.
 bool CrashDumpArmed();

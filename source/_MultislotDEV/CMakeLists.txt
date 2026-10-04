@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EDF6MultiSlot VERSION 1.6.6 LANGUAGES CXX)
+project(EDF6MultiSlot VERSION 1.6.7 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -29,7 +29,7 @@ add_library(EDF6MultiSlot SHARED
     src/plugin.cpp src/patches.cpp src/rooms.cpp src/roomview.cpp src/fakemembers.cpp src/hostmode.cpp src/menulayout.cpp
     src/mission.cpp src/spawn.cpp src/joinlog.cpp src/armor.cpp src/midhook.cpp src/code.cpp src/crashlog.cpp src/log.cpp
     src/netlog.cpp src/identity.cpp src/smoothing.cpp src/updatecheck.cpp src/traffic.cpp src/gaplog.cpp src/packetsize.cpp
-    src/handaim.cpp src/versionmsg.cpp)
+    src/handaim.cpp src/versionmsg.cpp src/ridelog.cpp)
 
 if(MULTISLOT_DIAGNOSTIC)
     target_compile_definitions(EDF6MultiSlot PRIVATE MULTISLOT_DIAGNOSTIC)
@@ -67,6 +67,10 @@ add_test(NAME NetworkImportForwarding COMMAND NetLogForwardTests)
 add_executable(HandAimTests tests/handaim_test.cpp src/handaim.cpp src/joinlog.cpp src/identity.cpp src/log.cpp)
 target_compile_options(HandAimTests PRIVATE ${WARNINGS})
 add_test(NAME HandAimPackets COMMAND HandAimTests)
+add_executable(RideLogTests tests/ridelog_test.cpp src/ridelog.cpp src/handaim.cpp src/joinlog.cpp src/identity.cpp
+    src/log.cpp)
+target_compile_options(RideLogTests PRIVATE ${WARNINGS})
+add_test(NAME VehicleSeatLog COMMAND RideLogTests)
 set(EDF_DLL "${CMAKE_SOURCE_DIR}/../EDF.dll")
 add_executable(VersionMessageTests tests/versionmsg_test.cpp src/versionmsg.cpp src/patches.cpp src/mission.cpp
     src/midhook.cpp src/code.cpp src/log.cpp src/joinlog.cpp src/identity.cpp)
@@ -74,7 +78,7 @@ target_compile_options(VersionMessageTests PRIVATE ${WARNINGS})
 add_test(NAME VersionMessage COMMAND VersionMessageTests "${EDF_DLL}")
 
 add_executable(MultiSlotTests tests/tests.cpp src/patches.cpp src/rooms.cpp src/mission.cpp src/midhook.cpp src/code.cpp src/log.cpp src/smoothing.cpp
-    src/gaplog.cpp src/packetsize.cpp src/handaim.cpp src/joinlog.cpp src/identity.cpp src/versionmsg.cpp)
+    src/gaplog.cpp src/packetsize.cpp src/handaim.cpp src/joinlog.cpp src/identity.cpp src/versionmsg.cpp src/ridelog.cpp)
 target_compile_options(MultiSlotTests PRIVATE ${WARNINGS})
 add_test(NAME PatchTablesMatchEDF COMMAND MultiSlotTests "${EDF_DLL}")
 
@@ -135,7 +139,8 @@ target_compile_options(JoinRetryTests PRIVATE ${WARNINGS})
 add_test(NAME JoinHandshakeTiming COMMAND JoinRetryTests "${EDF_DLL}")
 
 add_executable(MultiSlotLoadTest tests/load_test.cpp src/patches.cpp src/midhook.cpp src/code.cpp
-    src/gaplog.cpp src/packetsize.cpp src/log.cpp src/handaim.cpp src/joinlog.cpp src/identity.cpp src/versionmsg.cpp)
+    src/gaplog.cpp src/packetsize.cpp src/log.cpp src/handaim.cpp src/joinlog.cpp src/identity.cpp src/versionmsg.cpp
+    src/ridelog.cpp)
 target_include_directories(MultiSlotLoadTest PRIVATE ${MODLOADER_INCLUDE} "${CMAKE_BINARY_DIR}/generated")
 target_compile_options(MultiSlotLoadTest PRIVATE ${WARNINGS})
 add_dependencies(MultiSlotLoadTest EDF6MultiSlot)

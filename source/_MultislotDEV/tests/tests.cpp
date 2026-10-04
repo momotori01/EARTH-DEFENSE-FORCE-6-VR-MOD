@@ -22,6 +22,7 @@
 #include "../src/joinlog.h"
 #include "../src/handaim.h"
 #include "../src/versionmsg.h"
+#include "../src/ridelog.h"
 
 using namespace multislot;
 
@@ -791,6 +792,48 @@ int main(int argc, char** argv) {
               CallTargets(image.At(0x6976CA, 5), 0x6976CA, 0x691560) && kWeaponFireVector == 0x350,
           "+0x350 is FireVector (68CCFA), read by the shot's setup 691560 that 696FD0 calls", 0x68CCFA);
 
+    // Seat log (ridelog.h): three read-only hooks, and what their handlers take from the registers.
+    const auto rideHooks = RideLogHooks();
+    Check(rideHooks.size() == 4, "four seat log hooks");
+    // 6314A0, the seat bookkeeping every vehicle runs in its update (62EEC0 tail-jumps there at 62F1F2): rcx is the vehicle
+    // (rdi = rcx at 6314B7; its seat count [rdi+0x618] at 6314DC), and the hook is its very first instruction.
+    Check(std::memcmp(image.At(0x6314B7, 3), "\x48\x8B\xF9", 3) == 0 &&
+              std::memcmp(image.At(0x6314DC, 7), "\x48\x39\xB7\x18\x06\x00\x00", 7) == 0 &&
+              std::memcmp(image.At(0x62F1F2, 5), "\xE9\xA9\x22\x00\x00", 5) == 0 &&  // jmp 6314A0
+              kVehicleUpdate == 0x6314A0,
+          "a vehicle's update: rcx the vehicle", kVehicleUpdate);
+    for (const auto& hook : rideHooks) {
+        const Patch verify{hook.name, hook.rva, hook.original, hook.original};
+        Check(Matches(image.At(hook.rva, hook.original.size()), verify) && RideLogHookHandler(hook.rva) != nullptr,
+              hook.name, hook.rva);
+    }
+    // 5763E0: rdi = the soldier (576407), rbp = its vehicle [+0x1548] (576459), eax = 62D810's index of its seat
+    // [+0x1540] among the vehicle's (+0x608, 0x340 each, +0x618 of them), -1 for none; then the broadcast.
+    Check(std::memcmp(image.At(0x576407, 3), "\x48\x8B\xF9", 3) == 0 &&
+              std::memcmp(image.At(0x576459, 7), "\x48\x8B\xAF\x48\x15\x00\x00", 7) == 0 &&
+              std::memcmp(image.At(0x5764A1, 7), "\x48\x8B\x97\x40\x15\x00\x00", 7) == 0 &&
+              CallTargets(image.At(0x5764AB, 5), 0x5764AB, 0x62D810) &&
+              std::memcmp(image.At(0x62D810, 18), "\x4C\x69\x89\x18\x06\x00\x00\x40\x03\x00\x00\x48\x8B\x81\x08\x06\x00\x00", 18) == 0 &&
+              kRideSend == 0x5764B0 && kVehicleSeats == 0x608 && kVehicleSeatCount == 0x618,
+          "our seat: rdi soldier, rbp vehicle, eax its seat index (62D810)", kRideSend);
+    // 5774C0's ride case: r12d = the seat byte (5775CE), the vehicle's shared_ptr at [rsp+0x70] (57764C), and
+    // rsi - 0x120 the soldier 5765E0 is called for (57765A, 577661).
+    Check(std::memcmp(image.At(0x5775CE, 4), "\x44\x0F\xBE\xE0", 4) == 0 &&
+              std::memcmp(image.At(0x57764C, 6), "\x66\x0F\x7F\x44\x24\x70", 6) == 0 &&
+              std::memcmp(image.At(0x57765A, 7), "\x48\x8D\x8E\xE0\xFE\xFF\xFF", 7) == 0 &&
+              CallTargets(image.At(0x577661, 5), 0x577661, 0x5765E0),
+          "their seat: r12d seat, [rsp+0x70] vehicle, rsi-0x120 soldier", kRideReceive);
+    // 6325B0's case 4: rbx = this (vehicle+0x120, 6325C6), r14d = the seat byte (632651), r15d = the counter
+    // (632671), rsi = the soldier (632690); then the counter, the sign and the count [rbx+0x4F8] are checked.
+    Check(std::memcmp(image.At(0x6325C6, 3), "\x48\x8B\xD9", 3) == 0 &&
+              std::memcmp(image.At(0x632651, 4), "\x44\x0F\xBE\xF0", 4) == 0 &&
+              std::memcmp(image.At(0x632671, 3), "\x44\x8B\xF8", 3) == 0 &&
+              std::memcmp(image.At(0x632690, 4), "\x48\x8B\x75\xC0", 4) == 0 &&
+              std::memcmp(image.At(0x6326A0, 14), "\x7F\x75\x45\x85\xF6\x78\x70\x44\x3B\xB3\xF8\x04\x00\x00", 14) == 0 &&
+              std::memcmp(image.At(0x63262B, 7), "\x48\x8D\x8B\xE0\xFE\xFF\xFF", 7) == 0 &&
+              kSoldierRideCounter == 0x1824,
+          "a seat request: rbx vehicle+0x120, r14d seat, r15d counter, rsi soldier, refused outside 0..[+0x618]", kRideRequest);
+
     // Packet sizes (packetsize.h): the hook at 12CFFD0's entry, and the three facts the log lines state.
     const auto packetHooks = PacketSizeHooks();
     Check(packetHooks.size() == 1, "one packet size hook");
@@ -928,6 +971,7 @@ int main(int argc, char** argv) {
     all.insert(all.end(), joinRetryPatches.begin(), joinRetryPatches.end());
     allHooks.insert(allHooks.end(), hostHooks.begin(), hostHooks.end());
     allHooks.insert(allHooks.end(), catchUpHooks.begin(), catchUpHooks.end());
+    allHooks.insert(allHooks.end(), rideHooks.begin(), rideHooks.end());
     auto spans = WriteSpans(all, allCalls, allHooks);
     // The remote-player correction factor is built at load (its operand depends on where the constant
     // lands), so it is not in the tables above - but it is still a write into EDF.dll and has to keep

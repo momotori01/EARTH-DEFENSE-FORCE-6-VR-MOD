@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <atomic>
 
 static int failures=0;
 #define CHECK(x) do { if(!(x)) { printf("FAIL line %d: %s\n",__LINE__,#x); ++failures; } } while(false)
@@ -611,6 +612,25 @@ int main() {
             std::memcpy(wrong,colours,sizeof(colours));wrong[1]=.49f;put(fourth+0x40,wrong);
             CHECK(!CrewColoursOf(fourth,main,sub,&route)&&route==0);
             CHECK(!CrewColoursOf(nullptr,main,sub));
+            // The search follows pointer-shaped words it does not own, and asks before
+            // it reads: no first-chance exception (2026-10-04: 0x70700 and 1.0f read as
+            // pointers filled EDF6MultiSlot's crash log at every mission start), and a
+            // guard page among them is left armed.
+            static unsigned char fifth[0x3000];
+            auto* reserved=VirtualAlloc(nullptr,0x1000,MEM_RESERVE,PAGE_NOACCESS);
+            auto* guard=static_cast<unsigned char*>(VirtualAlloc(nullptr,0x1000,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE|PAGE_GUARD));
+            put(fifth+0x10,reinterpret_cast<void*>(0x70700));put(fifth+0x18,reinterpret_cast<void*>(0x3F800000));
+            put(fifth+0x20,reserved);put(fifth+0x28,guard);
+            static std::atomic<int> faults{0};faults=0;
+            void* handler=AddVectoredExceptionHandler(1,[](EXCEPTION_POINTERS* e)->LONG{
+                const auto code=e->ExceptionRecord->ExceptionCode;
+                if(code==EXCEPTION_ACCESS_VIOLATION||code==STATUS_GUARD_PAGE_VIOLATION) faults.fetch_add(1);
+                return EXCEPTION_CONTINUE_SEARCH;});
+            CHECK(!CrewColoursOf(fifth,main,sub,&route)&&route==0);
+            CHECK(faults==0);
+            DWORD before=0;CHECK(VirtualProtect(guard,0x1000,PAGE_READWRITE|PAGE_GUARD,&before)&&(before&PAGE_GUARD));
+            RemoveVectoredExceptionHandler(handler);
+            VirtualFree(guard,0,MEM_RELEASE);VirtualFree(reserved,0,MEM_RELEASE);
         }
         CHECK(HandAimStick(ahead,aim(12,14),level,dead2,full2,x,y)&&std::fabs(x+.328f)<.005f&&y==0);   // left, at level (11.64 deg across)
     }

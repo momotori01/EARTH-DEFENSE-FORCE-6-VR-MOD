@@ -29,6 +29,7 @@
 #include "../src/packetsize.h"
 #include "../src/smoothing.h"
 #include "../src/handaim.h"
+#include "../src/ridelog.h"
 #include "menu_layout.h"
 
 using namespace multislot;
@@ -617,6 +618,7 @@ int wmain(int argc, wchar_t** argv) {
         if (netLog) {
             Check(Contains(log, "Net log: 15 EOS imports redirected"), "NetLog=1 installs all EOS import wrappers");
             for (const auto& hook : PacketSizeHooks()) Check(HookedInto(base, hook, plugin), "the packet size hook is installed with NetLog");
+            for (const auto& hook : RideLogHooks()) Check(HookedInto(base, hook, plugin), "the seat log is installed with NetLog");
             Check(Contains(log, "Packet sizes:"), "and says what it logs");
             for (const auto& call : SortieRecordCalls()) Check(RedirectedInto(base + call.rva, plugin), "the start sync record calls are measured with NetLog");
             for (const auto& hook : DiagnosticHooks()) Check(HookedInto(base, hook, plugin), hook.name);
@@ -624,6 +626,7 @@ int wmain(int argc, wchar_t** argv) {
         } else {
             Check(!Contains(log, "Net log:"), "NetLog=0 leaves the net log off");
             for (const auto& hook : PacketSizeHooks()) Check(SiteUntouched(base, hook), "no packet size hook without NetLog");
+            for (const auto& hook : RideLogHooks()) Check(SiteUntouched(base, hook), "no seat log without NetLog");
             for (const auto& call : SortieRecordCalls()) Check(CallTargets(base + call.rva, call.rva, call.target), "and the record calls are the game's");
             for (const auto& hook : DiagnosticHooks()) Check(SiteUntouched(base, hook), "diagnostic sites untouched without NetLog");
             for (const auto& call : DiagnosticCalls()) Check(CallTargets(base + call.rva, call.rva, call.target), "diagnostic calls untouched without NetLog");

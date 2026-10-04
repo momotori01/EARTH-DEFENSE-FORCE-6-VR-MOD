@@ -350,8 +350,14 @@ void SetCrewFigureTest(unsigned kind,unsigned model,unsigned preset) noexcept {
     g_crewFigureTest.store(kind>4?0u:(kind|(model&0xFu)<<4|(preset&0xFFu)<<8),std::memory_order_relaxed);
 }
 namespace {
+// Asked first (VirtualQuery), not tried: the search below follows thousands of
+// guessed pointers, and a faulting copy is a first-chance exception every
+// debugger and crash logger sees -- on 2026-10-04 they filled EDF6MultiSlot's
+// four-entry log for exceptions outside EDF.dll at every mission start, so a
+// later crash went unrecorded. Readable also refuses guard pages, which a
+// caught fault would have disarmed under some thread's stack.
 bool CrewCopy(std::uint64_t from,void* to,std::size_t n) noexcept {
-    if(from<0x10000||from>=0x7FFFFFFF0000ull)return false;
+    if(from<0x10000||from>=0x7FFFFFFF0000ull||!Readable(reinterpret_cast<const void*>(from),n))return false;
     __try {std::memcpy(to,reinterpret_cast<const void*>(from),n);return true;} __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 std::uint64_t CrewPointerAt(std::uint64_t at) noexcept {

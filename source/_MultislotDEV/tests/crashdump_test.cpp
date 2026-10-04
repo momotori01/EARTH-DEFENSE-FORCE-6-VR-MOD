@@ -45,6 +45,31 @@ void FaultOnce() {
     }
 }
 
+// The same fault from another place in this module, which counts as a new site.
+__declspec(noinline) void FaultElsewhere() {
+    __try {
+        volatile int* nowhere = reinterpret_cast<int*>(16);
+        *nowhere = 2;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+// A fault that nothing would have handled: the test stands in for the end of the process by calling the
+// last-chance filter from its own filter expression, then carries on.
+void FaultUnhandled() {
+    __try {
+        volatile int* nowhere = reinterpret_cast<int*>(32);
+        *nowhere = 3;
+    } __except (CrashLogLastChanceForTest(GetExceptionInformation()), EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+std::size_t Count(const std::string& text, const char* what) {
+    std::size_t n = 0;
+    for (std::size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) ++n;
+    return n;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -79,6 +104,8 @@ int main(int argc, char** argv) {
     }
     FaultOnce();
     Check(FileSize(dump) == first, "a second access violation writes no second dump");
+    FaultElsewhere();
+    FaultUnhandled();
 
     // The log says where it went, so whoever collects it knows there is a file to send.
     std::string text;
@@ -92,6 +119,12 @@ int main(int argc, char** argv) {
     }
     Check(text.find("CRASH DUMP written") != std::string::npos, "the log names the dump it wrote");
     Check(text.find("EXCEPTION C0000005") != std::string::npos, "and still records the exception itself");
+    // 1.6.7: a place is recorded once however often it faults (FaultOnce twice), a new place still is
+    // (FaultElsewhere), and the last-chance filter records the fault that ends the process even when its
+    // place has been seen - here the first-chance line and the FATAL line for FaultUnhandled.
+    Check(Count(text, "EXCEPTION C0000005") == 3, "each faulting place once: twice the same, two others");
+    Check(Count(text, "FATAL unhandled exception C0000005") == 1, "the fault nothing handled is marked FATAL");
+    Check(Count(text, "CRASH DUMP written") == 1, "still one dump per launch");
 
     if (failures) std::printf("--- log was ---\n%s---------------\n", text.c_str());
     DeleteFileW(dump.c_str());

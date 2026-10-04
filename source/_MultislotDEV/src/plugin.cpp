@@ -36,12 +36,13 @@
 #include "gaplog.h"
 #include "packetsize.h"
 #include "handaim.h"
+#include "ridelog.h"
 #include "versionmsg.h"
 
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.6.6";
+constexpr const char* kVersion = "1.6.7";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -165,6 +166,20 @@ bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int gho
         for (const auto& site : DiagnosticHooks()) hooks.push_back({site, JoinLogHookHandler(site.rva)});
     if (diagnostics)
         for (const auto& site : PacketSizeHooks()) hooks.push_back({site, PacketSizeHookHandler(site.rva)});
+    // The seat log only reads; when its sites are not the expected code it alone stays out.
+    if (diagnostics) {
+        const auto rides = RideLogHooks();
+        bool expected = true;
+        for (const auto& site : rides) {
+            const Patch verify{site.name, site.rva, site.original, site.original};
+            expected = expected && site.rva + site.original.size() <= kImageSize && Matches(base + site.rva, verify);
+        }
+        if (expected)
+            for (const auto& site : rides) hooks.push_back({site, RideLogHookHandler(site.rva)});
+        else
+            Log("RIDE: the seat sites (EDF+%X...) are not the expected code; vehicle seats are not logged",
+                rides.empty() ? 0u : rides[0].rva);
+    }
     if (desync)
         for (const auto& site : DesyncHooks()) hooks.push_back({site, DesyncHookHandler(site.rva)});
     // Optional, unlike everything else here: when these four are not the expected code only this part goes,
@@ -607,6 +622,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     InitDesyncMeter(base, smoothing > 0.0f ? smoothing : kVanillaSmoothing);
     InitPacketSize(base);
     InitHandAim(base);
+    InitRideLog(base);
     InitVersionMessage(base);
     if (!Apply(base, roomView.dummies, mission, spawns, ghosts, netLog, copyArmorKey || copyArmorPad, recovery,
                desyncMeter, smoothing, positionEveryPacket, facingEveryPacket, joinRetrySeconds, handAim, thunks)) {

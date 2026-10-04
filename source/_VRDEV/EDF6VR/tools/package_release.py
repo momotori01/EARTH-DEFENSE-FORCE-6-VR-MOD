@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.1.6'
+VERSION = '3.1.7'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.6.zip'
-MULTISLOT_SHA = '3483667C2FEE710E4771A6F73DC188193FA44D46EB05FCFCF17B3AAA29DBA9E2'
-MULTISLOT_DLL_SHA = 'E468EA7865DDCB48B0A149FA175235AD5DE3AF9EDB3D3DCEA7BEF4A6DA4E2DC3'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.7.zip'
+MULTISLOT_SHA = '7E9DC3104E2DCE517FDBB38CF81064822703D9D72AEB8C6F112CC2FE19A0C0E3'
+MULTISLOT_DLL_SHA = 'A77C8C9199E54FBFBC6DDBFABC9750C8A204B2884940F077044065E614DF6C6F'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -102,8 +102,14 @@ MULTISLOT_DLL_SHA = 'E468EA7865DDCB48B0A149FA175235AD5DE3AF9EDB3D3DCEA7BEF4A6DA4
 # Loot 0.1.3 (the white/black text endings). With EDF6MultiSlot 1.6.6 (rooms
 # kept apart from older versions; its README without the difficulty notes,
 # the user's wish -- ZIP and DLL hashes checked here on 2026-10-04).
-VERIFIED_VR_SHA = '8004418D9200C9D12328E1DE6EEB4DA82CF4F6239E6001C5E8255168275A5DA2'
-VERIFIED_SETTINGS_SHA = '5EDE432370EE797AE16AF3BC48FC4A1889695F47304EC10C8BCB80FF739A5B12'
+# 3.1.7 (the user: "おｋ上げて"): the crew-colour search asks before it reads
+# (no first-chance exceptions, guard pages left armed; tested). With
+# EDF6MultiSlot 1.6.7 (its exception log keeps fatal ones, seat and vehicle
+# appearance logging; rooms as 1.6.6 -- ZIP and DLL hashes checked here on
+# 2026-10-05, the rebuilt ZIP 7E9DC310).
+# VERIFIED_* below: the 3.1.7 build.
+VERIFIED_VR_SHA = '5BB298D0B61FDBF8B59B61A79B5E6A97EF07EDC77F8A44F32F4A4AAE2B2805E0'
+VERIFIED_SETTINGS_SHA = 'EC454BB8C4E5F03A7FB3E0F09C70C3F68493DD3F6A9BA95669BE746556807D68'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()
