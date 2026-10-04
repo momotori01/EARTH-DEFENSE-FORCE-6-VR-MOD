@@ -55,6 +55,7 @@ enum : int {
     ID_SCOPE_VIEW, ID_SCOPE_DIGITAL, ID_SCOPE_OFF, ID_SCOPE_APPLY,
     ID_LIGHT_ON, ID_LIGHT_APPLY,
     ID_SIGHT_APPLY,
+    ID_HD_USE,
 };
 // The hand aim's switches, one a kind of seat, as the mod reads them ([VR]),
 // with their defaults (the Depth Crawler and the Barga off).
@@ -300,7 +301,7 @@ constexpr int kLeft=24,kRight=332,kApplyX=656,kRowHeight=78,kTop=46,kWidth=760;
 constexpr int kRows=10;  // the longer tab's rows: Extra VR settings
 
 HWND g_stUpdate,g_btUpdate,g_stMode,g_rbVr,g_rbFlat,g_stSize,g_rbLow,g_rbNormal,g_rbHigh,g_rbCustom,g_edSize,
-     g_stHd,g_pbHd,g_btHdMake,g_btHdDelete,g_stCrew,g_pbCrew,g_btCrewMake,g_btCrewDelete,g_stHand,g_cbRight,g_cbLeft,g_stLogs,g_btLogs,
+     g_stHd,g_pbHd,g_btHdMake,g_btHdDelete,g_cbHdUse,g_stCrew,g_pbCrew,g_btCrewMake,g_btCrewDelete,g_stHand,g_cbRight,g_cbLeft,g_stLogs,g_btLogs,
      g_stCockpit,g_cbCockpit,g_stHandAim,g_cbHandAim[8],g_stHud,g_cbHud,g_rbCorner,g_rbRWrist,g_rbLWrist,g_stReticle,g_edReticle,g_stScope,g_rbScopeView,g_rbScopeDigital,g_rbScopeOff,
      g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stLight,g_cbLight,g_btLight,g_stSight,g_edSight[3],g_stReset;
 
@@ -351,11 +352,13 @@ void Say(HWND status,const std::wstring& text,bool bad=false) {
     Colour(status,bad?RGB(200,0,0):RGB(0,0,0));
 }
 
+void PlaceHdUse();   // with the HD row, below
 void ShowTab(int tab) {
     g_shownTab=tab;
     for(const auto& row:g_rows) if(row.tab>=0) for(HWND h:row.parts) ShowWindow(h,row.tab==tab?SW_SHOW:SW_HIDE);
     if(g_task!=Task::Hd) ShowWindow(g_pbHd,SW_HIDE);
     if(!g_crewRunning) ShowWindow(g_pbCrew,SW_HIDE);
+    PlaceHdUse();
 }
 // A window taller than the screen's work area (more rows, or large text) is cut
 // to fit and scrolls: every part moves together by how far it scrolled.
@@ -404,11 +407,23 @@ void ShowVersions() {
     if(!g_updateNote.empty()) text+=L"\n"+g_updateNote;
     Say(g_stUpdate,text,g_updateNoteBad);
 }
+// The "Use HD textures" box: in the progress bar's place, so shown only on its
+// tab, while nothing is being made, and once there is a pack to switch. Off is
+// the pack's files renamed aside (hd_textures.py --off, off.txt beside it), so
+// they can be compared with the game's own pictures without deleting them.
+void PlaceHdUse() {
+    const std::wstring tools=g_root+L"\\Mods\\HDTexture";
+    const bool made=Exists(tools+L"\\complete.txt") || Exists(g_root+L"\\Mods\\HDTextureWork\\written.txt");
+    SetCheck(g_cbHdUse,!Exists(tools+L"\\off.txt"));
+    ShowWindow(g_cbHdUse,g_shownTab==0 && g_task!=Task::Hd && made?SW_SHOW:SW_HIDE);
+}
 void ShowHd() {
     if(g_task==Task::Hd) return;
+    PlaceHdUse();
     const std::wstring tools=g_root+L"\\Mods\\HDTexture";
     if(!Exists(tools+L"\\python\\python.exe") || !Exists(tools+L"\\hd_textures.py"))
         Say(g_stHd,L"The HD texture tools are missing.\nExtract the mod again.",true);
+    else if(Exists(tools+L"\\off.txt")) Say(g_stHd,L"Made, but turned off.\nThe game uses its normal pictures.");
     else if(Exists(tools+L"\\complete.txt")) Say(g_stHd,L"Made.\nThey are used in the game.");
     // A pack from before complete.txt existed may be whole or not: say so plainly.
     else if(Exists(g_root+L"\\Mods\\HDTextureWork\\written.txt")) Say(g_stHd,L"Made, but not checked.\nPress Make to check and finish it.");
@@ -736,6 +751,7 @@ void StartHd(bool remove) {
     const bool crewAhead=!remove && Exists(CrewTool()) && CrewNeeded();
     g_task=Task::Hd; g_hdLast.clear();
     RefreshButtons();
+    PlaceHdUse();
     SendMessageW(g_pbHd,PBM_SETPOS,0,0);
     ShowWindow(g_pbHd,remove?SW_HIDE:SW_SHOW);
     Say(g_stHd,remove?L"Deleting...":crewAhead?L"Waiting for the crew figures...":L"Starting... (reading the game files)");
@@ -749,6 +765,26 @@ void StartHd(bool remove) {
             int percent=0; std::string detail;
             if(ParseProgress(s,percent,detail)) Post(WM_APP_HD_PROGRESS,static_cast<WPARAM>(percent),Wide(detail));
             else if(!Trim(s).empty()) Post(WM_APP_HD_LINE,0,Wide(Trim(s)));
+        });
+        PostMessageW(g_window,WM_APP_HD_DONE,code,0);
+    }).detach();
+}
+
+// The box: off sets the pack's files aside, on puts them back (a second or two;
+// nothing is deleted, nothing is made).
+void SwitchHd(bool on) {
+    if(GameRunning()) { Say(g_stHd,L"Close the game first.",true); PlaceHdUse(); return; }
+    const std::wstring python=g_root+L"\\Mods\\HDTexture\\python\\python.exe",tool=g_root+L"\\Mods\\HDTexture\\hd_textures.py";
+    if(!Exists(python) || !Exists(tool)) { ShowHd(); return; }
+    g_task=Task::Hd; g_hdLast.clear();
+    RefreshButtons();
+    PlaceHdUse();
+    ShowWindow(g_pbHd,SW_HIDE);
+    Say(g_stHd,on?L"Turning on...":L"Turning off...");
+    const std::wstring command=L"\""+python+L"\" \""+tool+(on?L"\" --on":L"\" --off");
+    std::thread([command]() {
+        const DWORD code=RunCaptured(command,g_root,g_job,[](const std::string& s) {
+            if(!Trim(s).empty()) Post(WM_APP_HD_LINE,0,Wide(Trim(s)));
         });
         PostMessageW(g_window,WM_APP_HD_DONE,code,0);
     }).detach();
@@ -853,7 +889,9 @@ void Build() {
 
     g_stHd=BeginRow(L"HD textures",L"Makes walls, weapons and enemies 2x sharper.\nTakes about 1 hour and 40 GB of disk.\n高画質化（約1時間・空き容量40GB）",2,226);
     g_pbHd=Part(PROGRESS_CLASSW,L"",0,kRight,g_y+44,226,14);
-    g_btHdMake=Button(L"Make",ID_HD_MAKE,kApplyX-88,80); g_btHdDelete=Button(L"Delete",ID_HD_DELETE); EndRow();
+    g_btHdMake=Button(L"Make",ID_HD_MAKE,kApplyX-88,80); g_btHdDelete=Button(L"Delete",ID_HD_DELETE);
+    g_cbHdUse=Part(L"BUTTON",L"Use HD textures  （ゲームで使う）",BS_CHECKBOX|WS_TABSTOP,kRight,g_y+46,226,22,ID_HD_USE);
+    g_actions.push_back(g_cbHdUse); EndRow();
 
     g_stCrew=BeginRow(L"Crew figures",L"The other player in the Proteus's twin seat,\nas their own soldier. Made with HD textures.\n搭乗者フィギュア（HDテクスチャと一緒に作成）",2,226);
     g_pbCrew=Part(PROGRESS_CLASSW,L"",0,kRight,g_y+44,226,14);
@@ -923,6 +961,7 @@ void OnCommand(int id) {
     case ID_SIZE_APPLY: ApplySize(); break;
     case ID_HD_MAKE: StartHd(false); break;
     case ID_HD_DELETE: StartHd(true); break;
+    case ID_HD_USE: SwitchHd(!Checked(g_cbHdUse)); break;
     case ID_CREW_MAKE: StartCrew(); break;
     case ID_CREW_DELETE: DeleteCrew(); break;
     case ID_HAND_RIGHT: case ID_HAND_LEFT: Pick({g_cbRight,g_cbLeft},GetDlgItem(g_window,id)); break;

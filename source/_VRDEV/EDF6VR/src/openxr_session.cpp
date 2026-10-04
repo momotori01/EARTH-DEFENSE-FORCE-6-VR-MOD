@@ -313,6 +313,16 @@ std::atomic<int> g_frameEye{-1};
 // last frame of the mission, which is unreadable. The board is what that wants.
 std::atomic<unsigned long long> g_frameEyeStamp{0};
 std::atomic<int> g_displayForce{0};   // 0 automatic, 1 board, 2 the world
+// The last update of a menu window (menu_board.h: the pause menu, the mission
+// failed screens, a dialog): while one is fresh the display is the board and the
+// HUD is not captured, online as well, where the scene never goes stale under a
+// menu. A menu that is gone stops being updated, so this ends by itself.
+std::atomic<unsigned long long> g_menuSeenAt{0};
+constexpr unsigned long long kMenuFreshMs=300;
+bool MenuShowing() noexcept {
+    const auto at=g_menuSeenAt.load(std::memory_order_relaxed);
+    return at && GetTickCount64()-at<kMenuFreshMs;
+}
 // The compositor showing its own background means it never took our frame,
 // and the result of xrEndFrame was the one thing never being looked at.
 std::atomic<int> g_lastEndFrame{0};
@@ -2429,7 +2439,7 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
 
     const int force=g_displayForce.load(std::memory_order_relaxed);
     const bool sceneLive=force?force==2
-        :GetTickCount64()-g_frameEyeStamp.load(std::memory_order_relaxed)<750;
+        :!MenuShowing() && GetTickCount64()-g_frameEyeStamp.load(std::memory_order_relaxed)<750;
     XrDisplayMode mode=sceneLive?g_displayMode.load(std::memory_order_relaxed)
                                       :XrDisplayMode::Quad;
     // Never silently send a depth-warped or stale pair as native stereo. A failed
@@ -3312,7 +3322,7 @@ bool OpenXrRuntime::UiCaptureAvailable() const noexcept {
         || g_mode.load()!=XrMode::HeadsetDisplay || !g_uiLayer.load()
         || g_displayMode.load()==XrDisplayMode::Quad) return false;
     const int force=g_displayForce.load();
-    return force!=1 && (force==2 || SceneAgeMs()<750);
+    return force!=1 && (force==2 || (SceneAgeMs()<750 && !MenuShowing()));
 }
 
 void OpenXrRuntime::SetWarpEase(float kneeMetres,float scale) noexcept {
@@ -3397,6 +3407,12 @@ void OpenXrRuntime::ReadAlpha(int& low,int& high) const noexcept {
 void OpenXrRuntime::ForceDisplay(int mode) noexcept {
     g_displayForce.store(mode,std::memory_order_relaxed);
 }
+
+void OpenXrRuntime::MarkMenuOpen() noexcept {
+    g_menuSeenAt.store(GetTickCount64(),std::memory_order_relaxed);
+}
+
+bool OpenXrRuntime::MenuOpen() const noexcept { return MenuShowing(); }
 
 void OpenXrRuntime::MarkSceneLive() noexcept {
     // What tells a mission from a menu is the player's own body being drawn.

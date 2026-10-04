@@ -204,6 +204,10 @@ public:
     // Called while a soldier is being driven. Without one for a moment the
     // display drops to the board, which is what a menu wants.
     void MarkSceneLive() noexcept;
+    // Called while a menu window is being updated (menu_board.h): the board
+    // and no HUD capture until 0.3 s after the last one, online too.
+    void MarkMenuOpen() noexcept;
+    bool MenuOpen() const noexcept;
     // 0 decides for itself, 1 always the board, 2 always the world.
     // The lowest and highest alpha in the middle of the last image handed over,
     // or -1 before one has been read.

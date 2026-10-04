@@ -32,6 +32,20 @@ CreateUi originalCreateUi=nullptr;
 Bgm originalBgm=nullptr;
 constexpr unsigned uiCall=0x1B2876,uiTarget=0x119C600;
 constexpr unsigned bgmCall=0x1ACD77,bgmTarget=0x7B27B0;
+// The story message window (CreateStoryMessageWindow, native 1B2210, registered
+// at 1EB868 for "::StoryMessageWindow@ CreateStoryMessageWindow()"): its object
+// is allocated by the call at 1B221E. In the shipped missions the only scripts
+// that open one are the white-out / black-out endings (AsCommon.h WhiteOutMessage
+// and BlackOutMessage: M011, M039, M055, M066, M092, M093_2, M099, M116, RM081,
+// DLC M099; M000B's are commented out), and each goes on to ResetScene() two
+// seconds later and only then to the mission-clear banner. ResetScene takes the
+// soldier and the items away, so at the banner there is no pickup update left to
+// collect in (the log: CLEAR ... recentRecipient=0). The window is the clear
+// signal there (the user, 2026-10-04: arm the collection when the text
+// presentation starts).
+using StoryAlloc=void*(__fastcall*)(std::size_t);
+StoryAlloc originalStoryAlloc=nullptr;
+constexpr unsigned storyCall=0x1B221E,storyTarget=0x12D85B0,storyFunction=0x1B2210,storyRegister=0x1EB868,storyDeclaration=0x1796DF8;
 using Pickup=void(__fastcall*)(void*,void*,const float*,float,float,void*);
 using Exit=void(__fastcall*)(void*,int);
 Pickup originalPickup=nullptr;
@@ -136,6 +150,14 @@ void __fastcall HookBgm(void* manager,const char* track) {
     if(named && (!std::strcmp(name,"Jingle_MissionCleared") || !std::strcmp(name,"Jingle_MissionClearedFinal")))
         ArmClear("mission-clear-jingle",GetTickCount64());
 }
+void* __fastcall HookStoryAlloc(std::size_t size) {
+    void* window=originalStoryAlloc(size);
+    static unsigned seen=0;
+    if(seen<32){++seen;Log("STORY message window opened (%zu bytes)",size);}
+    // Armed like the banner: collected on the next pickup update, before ResetScene.
+    if(window)ArmClear("story-message-window",GetTickCount64());
+    return window;
+}
 // No copied positions or reconstructed callbacks are passed into native pickup.
 // Its SSE position operand at 2C8B48 requires the game's original alignment.
 int Remaining(void* manager) noexcept {
@@ -197,6 +219,11 @@ bool CheckProfile(HMODULE handle) noexcept {
         const unsigned char enumClear[]={0x41,0xB9,1,0,0,0};
         const unsigned char ui[]={0xE8,0x85,0x9D,0xFE,0};
         const unsigned char bgm[]={0xE8,0x34,0x5A,0x60,0};
+        // 1B2210: push rbx; sub rsp,20h; mov rbx,rcx; mov ecx,0B0h; call 12D85B0 (the window's allocation).
+        const unsigned char story[]={0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0xD9,0xB9,0xB0,0,0,0,0xE8,0x8D,0x63,0x12,1};
+        // 1EB868: lea rcx,[1B2210], the function pointer registered with the declaration at 1EB889.
+        const unsigned char storyLea[]={0x48,0x8D,0x0D,0xA1,0x69,0xFC,0xFF};
+        const unsigned char storyDecl[]={0x48,0x8D,0x15,0x68,0xB5,0x5A,0x01};
         const unsigned char soundCall[]={0x48,0x8B,0x0D,0xDB,0xB3,0xDE,1,0x48,0x8D,0x15,0x7C,0xF7,0x4D,1,0x45,0x33,0xC0,0xE8,0xDC,0xB2,0x4E,0};
         if(std::memcmp(base+0x2C8B97,distance,sizeof(distance)) || std::memcmp(base+exitLea,exitLoad,sizeof(exitLoad))
            || std::memcmp(base+pickupCall,pickup,sizeof(pickup)) || std::memcmp(base+0x1E3624,enumClear,sizeof(enumClear))
@@ -205,6 +232,10 @@ bool CheckProfile(HMODULE handle) noexcept {
            || *reinterpret_cast<void**>(base+callbackTable+8)!=base+0x5A45D0
            || *reinterpret_cast<void**>(base+callbackTable+0x28)!=base+0x5A4610
            || std::memcmp(base+uiCall,ui,sizeof(ui)) || std::memcmp(base+bgmCall,bgm,sizeof(bgm))
+           || std::memcmp(base+storyFunction,story,sizeof(story)) || base+storyCall+5+*reinterpret_cast<const std::int32_t*>(base+storyCall+1)!=base+storyTarget
+           || std::memcmp(base+storyRegister,storyLea,sizeof(storyLea)) || base+storyRegister+7+*reinterpret_cast<const std::int32_t*>(base+storyRegister+3)!=base+storyFunction
+           || std::memcmp(base+0x1EB889,storyDecl,sizeof(storyDecl)) || base+0x1EB889+7+*reinterpret_cast<const std::int32_t*>(base+0x1EB889+3)!=base+storyDeclaration
+           || std::strcmp(reinterpret_cast<const char*>(base+storyDeclaration),"::StoryMessageWindow@ CreateStoryMessageWindow()")
            || std::strcmp(reinterpret_cast<const char*>(base+0x1796DD0),"::UI CreateUI_File(const string & in)")
            || std::strcmp(reinterpret_cast<const char*>(base+0x1796E80),"void Bgm(const string & in)")
            || std::memcmp(base+0x2C756E,soundCall,sizeof(soundCall))
@@ -219,6 +250,7 @@ bool Install(bool& published) noexcept {
     originalPlaySound=reinterpret_cast<PlaySound>(image+soundTarget);
     originalCreateUi=reinterpret_cast<CreateUi>(image+uiTarget);
     originalBgm=reinterpret_cast<Bgm>(image+bgmTarget);
+    originalStoryAlloc=reinterpret_cast<StoryAlloc>(image+storyTarget);
     // Patch the native script's registered function address, not script files
     // or a shared VM dispatcher. The pointer uses the same member-call ABI.
     void* thunk=AllocateNearThunk(image+exitLea,reinterpret_cast<void*>(&HookExit));
@@ -229,7 +261,8 @@ bool Install(bool& published) noexcept {
     }
     published=true;
     if(!RedirectCall(image+uiCall,reinterpret_cast<void*>(originalCreateUi),reinterpret_cast<void*>(&HookCreateUi),changed)
-       || !RedirectCall(image+bgmCall,reinterpret_cast<void*>(originalBgm),reinterpret_cast<void*>(&HookBgm),changed)) {
+       || !RedirectCall(image+bgmCall,reinterpret_cast<void*>(originalBgm),reinterpret_cast<void*>(&HookBgm),changed)
+       || !RedirectCall(image+storyCall,reinterpret_cast<void*>(originalStoryAlloc),reinterpret_cast<void*>(&HookStoryAlloc),changed)) {
         VirtualFree(thunk,0,MEM_RELEASE);return false;
     }
     const auto delta=reinterpret_cast<std::intptr_t>(thunk)-reinterpret_cast<std::intptr_t>(image+exitLea+7);
@@ -248,13 +281,13 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     auto dot=wcsrchr(ini,L'.');if(!dot)return false;wcscpy_s(dot,MAX_PATH-(dot-ini),L".ini");
     wcscpy_s(logPath,ini);wcscpy_s(wcsrchr(logPath,L'.'),MAX_PATH-(wcsrchr(logPath,L'.')-logPath),L".log");
     enabled=GetPrivateProfileIntW(L"ClearLoot",L"Enabled",1,ini)!=0;
-    info->infoVersion=PluginInfo::MaxInfoVer;info->name="EDF6 Clear Loot";info->version=PLUG_VER(0,1,2,0);
-    Log("EDF6ClearLoot 0.1.2 loading; enabled=%d; independent of VR",enabled.load());
+    info->infoVersion=PluginInfo::MaxInfoVer;info->name="EDF6 Clear Loot";info->version=PLUG_VER(0,1,3,0);
+    Log("EDF6ClearLoot 0.1.3 loading; enabled=%d; independent of VR",enabled.load());
     // Install even when saved OFF so F1 can turn it back on next session.
     if(!CheckProfile(GetModuleHandleW(L"EDF.dll"))){Log("REFUSED: unsupported game or conflicting patch");return false;}
     bool published=false;const bool ok=Install(published);
     if(!ok)enabled=false;
-    Log("HOOK ready=%d published=%d pickup=59B938 clearUi=1B2876 clearBgm=1ACD77 exitReset=1E649E",ok,published);
+    Log("HOOK ready=%d published=%d pickup=59B938 clearUi=1B2876 clearBgm=1ACD77 storyWindow=1B221E exitReset=1E649E",ok,published);
     return ok || published; // Never unload code referenced by a published callback.
 }
 BOOL WINAPI DllMain(HINSTANCE instance,DWORD reason,LPVOID) {

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <thread>
 #include <stdexcept>
+#include <vector>
 
 using namespace multislot;
 namespace {
@@ -184,6 +185,134 @@ void RecoveryTests() {
     VirtualFree(mappedGame, 0, MEM_RELEASE);
     gameAddress = 0;
 }
+
+// Hand aim (handaim.h): rides on the game's own data sends and is taken out of its receives.
+std::vector<SendPacketOptions> aimSends;
+std::vector<std::vector<std::uint8_t>> aimData;
+EOS_EResult aimResult = 0;
+EOS_EResult FakeAimSend(void* handle, const SendPacketOptions* options) {
+    Check(handle == expectedHandle, "hand aim keeps the EOS handle");
+    aimSends.push_back(*options);
+    const auto* bytes = static_cast<const std::uint8_t*>(options->Data);
+    aimData.emplace_back(bytes, bytes + options->DataLengthBytes);
+    return aimSends.size() == 1 ? aimResult : 0;
+}
+const char* AddressNamer(const void* id, char* out, std::size_t size) {
+    std::snprintf(out, size, "peer-%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(id)));
+    return out;
+}
+struct Queued {
+    const void* peer;
+    std::uint8_t channel;
+    std::vector<std::uint8_t> bytes;
+};
+std::vector<Queued> inbox;
+std::size_t inboxNext = 0;
+EOS_EResult FakeQueueReceive(void*, const void*, void** peer, SocketId*, std::uint8_t* channel, void* data, std::uint32_t* size) {
+    ++receiveCalls;
+    if (inboxNext >= inbox.size()) return 13;  // EOS_NotFound: nothing waiting
+    const auto& q = inbox[inboxNext++];
+    *peer = const_cast<void*>(q.peer);
+    *channel = q.channel;
+    std::memcpy(data, q.bytes.data(), q.bytes.size());
+    *size = static_cast<std::uint32_t>(q.bytes.size());
+    return 0;
+}
+void HandAimTests() {
+    ResetHandAimForTest();
+    SetHandAimPeerNamer(&AddressNamer);
+    originalSendPacket = &FakeAimSend;
+    const SocketId socket{1, "game-socket"};
+    std::uint8_t payload[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    SendPacketOptions game{};
+    game.ApiVersion = 3;
+    game.LocalUserId = Peer(0);
+    game.RemoteUserId = Peer(5);
+    game.Socket = &socket;
+    game.Channel = 0;
+    game.DataLengthBytes = sizeof(payload);
+    game.Data = payload;
+    game.Reliability = 0;
+    game.DisableAutoAccept = 1;
+    const SendPacketOptions before = game;
+    const auto send = [&](std::uintptr_t caller) {
+        aimSends.clear();
+        aimData.clear();
+        return DispatchSendPacket(expectedHandle, &game, caller);
+    };
+    send(0x12C8C5A);
+    Check(aimSends.size() == 1, "nothing extra before EDF6VR gives a direction");
+    const float dir[3] = {0.0f, 1.0f, 0.0f};
+    SetLocalHandAim(0, dir, GetTickCount64());
+    send(0x12C90F2);
+    Check(aimSends.size() == 1, "never after a hello (12C8F50): that peer may not be connected yet");
+    send(0x12C8C5A);
+    Check(aimSends.size() == 2, "after the game's data to a peer, one hand aim packet to the same peer");
+    if (aimSends.size() == 2) {
+        const auto& ours = aimSends[1];
+        Check(ours.ApiVersion == 3 && ours.LocalUserId == Peer(0) && ours.RemoteUserId == Peer(5) &&
+                  ours.Socket == &socket && ours.DisableAutoAccept == 1,
+              "on the game's own socket, from and to the same users");
+        Check(ours.Channel == kHandAimChannel && ours.Reliability == 0 && ours.AllowDelayedDelivery == 0 &&
+                  IsMultiSlotPacket(aimData[1].data(), static_cast<std::uint32_t>(aimData[1].size())) &&
+                  aimData[1].size() == 9 + 7,
+              "on its own channel, unreliable, carrying one slot");
+        Check(aimSends[0].Data == payload && aimData[0].size() == sizeof(payload) && aimSends[0].Channel == 0,
+              "the game's packet went first, untouched");
+    }
+    Check(std::memcmp(&game, &before, sizeof(game)) == 0, "the game's options are not written to");
+    send(0x12C8C5A);
+    Check(aimSends.size() == 1, "not again within kHandAimSendGapMs");
+    game.RemoteUserId = Peer(6);
+    send(0x12C8C5A);
+    Check(aimSends.size() == 2, "each peer on its own clock");
+    game.RemoteUserId = Peer(7);
+    aimResult = 1;
+    send(0x12C8C5A);
+    Check(aimSends.size() == 1, "nothing when the game's own send failed (no connection)");
+    aimResult = 0;
+    SetHandAimEnabled(false);
+    game.RemoteUserId = Peer(8);
+    send(0x12C8C5A);
+    Check(aimSends.size() == 1, "HandAim=0 sends nothing extra");
+    SetHandAimEnabled(true);
+
+    // Receive: ours are taken out and the next packet is handed to the game in their place.
+    std::uint8_t built[kHandAimMaxPacket]{};
+    const auto builtSize = BuildHandAimPacket(built, sizeof(built), GetTickCount64());
+    const std::vector<std::uint8_t> aim(built, built + builtSize);
+    const std::vector<std::uint8_t> gamePacket = {1, 0, 0, 0, 0x44, 0x33, 0x22, 0x11};
+    originalReceivePacket = &FakeQueueReceive;
+    inbox = {{Peer(3), kHandAimChannel, aim}, {Peer(3), kHandAimChannel, aim}, {Peer(4), 0, gamePacket}};
+    inboxNext = 0;
+    receiveCalls = 0;
+    void* from = nullptr;
+    SocketId fromSocket{};
+    std::uint8_t channel = 0;
+    static std::uint8_t buffer[0x1000]{};
+    std::uint32_t size = 0;
+    Check(HookReceivePacket(expectedHandle, nullptr, &from, &fromSocket, &channel, buffer, &size) == 0 &&
+              receiveCalls == 3 && from == Peer(4) && channel == 0 && size == gamePacket.size() &&
+              std::memcmp(buffer, gamePacket.data(), gamePacket.size()) == 0,
+          "the game gets its own packet, after the two of ours");
+    char text[40]{};
+    AddressNamer(Peer(3), text, sizeof(text));
+    float got[3]{};
+    Check(RemoteHandAim(text, 0, got, GetTickCount64()) && got[1] > 0.99f, "and ours were kept for EDF6VR");
+    inbox = {{Peer(3), kHandAimChannel, aim}};
+    inboxNext = 0;
+    receiveCalls = 0;
+    Check(HookReceivePacket(expectedHandle, nullptr, &from, &fromSocket, &channel, buffer, &size) == 13 && receiveCalls == 2,
+          "when only ours were waiting, the game hears that nothing is waiting");
+    inbox.assign(100, Queued{Peer(3), kHandAimChannel, aim});
+    inboxNext = 0;
+    receiveCalls = 0;
+    Check(HookReceivePacket(expectedHandle, nullptr, &from, &fromSocket, &channel, buffer, &size) == 0 && receiveCalls == 65,
+          "a flood is cut off after 64 (the 65th reaches the game, which drops it unread)");
+    originalReceivePacket = &FakeReceive;
+    SetHandAimPeerNamer(nullptr);
+    ResetHandAimForTest();
+}
 }
 int main() {
     originalSendPacket = &FakeSend;
@@ -208,6 +337,7 @@ int main() {
     Check(leaveCalls == 1, "leave called once");
     Check(IsHello(payload, 8) && !IsHello(payload, 3) && !IsHello(nullptr, 8), "hello probe checks minimum length");
     RecoveryTests();
+    HandAimTests();
     std::printf("network wrapper forwarding: %d failures\n", failures);
     return failures ? 1 : 0;
 }

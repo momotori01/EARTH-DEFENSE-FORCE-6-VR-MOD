@@ -1,10 +1,12 @@
-EDF6 Clear Loot 0.1.2
+EDF6 Clear Loot 0.1.3
 ====================
 
 This is a SEPARATE EDFModLoader plugin. It works without EDF6VR or a headset.
 It collects remaining weapon, armor and health drops through the game's normal
 pickup routine on the next normal soldier update after detecting the mission-clear
-UI or jingle, collecting around the appearance of "Mission Cleared".
+UI or jingle, collecting around the appearance of "Mission Cleared". Missions that
+end on a white or black text screen take the soldier and the items away before
+"Mission Cleared", so there the text screen's appearance is the signal (0.1.3).
 It does not invoke pickup from the result transition.
 Normal in-mission pickup distance, drops, reward limits and save logic are unchanged.
 Aborting or retrying a mission does not trigger collection.

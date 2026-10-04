@@ -28,6 +28,7 @@
 #include "../src/gaplog.h"
 #include "../src/packetsize.h"
 #include "../src/smoothing.h"
+#include "../src/handaim.h"
 #include "menu_layout.h"
 
 using namespace multislot;
@@ -289,6 +290,9 @@ int wmain(int argc, wchar_t** argv) {
                           : mode == L"facing"    ? "[MultiSlot]\r\nEnabled=1\r\nNetLog=1\r\n[Sync]\r\nPositionEveryPacket=0\r\nFacingEveryPacket=1\r\n"
                           : mode == L"sendall"   ? "[MultiSlot]\r\nEnabled=1\r\nNetLog=1\r\n[Sync]\r\nPositionEveryPacket=1\r\nFacingEveryPacket=1\r\n"
                           : mode == L"sendoff"   ? "[MultiSlot]\r\nEnabled=1\r\nNetLog=1\r\n[Sync]\r\nPositionEveryPacket=0\r\nFacingEveryPacket=0\r\n"
+                          : mode == L"joinretry5"   ? "[MultiSlot]\r\nEnabled=1\r\nJoinRetrySeconds=5\r\n"
+                          : mode == L"joinretrybad" ? "[MultiSlot]\r\nEnabled=1\r\nJoinRetrySeconds=999\r\n"
+                          : mode == L"handaimoff"   ? "[MultiSlot]\r\nEnabled=1\r\n[Sync]\r\nHandAim=0\r\n"
                                                  : "[MultiSlot]\r\nEnabled=1\r\nEightPlayerRooms=1\r\nCrashLog=1\r\nNetLog=1\r\n"
                                                    "[RoomScreen]\r\nDummyMembers=1\r\nPageKey=F2\r\nDummyAddKey=F3\r\nDummyRemoveKey=F4\r\n"
                                                    "[Test]\r\nGhostPlayers=4\r\n[Mission]\r\nScale6=1.25\r\n";
@@ -331,6 +335,41 @@ int wmain(int argc, wchar_t** argv) {
         Check(Contains(log, positions ? "Sync/PositionEveryPacket=1:" : "Sync/PositionEveryPacket=0:"), "the position setting is logged");
         Check(Contains(log, facing ? "Sync/FacingEveryPacket=1:" : "Sync/FacingEveryPacket=0:"), "the facing setting is logged");
     }
+    // [MultiSlot] JoinRetrySeconds: 10 unless the INI says otherwise (1.5.35); 5 is the game's own and
+    // leaves the site alone, a value out of range falls back to 10 and says so.
+    const auto joinRetry = JoinRetryPatches(10);
+    Check(joinRetry.size() == 1 && JoinRetryPatches(kVanillaJoinRetrySeconds).empty(), "10 s is one patch, 5 s none");
+    if (mode == L"off" || mode == L"joinretry5")
+        Check(Untouched(base, joinRetry) == 1, "the join retry site is the game's when off or at 5 s");
+    else
+        Check(Applied(base, joinRetry) == 1, "the join handshake restarts a link after 20 hellos (10 s) by default");
+    if (mode == L"joinretry5")
+        Check(Contains(log, "Joining: the game restarts the connection to a member not yet confirmed after 5 s, as it does "
+                            "without this mod"),
+              "the game's own 5 s is logged as such");
+    else if (mode != L"off")
+        Check(Contains(log, "Joining: a member not yet confirmed has 10 s before the game restarts the connection"),
+              "the 10 s restart is logged");
+    if (mode == L"joinretrybad")
+        Check(Contains(log, "JoinRetrySeconds=999 is outside 5..60; using 10"), "an out of range value is refused aloud");
+    // [Sync] HandAim: the three exports EDF6VR looks up, and the setting in the log (on unless the INI says 0).
+    if (mode != L"off") {
+        Check(GetProcAddress(plugin, "MultiSlot_HandAimVersion") && GetProcAddress(plugin, "MultiSlot_SetHandAim") &&
+                  GetProcAddress(plugin, "MultiSlot_GetHandAim"),
+              "the hand aim exports are there for EDF6VR");
+        using VersionFn = int (*)();
+        const auto version = reinterpret_cast<VersionFn>(GetProcAddress(plugin, "MultiSlot_HandAimVersion"));
+        Check(version && version() == 1, "hand aim export version 1");
+        Check(Contains(log, mode == L"handaimoff" ? "Sync/HandAim=0:" : "Sync/HandAim=1:"), "the hand aim setting is logged");
+        // The rapid-fire catch-up hooks (for when EDF6VR is not loaded) go in with HandAim, and never on the
+        // calls themselves, which stay the game's for EDF6VR to redirect.
+        for (const auto& hook : HandAimCatchUpHooks())
+            Check(mode == L"handaimoff" ? SiteUntouched(base, hook) : HookedInto(base, hook, plugin),
+                  "the catch-up hooks are installed exactly when HandAim=1");
+        for (const auto call : kCatchUpCalls)
+            Check(CallTargets(base + call, call, kCatchUpFire), "the catch-up calls themselves are left to EDF6VR");
+        Check(CallTargets(base + kPerShotCall, kPerShotCall, kCatchUpFire), "and so is the per-shot receive's call");
+    }
     const std::uint16_t forced = static_cast<std::uint16_t>((positions ? 1 : 0) | (facing ? 2 : 0));
     for (int c = 0; c < kFieldFrames; ++c) {
         const auto i = static_cast<std::size_t>(c);
@@ -367,6 +406,8 @@ int wmain(int argc, wchar_t** argv) {
         const PointerSlot lobbySlot = LobbySlot();
         Check(SlotTargets(base + lobbySlot.rva, reinterpret_cast<std::uint64_t>(base), lobbySlot.target), "Enabled=0 leaves the room list vtable untouched");
         for (const auto& call : calls) Check(CallTargets(base + call.rva, call.rva, call.target), "Enabled=0 leaves calls untouched");
+        for (const auto& call : VersionMessageCalls())
+            Check(CallTargets(base + call.rva, call.rva, call.target), "Enabled=0 leaves the join check and the dialog text alone");
         Check(after.family == before.family && after.decode == before.decode && after.range == before.range && after.map == before.map,
               "Enabled=0 leaves SEARCH_TYPE behaviour identical");
         Check(Contains(log, "Enabled=0"), "Enabled=0 is logged");
@@ -383,6 +424,10 @@ int wmain(int argc, wchar_t** argv) {
             Check(recovery ? RedirectedInto(base + call.rva, plugin) : CallTargets(base + call.rva, call.rva, call.target),
                   "recovery call is installed only when enabled");
         }
+        for (const auto& call : VersionMessageCalls())
+            Check(RedirectedInto(base + call.rva, plugin), "the join check and the dialog texts reach the plugin (version message)");
+        for (const auto& hook : VersionMessageHooks())
+            Check(HookedInto(base, hook, plugin), "the room list entry and the join button are hooked (version message)");
         Check(Contains(log, recovery ? "HandshakeRecovery=1:" : "HandshakeRecovery=0:"), "recovery mode is logged");
         if (!netLog && recovery)
             // Both P2P imports: the send for the recovery hello, the receive for the traffic meter, which
@@ -426,6 +471,9 @@ int wmain(int argc, wchar_t** argv) {
             // The sync fix only helps others see whoever has it, so a fresh install must have it on.
             Check(Contains(written, "PositionEveryPacket=1\r\n") && Contains(written, "FacingEveryPacket=1\r\n"),
                   "the default INI sends the position and the facing in every packet");
+            // Likewise the join retry: a link is restarted by either end, so it only helps if it is on for everyone.
+            Check(Contains(written, "JoinRetrySeconds=10\r\n"), "the default INI waits 10 s before restarting a join");
+            Check(Contains(written, "HandAim=1\r\n"), "the default INI carries hand directions");
         }
         Check(Contains(log, "Crash log armed"), "the crash log is armed");
         // The off-path wording is what tells the player nothing is being written. (The same line also

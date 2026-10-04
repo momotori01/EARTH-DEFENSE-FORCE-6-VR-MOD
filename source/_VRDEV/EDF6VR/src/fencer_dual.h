@@ -2172,6 +2172,7 @@ void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept {
     if(poseValid) FencerFollowSoldier(command);
     const auto previous=g_dualTick;
     g_dualTick={command,weapon,poseValid};
+    HandAimNoteTick(weapon);   // this hand's direction, for the other players (hand_aim_sync.h)
     auto* soldier=static_cast<unsigned char*>(command.soldier);
     auto* bytes=static_cast<unsigned char*>(weapon);
     float saved[8]{}; bool swapped=false;

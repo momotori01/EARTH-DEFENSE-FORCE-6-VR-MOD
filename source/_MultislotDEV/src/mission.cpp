@@ -268,23 +268,37 @@ void* __fastcall MissionContextConstructorHook(void* self) {
 }
 
 using ScaleFn = float(__fastcall*)(void*, int, int);
-// CONFIG.SGO ModeList[mode][7][difficulty][1] holds the factors for 1-4 players (online e.g. 1.2, 0.8, 1.0,
-// 1.2); the lookup has no bound, so five or more players must never reach it.
-// Enemy durability (0D7720 = diff[3][0] * value * factor): five or more players get the 4-player factor, so
-// only the enemy counts grow with the team (1.1.0; 0.5.0-1.0.0 added the 3->4 step once for the fifth player).
-float __fastcall DurabilityScaleHook(void* data, int difficulty, int players) {
-    const auto original = reinterpret_cast<ScaleFn>(game + kPlayerCountScale);
-    if (players <= kVanillaPlayers) return original(data, difficulty, players);
-    LogOnce(1, "MISSION enemy durability for %lld players uses the 4-player factor", players);
-    return original(data, difficulty, kVanillaPlayers);
+// CONFIG.SGO ModeList[mode][7][difficulty][1] holds the factors for 1-4 players (online 1.2, 0.8, 1.0, 1.2 on
+// EASY and NORMAL, 1.2, 0.9, 1.05, 1.2 on HARD, 1.2, 1.0, 1.1, 1.2 on HARDEST, 1.2, 1.1, 1.15, 1.2 on INFERNO,
+// the same in both mission packs; offline all 1.0); E18B0 indexes it with players - 1 and no bound, so five or
+// more players must never reach it. One factor feeds both enemy durability (0D7720 = diff[3][0] x value x
+// factor) and the damage enemies deal (54F050 = diff[3][1] or [2] x factor).
+float FourPlayerFactor(void* data, int difficulty) {
+    return reinterpret_cast<ScaleFn>(game + kPlayerCountScale)(data, difficulty, kVanillaPlayers);
 }
 
-// Damage from enemies (54F050 = diff[3][1] or [2] * factor): five or more players take the 4-player damage.
+float FivePlusFactor(void* data, int difficulty, int players, bool durability) {
+    const float four = FourPlayerFactor(data, difficulty);
+    // Offline the factors are all 1.0 and the player count can be left over from an online mission
+    // (GameStatus+0x14FF8 is only written by the mission sync): the 4-player value, as before.
+    if (!OnlineSession() || difficulty < 0 || difficulty >= kDifficulties) return four;
+    const int extra = (players > kMaxPlayers ? kMaxPlayers : players) - kVanillaPlayers;
+    const float step = durability ? kScaleSteps[difficulty].durability : kScaleSteps[difficulty].damage;
+    return four + step * static_cast<float>(extra);
+}
+
+// Enemy durability: five or more players online add a step per player past four (mission.h kScaleSteps).
+float __fastcall DurabilityScaleHook(void* data, int difficulty, int players) {
+    if (players <= kVanillaPlayers) return reinterpret_cast<ScaleFn>(game + kPlayerCountScale)(data, difficulty, players);
+    LogOnce(1, "MISSION enemy durability for %lld players: the 4-player factor plus a step per player past four", players);
+    return FivePlusFactor(data, difficulty, players, true);
+}
+
+// Damage from enemies: the same (HARDEST and INFERNO too since 1.6.6).
 float __fastcall DamageScaleHook(void* data, int difficulty, int players) {
-    const auto original = reinterpret_cast<ScaleFn>(game + kPlayerCountScale);
-    if (players <= kVanillaPlayers) return original(data, difficulty, players);
-    LogOnce(13, "MISSION enemy damage for %lld players uses the 4-player factor", players);
-    return original(data, difficulty, kVanillaPlayers);
+    if (players <= kVanillaPlayers) return reinterpret_cast<ScaleFn>(game + kPlayerCountScale)(data, difficulty, players);
+    LogOnce(13, "MISSION enemy damage for %lld players: the 4-player factor plus a step per player past four", players);
+    return FivePlusFactor(data, difficulty, players, false);
 }
 
 // Online player count as the mission sync stores it: alone (1) becomes 1 + GhostPlayers.

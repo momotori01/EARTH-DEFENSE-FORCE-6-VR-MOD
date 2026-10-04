@@ -33,6 +33,9 @@ bool ReadCurrentRoomUsers(std::uintptr_t gameBase, std::uintptr_t& users, const 
 void NoteUserSlots(std::size_t rosterCount);
 void ForgetUserSlots();
 MidHandler JoinLogHookHandler(std::uint32_t rva);
+// NetLog lines for the two join sites the version message owns (versionmsg.h).
+void NoteJoinPressed(CpuContext* context);
+void NoteSearchTypeCheck(std::uint64_t value, bool compatible);
 void* JoinLogCallHandler(std::uint32_t rva);
 
 }  // namespace multislot

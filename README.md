@@ -39,7 +39,7 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
   so playing alongside a beginner does not leave you far behind in health.
   Other players are also shown where they really are: the base game often
   skipped sending positions for seconds, so people could look metres off.
-- **HD textures** (2x), built from your own game files.
+- **HD textures** (2x), built from your own game files. You can turn them off and on in EDF6 VR setting.exe without deleting them.
 - **Lighter Kurul shots:** the Kurul's shotgun pellets are drawn without their swelling ring, so big fights stay smooth.
   It is on by default and can be turned off in EDF6 VR setting.exe.
 - Compact HUD: radar, armour and weapons sit together at the corner of your view, or on the inside of a wrist.
@@ -79,7 +79,7 @@ Everything outside the game is set in **EDF6 VR setting.exe**, next to `EDF6.exe
 | **VR mode** | **VR** (headset) or **Normal** (monitor, no VR). |
 | **Picture size** | **Low 0.8** / **Normal 1.0** / **High 1.25** / **Custom** (0.5 to 2.0). Bigger is sharper but slower. The mod ignores the resolution set in SteamVR or other runtimes. |
 | **Scope zoom** | **Native**: sharp, but costs frame rate while zoomed. **Digital**: no frame-rate cost, but blurrier. **Off**: the old whole-view zoom. |
-| **HD textures** | **Make** or **Delete** the 2x textures, with progress. |
+| **HD textures** | **Make** or **Delete** the 2x textures, with progress. Untick **Use HD textures** to turn them off without deleting them. |
 | **Crew figures** | **Make** or **Delete** the Proteus two-seater's other rider (about 2 minutes). Making HD textures makes them too. |
 | **Gun hand** | **Right** or **Left** (Ranger, Wing Diver, Air Raider). |
 | **Problem report** | **Make zip** puts the logs and settings into one zip, saved in the game folder next to EDF6 VR setting.exe (`EDF6VR-logs-<date>-<time>.zip`). Attach it to a bug report. |
@@ -140,7 +140,7 @@ Radar, armour and weapon boxes sit together, smaller, at the bottom-right of you
 Press **F2**, or click the left stick, on the menu screen **outside a room** to switch 8-player rooms on or off (shown at the bottom left). A room keeps the setting it was made with.
 - Hosting with it **ON**, only players who have the 8P mod can join your room; with it **OFF** you make an ordinary room and play with anyone.
 - **It also filters the room search.** With it **ON**, only 8-player rooms are listed; with it **OFF**, ordinary and 8-player rooms are both listed and you can join either. To look for an ordinary 4-player room, switch it OFF. Switching while the room list is open searches again straight away.
-- Up to 4 players nothing changes. From the 5th on there are more enemies (x1.2, x1.4, x1.6, x1.8 for 5 to 8 players), and their durability, damage and speed stay exactly as they are with four.
+- Up to 4 players nothing changes. From the 5th on there are more enemies (x1.2, x1.4, x1.6, x1.8 for 5 to 8 players).
 - Everyone in an 8-player room -- host and guests -- needs EDF6MultiSlot 1.2.6 or later; the bundled 1.5.33 is recommended for all.
 
 ### Matching armour

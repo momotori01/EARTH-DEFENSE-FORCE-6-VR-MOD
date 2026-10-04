@@ -5,6 +5,7 @@
 #define NOMINMAX
 #include <Windows.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -239,10 +240,11 @@ int main() {
     Check(durability(nullptr, 2, 1) == 1.2f && durability(nullptr, 2, 2) == 0.8f && durability(nullptr, 2, 4) == 1.2f &&
               damage(nullptr, 2, 3) == 1.0f && damage(nullptr, 2, 4) == 1.2f,
           "1-4 players read the game's factors");
-    Check(durability(nullptr, 2, 5) == 1.2f && durability(nullptr, 2, 6) == 1.2f && durability(nullptr, 2, 8) == 1.2f &&
-              durability(nullptr, 2, 12) == 1.2f,
-          "5 or more players: 4-player durability, nothing added");
-    Check(damage(nullptr, 2, 5) == 1.2f && damage(nullptr, 2, 8) == 1.2f, "5 or more players: 4-player damage");
+    // Offline (no online mode chain yet): a count above four can only be left over from an online mission.
+    Check(!OnlineSession() && durability(nullptr, 2, 5) == 1.2f && durability(nullptr, 2, 6) == 1.2f &&
+              durability(nullptr, 2, 8) == 1.2f && durability(nullptr, 2, 12) == 1.2f,
+          "offline, 5 or more players: 4-player durability, nothing added");
+    Check(damage(nullptr, 2, 5) == 1.2f && damage(nullptr, 2, 8) == 1.2f, "offline, 5 or more players: 4-player damage");
     Check(scaleOverflow == 0, "the lookup never sees more than four players");
 
     // Loops over the moved array end after every entry.
@@ -363,6 +365,36 @@ int main() {
     info[0x68] = 1;
     std::memcpy(status.data() + 0x20, &modesAddress, 8);
     InitMission(image, 3);
+    // Online, 5-8 players (1.6.0): the 4-player factor (1.2 here) plus kScaleSteps per player past four;
+    // the same steps for durability and damage on every difficulty (1.6.6).
+    Check(OnlineSession(), "the fake mode chain is online");
+    const auto about = [](float a, float b) { return std::fabs(a - b) < 1e-5f; };
+    const float expectDurability[5][4] = {{1.40f, 1.60f, 1.80f, 2.00f}, {1.40f, 1.60f, 1.80f, 2.00f},
+                                          {1.30f, 1.40f, 1.50f, 1.60f}, {1.27f, 1.34f, 1.41f, 1.48f},
+                                          {1.25f, 1.30f, 1.35f, 1.40f}};
+    const float expectDamage[5][4] = {{1.40f, 1.60f, 1.80f, 2.00f}, {1.40f, 1.60f, 1.80f, 2.00f},
+                                      {1.30f, 1.40f, 1.50f, 1.60f}, {1.27f, 1.34f, 1.41f, 1.48f},
+                                      {1.25f, 1.30f, 1.35f, 1.40f}};
+    bool online = true;
+    for (int difficulty = 0; difficulty < 5; ++difficulty)
+        for (int players = 5; players <= 8; ++players) {
+            const bool ok = about(durability(nullptr, difficulty, players), expectDurability[difficulty][players - 5]) &&
+                            about(damage(nullptr, difficulty, players), expectDamage[difficulty][players - 5]);
+            if (!ok)
+                std::printf("difficulty %d, %d players: durability %.3f damage %.3f\n", difficulty, players,
+                            durability(nullptr, difficulty, players), damage(nullptr, difficulty, players));
+            online = online && ok;
+        }
+    Check(online, "online 5-8 players: EASY/NORMAL +0.20, HARD +0.10, HARDEST +0.07 and INFERNO +0.05 per player, durability and damage");
+    Check(about(durability(nullptr, 1, 12), 2.00f) && about(damage(nullptr, 1, 12), 2.00f), "more than eight counts as eight");
+    Check(about(durability(nullptr, 7, 8), 1.2f) && about(durability(nullptr, -1, 8), 1.2f), "an unknown difficulty adds nothing");
+    Check(durability(nullptr, 2, 4) == 1.2f && durability(nullptr, 2, 2) == 0.8f && damage(nullptr, 2, 3) == 1.0f,
+          "online, 1-4 players are still the game's own");
+    info[0x68] = 0;
+    Check(!OnlineSession() && about(durability(nullptr, 1, 8), 1.2f) && about(damage(nullptr, 1, 8), 1.2f),
+          "offline again: the 4-player factor");
+    info[0x68] = 1;
+    Check(scaleOverflow == 0, "the lookup still never sees more than four players");
     Check(MissionHookHandler(0x595A03) != nullptr && GhostHookHandler(0x790BA6) && GhostHookHandler(0x78D765) && GhostCallHandler(0x1DC525),
           "ghost handlers exist");
     for (const auto& hook : GhostHooks()) Check(GhostHookHandler(hook.rva) != nullptr, hook.name);

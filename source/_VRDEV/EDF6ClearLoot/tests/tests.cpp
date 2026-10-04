@@ -32,6 +32,9 @@ void* __fastcall UiStub(void* manager,void* output,const wchar_t* path,void* opt
     *static_cast<void**>(output)=uiSuccess?manager:nullptr;return output;
 }
 void __fastcall BgmStub(void* manager,const char* name){CHECK(manager && name);++bgms;}
+static unsigned stories=0;static bool storyFails=false;
+alignas(16) static unsigned char storyWindow[0xB0]{};
+void* __fastcall StoryStub(std::size_t size){CHECK(size==0xB0);++stories;return storyFails?nullptr:storyWindow;}
 int wmain(int argc,wchar_t** argv){
     if(argc!=2)return 2;
     auto mapped=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
@@ -51,7 +54,7 @@ int wmain(int argc,wchar_t** argv){
     alignas(16) float position[4]{1,2,3,1};
     void* callback[2]{image+callbackTable,soldier};
     managerExpected=manager;soldierExpected=soldier;callbackExpected=callback;positionExpected=position;
-    originalPickup=&PickupStub;originalExit=&ExitStub;originalCreateUi=&UiStub;originalBgm=&BgmStub;
+    originalPickup=&PickupStub;originalExit=&ExitStub;originalCreateUi=&UiStub;originalBgm=&BgmStub;originalStoryAlloc=&StoryStub;
     auto update=[&]{const auto n=pickups;HookPickup(manager,soldier,position,2.5f,.8f,callback);CHECK(pickups==n+1 && healSeen==.8f);};
     void* uiOut[2]{};
     auto ui=[&](const wchar_t* name){CHECK(HookCreateUi(manager,uiOut,name,manager)==uiOut);};
@@ -82,6 +85,16 @@ int wmain(int argc,wchar_t** argv){
         HookExit(nullptr,result);CHECK(pickups==n && exitSeen==result && !request.until);
         update();CHECK(radiusSeen==2.5f);
     }
+    // The white-out / black-out ending's story window arms like the banner and is
+    // collected on the next update (before ResetScene); its object is the native one.
+    HookExit(nullptr,1);update();
+    CHECK(HookStoryAlloc(0xB0)==storyWindow && request.until && !request.collected);
+    update();CHECK(radiusSeen==mapRadius && request.collected);
+    clear();update();CHECK(radiusSeen==2.5f); // the banner after ResetScene does not collect twice
+    HookExit(nullptr,1);snapshot.at=GetTickCount64()-3000;HookStoryAlloc(0xB0);CHECK(!request.until); // no recent soldier
+    HookExit(nullptr,1);update();storyFails=true;CHECK(!HookStoryAlloc(0xB0) && !request.until);storyFails=false;
+    HookExit(nullptr,1);update();enabled=false;HookStoryAlloc(0xB0);CHECK(!request.until);enabled=true;
+    CHECK(stories==4);
     clear();request.until=GetTickCount64()-1;update();CHECK(radiusSeen==2.5f && !request.until);
     clear();++Field<unsigned>(soldier,0x314);update();CHECK(radiusSeen==2.5f && !request.until);
     clear();request.recipient.manager=nullptr;update();CHECK(radiusSeen==2.5f && !request.until);
@@ -105,6 +118,6 @@ int wmain(int argc,wchar_t** argv){
     // Every hook is checked against the actual game profile, conflicts refused.
     bool published=false;CHECK(Install(published) && published);CHECK(!CheckProfile(mapped));
     CHECK(uis && bgms);VirtualFree(executable,0,MEM_RELEASE);
-    printf("ClearLoot tests: %u failures (SSE crash reproduction, original pointer forwarding, clear banner/jingle, no exit pickup, 4 classes, stale/duplicate/abort, F1 persistence/sound, real patch profile).\n",failures);
+    printf("ClearLoot tests: %u failures (SSE crash reproduction, original pointer forwarding, clear banner/jingle, story window ending, no exit pickup, 4 classes, stale/duplicate/abort, F1 persistence/sound, real patch profile).\n",failures);
     return failures?1:0;
 }

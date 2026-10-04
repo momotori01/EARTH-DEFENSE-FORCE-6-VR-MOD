@@ -308,6 +308,78 @@ static void CheckFireBoundary(RangerDualState state) {
     expectTrackedShot=true;
     for(unsigned h=0;h<2;++h)DualAt<unsigned char>(weapons[h],0xE6E)=0;
 }
+// hand_aim_sync.h (the sending half; EDF6MultiSlot turns others' shots): the
+// slot, the turn of a muzzle's rows, and the shot-by-shot send hook on the real
+// call.
+static edf6vr::Matrix HandAimTestIdentity() {edf6vr::Matrix m{};for(int i=0;i<4;++i)m.m[i][i]=1;return m;}
+static void CheckHandAimSync() {
+    alignas(16) static unsigned char weapon[0x1000]{},owner[0x2000]{};
+    static void* list[3]{};
+    const float local[3]={0,0,1};std::memcpy(weapon+0x350,local,sizeof local);
+    list[0]=weapon+0x800;list[1]=weapon;list[2]=weapon+0x900;   // the weapon is second in its owner's list
+    DualAt<void**>(owner,0x1950)=list;DualAt<std::uint64_t>(owner,0x1960)=3;
+    CHECK(HandAimSlot(owner,weapon)==1 && HandAimSlot(owner,weapon+0x10)==-1);
+    // The turn PrepareLeftFireTurn's direction is put on with: rows onto it, the point kept.
+    edf6vr::Matrix m=HandAimTestIdentity();m.m[3][0]=1.5f;
+    const float from[3]={0,0,1},to[3]={.6f,0,.8f};
+    CHECK(HandAimTurnRows(m,from,to));
+    float got[3]{};CHECK(HandAimFireDirection(weapon,m,got));
+    CHECK(std::fabs(got[0]-.6f)<1e-4f && std::fabs(got[1])<1e-4f && std::fabs(got[2]-.8f)<1e-4f);
+    CHECK(m.m[3][0]==1.5f);
+    // The shot-by-shot send hook goes on the real call at 690D3B (E8 -> 694910), once.
+    CHECK(g_image.base[0x690D3B]==0xE8);
+    CHECK(InstallHandAimSend());
+    CHECK(g_shotSendOriginal==reinterpret_cast<ShotSendFn>(g_image.base+0x694910));
+    CHECK(!InstallHandAimSend());   // the call no longer reaches 694910 directly
+    // The catch-up calls stay as HookDualFire left them: EDF6MultiSlot's mid-hooks sit around them.
+    CHECK(g_image.base[0x6904F7]==0xE8 && g_image.base[0x690603]==0xE8);
+    // A send away from the tick: both matrices' rows turned onto the hand's
+    // direction by the first one's arc, both points kept.
+    alignas(16) static unsigned char entry[0xF0]{};
+    edf6vr::Matrix first=HandAimTestIdentity(),second=HandAimTestIdentity();
+    first.m[3][0]=2;first.m[3][1]=1;second.m[3][2]=-3;
+    std::memcpy(entry+0x50,&first,sizeof first);std::memcpy(entry+0x90,&second,sizeof second);
+    CHECK(HandAimTurnEntry(weapon,entry,to));
+    edf6vr::Matrix turnedFirst{},turnedSecond{};
+    std::memcpy(&turnedFirst,entry+0x50,sizeof turnedFirst);std::memcpy(&turnedSecond,entry+0x90,sizeof turnedSecond);
+    CHECK(HandAimFireDirection(weapon,turnedFirst,got));
+    CHECK(std::fabs(got[0]-.6f)<1e-4f && std::fabs(got[2]-.8f)<1e-4f);
+    CHECK(std::fabs(turnedSecond.m[2][0]-.6f)<1e-4f && std::fabs(turnedSecond.m[2][2]-.8f)<1e-4f);
+    CHECK(turnedFirst.m[3][0]==2 && turnedFirst.m[3][1]==1 && turnedSecond.m[3][2]==-3);
+    // Which Fencer weapons give no direction (they strike only on the animation
+    // event, and their hits stay the game's) and which are never turned away
+    // from the tick (shot_origin.h's sweeps), by the real vtables.
+    static void* katana[2]={g_image.base+0x17e5950};
+    static void* spear[2]={g_image.base+0x17e5950};
+    static void* hammer[2]={g_image.base+0x17e42a0};
+    static void* shield[2]={g_image.base+0x17e51a0};
+    static void* cannon[2]={g_image.base+0x17e3f18};
+    static void* pile[2]={g_image.base+0x17e4a80};
+    g_fencerSpearAnswers.Put(spear,1);
+    CHECK(HandAimGameSwing(katana) && HandAimGameSwing(hammer));
+    CHECK(!HandAimGameSwing(spear) && !HandAimGameSwing(shield) && !HandAimGameSwing(cannon) && !HandAimGameSwing(pile));
+    CHECK(HandAimFencerSweeps(katana) && HandAimFencerSweeps(hammer) && HandAimFencerSweeps(shield));
+    CHECK(!HandAimFencerSweeps(spear) && !HandAimFencerSweeps(cannon) && !HandAimFencerSweeps(pile));
+    // No Fencer in play: nothing is turned away from the tick.
+    WeaponHoldCommand command{};
+    CHECK(!HandAimAwayCommand(cannon,command));
+}
+// menu_board.h: each menu's OnUpdate (slot 1) is replaced once on the real
+// image, and a menu update puts the display on the board until it goes quiet.
+static void CheckMenuBoard() {
+    for(const auto& c:kMenuClasses) CHECK(*reinterpret_cast<void**>(g_image.base+c.table+8)==g_image.base+c.update);
+    bool changed=false;
+    CHECK(InstallMenuBoard(changed) && changed);
+    for(unsigned i=0;i<kMenuClassCount;++i)
+        CHECK(*reinterpret_cast<void**>(g_image.base+kMenuClasses[i].table+8)==reinterpret_cast<void*>(kMenuHooks[i])
+              && g_menuUpdateOriginal[i]==reinterpret_cast<MenuUpdate>(g_image.base+kMenuClasses[i].update));
+    CHECK(!InstallMenuBoard(changed));   // the slots no longer hold the game's functions
+    CHECK(!edf6vr::g_openxr.MenuOpen());
+    edf6vr::g_openxr.MarkMenuOpen();
+    CHECK(edf6vr::g_openxr.MenuOpen());
+    Sleep(350);
+    CHECK(!edf6vr::g_openxr.MenuOpen());
+}
 int wmain(int argc,wchar_t** argv) {
     if(argc!=2)return 2;
     const auto module=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
@@ -542,5 +614,7 @@ int wmain(int argc,wchar_t** argv) {
     CheckNativeAccuracyAndVisibility();
     CheckActionVisibilityAndAudioHealth();
     CheckTrackedBoundsAndOutput();
+    CheckHandAimSync();
+    CheckMenuBoard();
     printf("Ranger dual production checks: %d failures\n",failures);return failures?1:0;
 }

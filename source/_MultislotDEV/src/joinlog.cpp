@@ -18,7 +18,6 @@ unsigned char* game = nullptr;
 
 constexpr std::uint32_t kMissionContentOwned = 0x0D92B0;  // (GameStatus*, mission) -> bool
 constexpr std::uint32_t kLobbyJoinStart = 0x8E7060;       // HUiLobby join action
-constexpr std::uint32_t kSearchTypeCompatible = 0x749AC0; // SEARCH_TYPE -> bool
 
 // Per session. Each join logs a handful of lines plus one per member slot, so this covers a long evening.
 constexpr int kLineLimit = 5000;
@@ -213,21 +212,21 @@ void __fastcall RejectUserHook(void* manager, void* sharedUser) {
     reinterpret_cast<RejectUserFn>(game + 0x12C8820)(manager, sharedUser);
 }
 
-using CompatibleFn = bool(__fastcall*)(std::int64_t);
-// Invitation::Search (709A30): the SEARCH_TYPE check for invites and session joins.
-bool __fastcall SearchTypeCompatibleHook(std::int64_t value) {
-    const bool compatible = reinterpret_cast<CompatibleFn>(game + kSearchTypeCompatible)(value);
-    if (Budget()) Log("JOIN invite/session: SEARCH_TYPE 0x%llX compatible %d", static_cast<unsigned long long>(value), compatible ? 1 : 0);
-    return compatible;
-}
-
 }  // namespace
 
 void InitJoinLog(unsigned char* gameBase) { game = gameBase; }
 
+// The join button and the invitation SEARCH_TYPE check are hooked by the version message (versionmsg.h) on every
+// start since 1.6.1, which writes these two lines when NetLog=1.
+void NoteJoinPressed(CpuContext* context) { JoinPressedHandler(context); }
+
+void NoteSearchTypeCheck(std::uint64_t value, bool compatible) {
+    if (Budget())
+        Log("JOIN invite/session: SEARCH_TYPE 0x%llX compatible %d", static_cast<unsigned long long>(value), compatible ? 1 : 0);
+}
+
 MidHandler JoinLogHookHandler(std::uint32_t rva) {
     switch (rva) {
-        case 0x8EC476: return &JoinPressedHandler;
         case 0x8EFEC0: return &JoinFinishedHandler;
         case 0x8F01D0: return &RoomListHandler<0>;
         case 0x8F02E0: return &RoomListHandler<1>;
@@ -337,7 +336,6 @@ void* JoinLogCallHandler(std::uint32_t rva) {
     switch (rva) {
         case 0x8EC659: return reinterpret_cast<void*>(&ContentOwnedHook);
         case 0x8EC837: return reinterpret_cast<void*>(&JoinStartHook);
-        case 0x709A30: return reinterpret_cast<void*>(&SearchTypeCompatibleHook);
         case 0x12D56CE: return reinterpret_cast<void*>(&ConfirmUserHook);
         case 0x12D56A4: return reinterpret_cast<void*>(&RejectUserHook);
         default: return nullptr;

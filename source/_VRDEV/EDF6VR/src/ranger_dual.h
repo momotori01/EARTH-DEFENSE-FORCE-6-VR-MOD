@@ -18,6 +18,8 @@ using DualTick=void(__fastcall*)(void*,void*);
 // nix_arm_aim.h: a Nix weapon's tick, its transforms turned toward the aim first.
 bool NixArmWeaponTick(void* weapon,void* context,DualTick original) noexcept;
 bool NixArmFire(void* weapon,unsigned index,void* alternate,void* counter,bool consume) noexcept;
+// hand_aim_sync.h: each hand's direction to EDF6MultiSlot.
+void HandAimNoteTick(void* weapon) noexcept;
 using DualPose=void(__fastcall*)(void*,void*);
 using DualZoom=void(__fastcall*)(void*);
 DualIndex g_dualIndex=nullptr;
@@ -569,6 +571,7 @@ void __fastcall HookDualWeaponTick(void* weapon,void* context) {
         travel+=delta*delta;g_dualTick.command.hand.palm[j]+=delta;
     }
     if(!std::isfinite(travel) || travel>=400)g_dualTick.active=false;
+    HandAimNoteTick(weapon);   // this hand's direction, for the other players
     ++g_dualTicks[hand];
     const auto& recoil=g_dualRecoil[hand];
     g_dualRecoilLevel[hand]=(recoil.weapon==weapon && recoil.serial==state.serial)?recoil.recoil.Level(now/1000.0):0;

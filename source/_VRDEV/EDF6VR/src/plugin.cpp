@@ -663,6 +663,7 @@ constexpr bool kHandAimDefault[kHandAimClasses]={true,false,false,true,true,true
 bool g_vehicleHandAimOn[kHandAimClasses]={true,false,false,true,true,true,true,true};
 float g_vehicleHandAimLevel=12.f,g_vehicleHandAimDead=10.f,g_vehicleHandAimFull=25.f,g_vehicleHandAimBuzz=.03f;
 bool NixArmAimActive() noexcept;   // nix_arm_aim.h
+void HandAimReport() noexcept;     // hand_aim_sync.h
 // The seat's class (HandAimClass, -1 none), published with the cabin's heading.
 std::atomic<int> g_vehicleAimClass{-1};
 std::atomic<float> g_vehicleAimYaw{0};
@@ -2421,6 +2422,7 @@ void UpdateScopeView() noexcept {
 }
 #include "guide_probe.h"
 #include "chat_probe.h"
+#include "menu_board.h"
 #include "action_weapon_visibility.h"
 #include "tracked_weapon_bounds.h"
 #include "audio_health.h"
@@ -2732,6 +2734,7 @@ void PollInput() noexcept {
     const auto now=GetTickCount64();
     const float dt=g_inputTime ? std::min(static_cast<float>(now-g_inputTime)*0.001f,0.05f) : 0;
     g_inputTime=now;
+    HandAimReport();   // HANDAIM counters every 5 s while they move
     // The headset's own recenter (SteamVR's long press and the like) does what
     // F12 does: view, height and the menu. Ahead of the focus check, since the
     // headset's menu may be what holds the focus.
@@ -3531,6 +3534,7 @@ LONG CALLBACK OnWatchHit(EXCEPTION_POINTERS* info) noexcept;
 #include "muzzle_flash.h"
 #include "vehicle_recoil.h"
 #include "nix_arm_aim.h"
+#include "hand_aim_sync.h"
 
 bool ServeFireSite(CONTEXT* context) noexcept {
     bool ours=false;
@@ -4150,6 +4154,7 @@ void ReloadTunables() noexcept {
     g_vehicleRecoilOn=GetPrivateProfileIntW(L"VR",L"VehicleRecoil",g_vehicleRecoilOn,g_iniPath)!=0;
     g_vehicleRecoilScale=ReadFloat(g_iniPath,L"VehicleRecoilScale",g_vehicleRecoilScale,0.0f,4.0f,L"VR");
     g_nixArmAimOn=GetPrivateProfileIntW(L"VR",L"NixArmAim",g_nixArmAimOn,g_iniPath)!=0;
+    g_handAimSync=GetPrivateProfileIntW(L"VR",L"HandAimSync",1,g_iniPath)!=0;
     g_nixArmAimDegrees=ReadFloat(g_iniPath,L"NixArmAimDegrees",g_nixArmAimDegrees,0.0f,45.0f,L"VR");
     g_nixArmAimSeconds=ReadFloat(g_iniPath,L"NixArmAimLagSeconds",g_nixArmAimSeconds,0.0f,1.0f,L"VR");
     g_nixArmAimSpeed=ReadFloat(g_iniPath,L"NixArmAimSpeed",g_nixArmAimSpeed,5.0f,720.0f,L"VR");
@@ -5764,6 +5769,11 @@ void AfterUpdate(void* camera) noexcept {
                     g_uiCluster,g_uiClusterPlace,g_uiClusterClass,clusterComposites,clusterFailures,
                     g_subtitleCentre?1:0,g_subtitleTop,subtitleMoves,subtitleFailures,
                     g_chatAlive.load(),g_chatOpened.load(),g_chatClosed.load(),edf6vr::UiClusterSuspendedFrames());
+                unsigned long long menuUpdates[kMenuClassCount]{};
+                MenuBoardCounts(menuUpdates);
+                Log("MENUBOARD showing=%d updates pause=%llu bg=%llu failed=%llu dialog=%llu client=%llu result=%llu box=%llu",
+                    edf6vr::g_openxr.MenuOpen()?1:0,menuUpdates[0],menuUpdates[1],menuUpdates[2],menuUpdates[3],menuUpdates[4],
+                    menuUpdates[5],menuUpdates[6]);
             }
             const auto crosshair=edf6vr::ReadNativeCrosshairStats();
             Log("CROSSHAIR ready=%d calls=%llu hidden=%llu",edf6vr::NativeCrosshairReady(),
@@ -5910,7 +5920,7 @@ void AfterUpdate(void* camera) noexcept {
                     age(g_soldierInput),age(g_cameraWrite),age(g_cameraUpdate),age(g_bodyDraw),
                     edf6vr::g_openxr.SceneAgeMs(),g_moveBasis.candidate,g_displayForce,
                     g_cameraType,g_soldierType,
-                    edf6vr::g_openxr.SceneAgeMs()<750?"stereo":"board",
+                    edf6vr::g_openxr.SceneAgeMs()<750 && !edf6vr::g_openxr.MenuOpen()?"stereo":"board",
                     g_headDamping,g_headWobble*100.0f,g_headWobblePeak*100.0f,g_sceneKeptByCamera);
                 g_headWobblePeak=0;
                 Log("VIEWANCHOR enabled=%d primed=%d idleRootSamples=%u idleRootStepMax=%.6fm (no move input; excludes camera/bone animation)",
@@ -7222,7 +7232,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.1.5 cockpit loading, with EDF6MultiSlot 1.5.34. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 3.1.6 cockpit loading, with EDF6MultiSlot 1.6.6. Fencer weapons aim the barrel itself; no dead band on the aim.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7461,6 +7471,8 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     if(g_fpsReady && !g_faulted && edf6vr::CheckAimProfile(g_image)) {
         g_dualReady=InstallRangerDual();
         Log("NIXARM aim line hooks %s",InstallNixArmAimLine()?"installed":"REFUSED (slot differs)");
+        Log("HANDAIM shot send hook (690D3B -> 694910) %s; EDF6MultiSlot looked up when a two-hand weapon fires",
+            InstallHandAimSend()?"installed":"REFUSED (call differs)");
         Log("RANGERDUAL hooks ready=%d; left shoulder grip / independent fire / reload paused / zoom disabled",g_dualReady);
         g_inputOriginal=reinterpret_cast<InputRead>(g_image.base+edf6vr::kInputReadRva);
         changed=false;
@@ -7525,6 +7537,11 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         const bool chatOK=InstallChatProbe(changed);
         Log("CHATPROBE hooks ready=%d changed=%d create=17FFAC0+10/871E40 17FF058+10/865AF0 delete=17FFB08+28/8725D0 17FF1B0+28/867170 (the compact HUD steps aside while a quick chat window is open)",chatOK,changed);
         if(changed && !chatOK) g_faulted=true;
+        changed=false;
+        const bool menuOK=InstallMenuBoard(changed);
+        Log("MENUBOARD hooks ready=%d changed=%d (OnUpdate, slot 1, of HUiPause/PauseBG/MissionFailed/FailedDialog/FailedClient/FailedResult/DialogBox: "
+            "the board while one shows, online too)",menuOK,changed);
+        if(changed && !menuOK) g_faulted=true;
         changed=false;
         const bool aimLineOK=InstallAimLineWidth(changed);
         Log("SIGHTLINE vehicle aim line width hook ready=%d changed=%d call=6B34C7->687CE0",aimLineOK,changed);

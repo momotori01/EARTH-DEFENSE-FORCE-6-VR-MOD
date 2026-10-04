@@ -431,6 +431,48 @@ def bring_up_to_date(root, work, cache, record, sources, say):
     open(stamp, 'w', encoding='ascii').write('%d\n' % PACK_REVISION)
 
 
+# Turning the pack off without deleting it (asked for by players who want to
+# compare, 2026-10-04): every file a run wrote is renamed with this ending, and
+# EDFModLoader, which replaces a game file only when Mods holds that exact name,
+# reads the game's own again. Renaming back turns it on. Nothing else in Mods is
+# touched (the lighter effects and other mods' files are not in written.txt).
+HIDDEN = '.hdoff'
+
+
+def switch_pack(root, record, marker, on, say):
+    """Rename the files written.txt lists to NAME.hdoff (off) or back (on).
+
+    marker is written when the pack is off and removed when it is on, so the
+    setting program can say which. Safe to run again after a stop part way."""
+    if not os.path.isfile(record):
+        raise SystemExit('The list of HD texture files (Mods/HDTextureWork/written.txt) is missing, '
+                         'so they cannot be switched. Make them again to bring it back.')
+    lines = list(dict.fromkeys(line for line in open(record, encoding='utf-8').read().splitlines() if line))
+    moved = 0
+    for line in lines:
+        path = os.path.join(root, line)
+        hidden = path + HIDDEN
+        if on:
+            if os.path.isfile(hidden):
+                if os.path.isfile(path):
+                    os.remove(hidden)       # made again while it was off: the new one stays
+                else:
+                    os.replace(hidden, path)
+                    moved += 1
+        elif os.path.isfile(path):
+            os.replace(path, hidden)
+            moved += 1
+    if on:
+        if os.path.isfile(marker):
+            os.remove(marker)
+        say('HD textures on: %d files back in use' % moved)
+    else:
+        with open(marker, 'w', encoding='ascii') as handle:
+            handle.write('HD textures are turned off: the files in written.txt end in %s\n' % HIDDEN)
+        say('HD textures off: %d files set aside, nothing deleted' % moved)
+    return moved
+
+
 def is_city(stem):
     """A city map, or one of its weather variants.
 
@@ -494,6 +536,9 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--remove', action='store_true',
                         help='delete exactly the files a previous run wrote')
+    parser.add_argument('--off', action='store_true',
+                        help='set the files a previous run wrote aside (renamed), so the game uses its own')
+    parser.add_argument('--on', action='store_true', help='put the files --off set aside back')
     options = parser.parse_args()
 
     here = os.path.dirname(os.path.abspath(__file__))
@@ -518,17 +563,25 @@ def main():
     # a finished pack from one that was stopped halfway. Beside this script
     # rather than in HDTextureWork, which players are told they may delete.
     finished = os.path.join(here, 'complete.txt')
+    # Beside complete.txt, for the same reason: present while the pack is off.
+    switched_off = os.path.join(here, 'off.txt')
     whole_run = not options.only and not options.limit and not options.dry_run
+    if options.off or options.on:
+        switch_pack(root, record, switched_off, options.on, progress_module.say)
+        return
     if options.remove:
+        if os.path.isfile(switched_off):
+            os.remove(switched_off)
         if os.path.isfile(finished):
             os.remove(finished)
         removed = 0
         if os.path.isfile(record):
             for line in open(record, encoding='utf-8').read().splitlines():
                 victim = os.path.join(root, line)
-                if os.path.isfile(victim):
-                    os.remove(victim)
-                    removed += 1
+                for path in (victim, victim + HIDDEN):
+                    if os.path.isfile(path):
+                        os.remove(path)
+                        removed += 1
         if os.path.isdir(work):
             shutil.rmtree(work, ignore_errors=True)
         for directory in ('MAP', 'WEAPON', 'OBJECT'):
@@ -554,6 +607,11 @@ def main():
         path = os.path.join(root, name)
         if os.path.isfile(path):
             sources.append(cpk_module.Cpk(path))
+
+    # A pack that is off is put back first: its files would otherwise look
+    # missing and be made again, an hour for nothing.
+    if os.path.isfile(switched_off) and not options.dry_run:
+        switch_pack(root, record, switched_off, True, progress_module.say)
 
     # A whole run brings an older pack up to date; --only and --limit are for
     # trying one archive, and must not take the rest of the pack away.

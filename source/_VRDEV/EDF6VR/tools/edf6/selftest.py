@@ -244,6 +244,44 @@ def check_loader_config():
     print('loader config: %d readings and 3 rewrites match the loader' % len(cases))
 
 
+def check_switch():
+    """--off renames exactly the listed files and --on puts them back; a file
+    made again while off wins over its set-aside copy; reruns are harmless."""
+    import tempfile
+    root = tempfile.mkdtemp()
+    work = os.path.join(root, 'Mods', 'HDTextureWork')
+    os.makedirs(work)
+    for folder in ('MAP', 'OBJECT', 'UI'):
+        os.makedirs(os.path.join(root, 'Mods', folder))
+    listed = ['Mods/MAP/A.RAB', 'Mods/OBJECT/B.MRAB', 'Mods/MAP/GONE.RAB']
+    for line in listed[:2]:
+        open(os.path.join(root, line), 'w').write(line)
+    other = os.path.join(root, 'Mods', 'UI', 'LYT_MAINFRAME.SGO')       # another mod's file
+    open(other, 'w').write('other')
+    record = os.path.join(work, 'written.txt')
+    open(record, 'w', encoding='utf-8').write('\n'.join(listed + [listed[0]]) + '\n')
+    marker = os.path.join(root, 'off.txt')
+    said = []
+    assert hd_module.switch_pack(root, record, marker, False, said.append) == 2
+    for line in listed[:2]:
+        assert not os.path.isfile(os.path.join(root, line)) and os.path.isfile(os.path.join(root, line) + hd_module.HIDDEN)
+    assert os.path.isfile(marker) and os.path.isfile(other)
+    assert hd_module.switch_pack(root, record, marker, False, said.append) == 0        # again: nothing left to move
+    open(os.path.join(root, listed[0]), 'w').write('made again')                       # a run while off
+    assert hd_module.switch_pack(root, record, marker, True, said.append) == 1
+    assert open(os.path.join(root, listed[0])).read() == 'made again'
+    assert open(os.path.join(root, listed[1])).read() == listed[1]
+    assert not any(os.path.isfile(os.path.join(root, l) + hd_module.HIDDEN) for l in listed)
+    assert not os.path.isfile(marker) and open(other).read() == 'other'
+    os.remove(record)
+    try:
+        hd_module.switch_pack(root, record, marker, False, said.append)
+        raise AssertionError('switched without a list')
+    except SystemExit:
+        pass
+    print('switch: off renames only the listed files, on puts them back')
+
+
 def main():
     root = game_directory(sys.argv[1] if len(sys.argv) > 1 else None)
     limit = int(sys.argv[2]) if len(sys.argv) > 2 else 120
@@ -276,6 +314,7 @@ def main():
     check_surfaces()
     check_batching()
     check_loader_config()
+    check_switch()
 
     # The stored-mode writer has to survive its own decoder, because that is the
     # exact stream the game will be handed for anything we change.

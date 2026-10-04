@@ -8,8 +8,9 @@ namespace multislot {
 // Wrappers on EDF.dll's EOS imports. Except for the explicitly scoped recovery send,
 // calls and results pass through unchanged. Also routes the EOS SDK's Lobby/P2P/RTC log lines (which the
 // game discards: its callback is an empty function) into the plugin log.
+// handAim: [Sync] HandAim, which needs the send and the receive (handaim.h).
 // Returns the number of import slots redirected.
-int InstallNetLog(HMODULE game, bool diagnostics, bool recovery);
+int InstallNetLog(HMODULE game, bool diagnostics, bool recovery, bool handAim);
 
 // [Sync] ReliableGameTraffic: EDF6 hands EOS every game packet as UnreliableUnordered, so a dropped one
 // is simply gone and the two machines diverge. This sends them ReliableUnordered instead, which only the

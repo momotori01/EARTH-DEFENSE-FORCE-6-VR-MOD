@@ -315,7 +315,6 @@ std::vector<MidSite> SpawnHooks() {
 
 std::vector<MidSite> DiagnosticHooks() {
     return {
-        {"lobby join button gate", 0x8EC476, {0x80, 0xB9, 0x00, 0x03, 0x00, 0x00, 0x00}, 0, 7},
         {"lobby join completion", 0x8EFEC0, {0x48, 0x89, 0x5C, 0x24, 0x10}, 0, 5},
         {"lobby room list next page completion", 0x8F01D0, {0x48, 0x89, 0x5C, 0x24, 0x10}, 0, 5},
         {"lobby room list refresh completion", 0x8F02E0, {0x48, 0x89, 0x5C, 0x24, 0x08}, 0, 5},
@@ -341,12 +340,28 @@ std::vector<CallSite> DiagnosticCalls() {
         {"handshake validation failed", 0x12D56A4, 0x12C8820},
         {"lobby join content check", 0x8EC659, 0x0D92B0},
         {"lobby join start", 0x8EC837, 0x8E7060},
-        {"invite/session SEARCH_TYPE check", 0x709A30, 0x749AC0},
     };
 }
 
 std::vector<CallSite> RecoveryCalls() {
     return {{"handshake final hello recovery", 0x12D5B9B, 0x12C8F50}};
+}
+
+std::vector<CallSite> VersionMessageCalls() {
+    return {{"join check (which MultiSlot family refused)", 0x709A30, 0x749AC0},
+            {"dialog text lookup (version message)", 0x951BC1, 0x7A3500},
+            {"room list join refusal text (version message)", 0x8EC4F5, 0x957EC0}};
+}
+
+std::vector<MidSite> VersionMessageHooks() {
+    return {
+        // 73B230 builds a room list entry: `mov ecx, ebx; call 74AC20` decodes the room's SEARCH_TYPE (ebx) and
+        // `mov [r14+0x168], eax` stores the kind in the RoomInfo (r14): the one place both are in hand.
+        {"room list entry SEARCH_TYPE (version message)", 0x73C5AC, {0x41, 0x89, 0x86, 0x68, 0x01, 0x00, 0x00}, 0, 7},
+        // HUiLobby's join button (8EC270): `cmp byte [rcx+0x300], 0` is the HARDEST/INFERNO gate (rcx GameStatus,
+        // r14 the selected RoomInfo). Also the NetLog line it had as a diagnostic hook until 1.6.1.
+        {"room list join button gate (version message)", 0x8EC476, {0x80, 0xB9, 0x00, 0x03, 0x00, 0x00, 0x00}, 0, 7},
+    };
 }
 
 std::vector<PointerSlot> MissionSlots() {
@@ -401,6 +416,25 @@ std::vector<Patch> FacingPatches() {
     // `or ax, 2` has already put the bit in; `cmovne ax, bx` takes it back out on the other frames, and
     // becomes a four-byte nop. The branch that sends no movement never sends the angles and is left alone.
     return {{"player packet: facing in every one", 0x59FB9A, {0x66, 0x0F, 0x45, 0xC3}, {0x0F, 0x1F, 0x40, 0x00}}};
+}
+
+std::vector<Patch> JoinRetryPatches(int seconds) {
+    // Link::OnInitial's update (12D5BE3) sends a hello every 500 ms and counts them at Link+0x90 (only this
+    // routine reads it; 12D53A0 and the state's entry zero it). Past ten, `cmp [rdi+0x90], 0xA; jle` falls
+    // through to Close (12C7BE0) and Accept (12C7180): 5.0 s after the first hello, then every 5.5 s, until
+    // the 20 s deadline (10 s for the host) gives up and the game leaves the room.
+    // Measured on 2026-10-04 over every restart in the saved logs: 30 of 53 closed a connection EOS had
+    // already established, 0.07-3.8 s before, and the fresh one took another 1.2-5.4 s; a peer is validated
+    // a median 1.0 s after its connection comes up (225 cases: 90% within 1.5 s, all within 3.2 s,
+    // research/session-20261003/retry_outcomes.py). A player whose relayed connections take 4-5 s lost that race
+    // on every try, so every member they could not reach left together 20 s after they joined (2026-09-19
+    // and 2026-10-03, 6-8 players). Only the count changes: the hello, the deadline and the restart itself
+    // stay the game's, so a dead connection is still restarted, only later.
+    if (seconds <= kVanillaJoinRetrySeconds || seconds > kMaxJoinRetrySeconds) return {};
+    const auto hellos = static_cast<std::uint8_t>(seconds * 2);
+    return {{"join handshake: restart a link later", kJoinRetrySite,
+             {0x83, 0xBF, 0x90, 0x00, 0x00, 0x00, 0x0A, 0x7E, 0x22},
+             {0x83, 0xBF, 0x90, 0x00, 0x00, 0x00, hellos, 0x7E, 0x22}}};
 }
 
 bool Matches(const std::uint8_t* at, const Patch& patch) {

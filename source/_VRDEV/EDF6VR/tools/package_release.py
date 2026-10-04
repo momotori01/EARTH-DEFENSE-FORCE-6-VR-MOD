@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.1.5'
+VERSION = '3.1.6'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.5.34.zip'
-MULTISLOT_SHA = 'FD534ADFF701D6352A24B65E24F27C0B579FF84CED3E961ABD20420BC95F9ED0'
-MULTISLOT_DLL_SHA = '66920D66AA0A52D2E97A91D34B27314408F721B759B826F9ED23A2B90709AEC9'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.6.zip'
+MULTISLOT_SHA = '3483667C2FEE710E4771A6F73DC188193FA44D46EB05FCFCF17B3AAA29DBA9E2'
+MULTISLOT_DLL_SHA = 'E468EA7865DDCB48B0A149FA175235AD5DE3AF9EDB3D3DCEA7BEF4A6DA4E2DC3'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -95,8 +95,15 @@ MULTISLOT_DLL_SHA = '66920D66AA0A52D2E97A91D34B27314408F721B759B826F9ED23A2B9070
 # headset's own recenter resets like F12; the Power Blade's swing no longer
 # lands on the sheath. Each checked on hardware 2026-10-02/03. Same
 # EDF6MultiSlot 1.5.34.
-VERIFIED_VR_SHA = '9F771DEFC2CC2D10AE9E4FEA5D25F3CAE697057A75D9725CEE7EDCEC887CBAB0'
-VERIFIED_SETTINGS_SHA = '12390DD1AA029FC89EBBFB85E8B4D241B812A8EBCFF02BA53135698F9E40A444'
+# 3.1.6: two-hand shots seen in their own directions by the other players
+# (hand_aim_sync.h; online test 2026-10-04); HD textures off and on without
+# deleting (settings exe box, hd_textures.py --off/--on; checked on the real
+# pack); online menus on the board (menu_board.h; checked on hardware); Clear
+# Loot 0.1.3 (the white/black text endings). With EDF6MultiSlot 1.6.6 (rooms
+# kept apart from older versions; its README without the difficulty notes,
+# the user's wish -- ZIP and DLL hashes checked here on 2026-10-04).
+VERIFIED_VR_SHA = '8004418D9200C9D12328E1DE6EEB4DA82CF4F6239E6001C5E8255168275A5DA2'
+VERIFIED_SETTINGS_SHA = '5EDE432370EE797AE16AF3BC48FC4A1889695F47304EC10C8BCB80FF739A5B12'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()
@@ -142,7 +149,7 @@ def build(test_clear_loot=False):
     source = ROOT/'packaging'
     loot = ROOT.parent/'EDF6ClearLoot'
     loot_dll = (loot/'dist/EDF6ClearLoot.dll').read_bytes()
-    assert b'EDF6ClearLoot 0.1.2 loading' in loot_dll, 'Build ClearLoot first'
+    assert b'EDF6ClearLoot 0.1.3 loading' in loot_dll, 'Build ClearLoot first'
     files = {
         'winmm.dll': (GAME/'winmm.dll').read_bytes(),
         'Mods/Plugins/EDF6VR.dll': dll,

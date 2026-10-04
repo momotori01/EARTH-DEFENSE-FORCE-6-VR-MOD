@@ -20,6 +20,8 @@
 #include "../src/smoothing.h"
 #include "../src/rooms.h"
 #include "../src/joinlog.h"
+#include "../src/handaim.h"
+#include "../src/versionmsg.h"
 
 using namespace multislot;
 
@@ -56,7 +58,8 @@ std::uint64_t Operand(const std::vector<std::uint8_t>& bytes, std::size_t offset
     return value;
 }
 
-using Spans = std::set<std::pair<std::uint32_t, std::uint32_t>>;
+// A multiset: two tables writing the very same site must show up as an overlap, not collapse into one span.
+using Spans = std::multiset<std::pair<std::uint32_t, std::uint32_t>>;
 
 Spans WriteSpans(const std::vector<Patch>& patches, const std::vector<CallSite>& calls, const std::vector<MidSite>& hooks) {
     Spans spans;
@@ -124,6 +127,14 @@ constexpr VrSite kVrSites[] = {
     {0x1AE5290, 8},
     // Added by EDF6VR on 2026-10-01 (133 sites: the vehicle hand aim / crew work).
     {0x59576A, 5}, {0x5957BA, 5}, {0x598459, 5}, {0x5996A9, 5},
+    // Added by EDF6VR by 2026-10-04 (147 sites: chat bubbles, HUD and more vtable slots).
+    {0x17E6138, 8}, {0x17E6338, 8}, {0x17F6A70, 8}, {0x17F42A8, 8},
+    {0x17FFAD0, 8}, {0x17FF068, 8}, {0x17FFB30, 8}, {0x17FF1D8, 8},
+    {0x6B34C7, 5}, {0x801977, 5}, {0x802059, 5}, {0x801CFA, 5},
+    {0x801CB8, 4}, {0x801CB0, 4},
+    // EDF6VR's hand aim send (2026-10-04, told by its session before its patches.txt was rewritten): the call to
+    // 694910 at 690D3B.
+    {0x690D3B, 5},
     // Sites EDF6VR reported in earlier builds but not in the current list: kept so MultiSlot stays clear of
     // anything the VR mod has ever touched. 16 bytes each, which is more than any of them was.
     {0x18428, 16}, {0x2CBDF0, 16}, {0x56D709, 16}, {0x56DB5B, 16},
@@ -444,6 +455,41 @@ int main(int argc, char** argv) {
     }
     for (const auto& call : DiagnosticCalls()) Check(CallTargets(image.At(call.rva, 5), call.rva, call.target), call.name, call.rva);
     for (const auto& call : RecoveryCalls()) Check(CallTargets(image.At(call.rva, 5), call.rva, call.target), call.name, call.rva);
+    // The version message (versionmsg.h): 709A30 is the only call of the join check, fed the room's SEARCH_TYPE
+    // (12AE670); 951BC1 is the dialog builder's one text lookup, and both "could not join" dialogs (8EFF37 after a
+    // join, 92650D) build OnlineError_RoomError with it.
+    const auto versionCalls = VersionMessageCalls();
+    for (const auto& call : versionCalls) Check(CallTargets(image.At(call.rva, 5), call.rva, call.target), call.name, call.rva);
+    Check(CallTargets(image.At(0x709A28, 5), 0x709A28, 0x12AE670) && std::memcmp(image.At(0x709A2D, 3), "\x48\x8B\xC8", 3) == 0,
+          "the join check is handed the room's SEARCH_TYPE", 0x709A28);
+    Check(versionCalls.size() == 3, "three version message calls");
+    for (const auto& call : versionCalls) Check(VersionMessageCallHandler(call.rva) != nullptr, "and a handler for each", call.rva);
+    const auto versionHooks = VersionMessageHooks();
+    Check(versionHooks.size() == 2, "two version message hooks");
+    for (const auto& hook : versionHooks) {
+        const Patch verify{hook.name, hook.rva, hook.original, hook.original};
+        Check(Matches(image.At(hook.rva, hook.original.size()), verify) && VersionMessageHookHandler(hook.rva) != nullptr,
+              hook.name, hook.rva);
+    }
+    // 73B230: `mov ecx, ebx; call 74AC20` decodes the entry's SEARCH_TYPE, then the kind goes to RoomInfo+0x168.
+    Check(std::memcmp(image.At(0x73C5A5, 2), "\x8B\xCB", 2) == 0 && CallTargets(image.At(0x73C5A7, 5), 0x73C5A7, 0x74AC20),
+          "the room list entry is decoded from ebx right before the hook", 0x73C5A5);
+    // The join button: 8EC476 cleared? -> 8EC62E; else difficulty [r14+0x18] <= 2 -> 8EC62E; else the refusal dialog
+    // with Lobby_Join_Impossible (8EC4EE/8EC4F5), which ends at 8EC629 `jmp 8EC878` - r14 and rcx are not read
+    // in between, so pointing them at stand-ins only steers the two compares.
+    Check(std::memcmp(image.At(0x8EC47D, 6), "\x0F\x85\xAB\x01\x00\x00", 6) == 0 &&
+              std::memcmp(image.At(0x8EC483, 11), "\x41\x83\x7E\x18\x02\x0F\x8E\xA0\x01\x00\x00", 11) == 0,
+          "the gate: jne 8EC62E, cmp dword [r14+0x18], 2, jle 8EC62E", 0x8EC47D);
+    Check(RipTarget(0x8EC4EE, 7) == 0x180A540 && std::memcmp(image.At(0x180A540, 44), L"Lobby_Join_Impossible", 44) == 0 &&
+              std::memcmp(image.At(0x8EC629, 5), "\xE9\x4A\x02\x00\x00", 5) == 0,
+          "the refusal path shows Lobby_Join_Impossible and leaves", 0x8EC4EE);
+    Check(std::memcmp(image.At(0x957EC0, 3), "\x48\x8B\xD1", 3) == 0 && RipTarget(0x957EC3, 7) == 0x20B29A8 &&
+              std::memcmp(image.At(0x957ECA, 5), "\xE9\x31\xB6\xE4\xFF", 5) == 0,
+          "957EC0 is the text lookup with the global table", 0x957EC0);
+    Check(RipTarget(0x8EFF26, 7) == 0x180A4B8 && CallTargets(image.At(0x8EFF37, 5), 0x8EFF37, 0x951AB0) &&
+              RipTarget(0x926501, 7) == 0x180A4B8 && CallTargets(image.At(0x92650D, 5), 0x92650D, 0x951AB0) &&
+              std::memcmp(image.At(0x180A4B8, 44), L"OnlineError_RoomError", 44) == 0,
+          "both OnlineError_RoomError dialogs go through 951AB0", 0x8EFF26);
     // These constructors overwrite eos::lobby::Room's base vtable with eos::RoomImpl.
     // Tie the runtime guard to the actual image, so a fake fixture cannot repeat a wrong assumption.
     for (const auto site : {0x741088u, 0x741557u}) {
@@ -619,6 +665,132 @@ int main(int argc, char** argv) {
     Check(std::memcmp(image.At(0x59FB8F, 2), "\xF7\xF9", 2) == 0,
           "and edx is the remainder of the idiv just before", 0x59FB8F);
 
+    // [MultiSlot] JoinRetrySeconds: the hello count Link::OnInitial compares before it restarts a link.
+    const auto joinRetryPatches = JoinRetryPatches(10);
+    Check(joinRetryPatches.size() == 1 && JoinRetryPatches(5).empty() && JoinRetryPatches(4).empty() &&
+              JoinRetryPatches(61).empty() && JoinRetryPatches(60).size() == 1,
+          "a join retry patch only for 6..60 s");
+    for (const auto& patch : joinRetryPatches) {
+        Check(Matches(image.At(patch.rva, patch.original.size()), patch), patch.name, patch.rva);
+        Check(patch.original[6] == 10 && patch.replacement[6] == 20 && patch.original.size() == 9 &&
+                  std::memcmp(patch.original.data(), patch.replacement.data(), 6) == 0 &&
+                  std::memcmp(patch.original.data() + 7, patch.replacement.data() + 7, 2) == 0,
+              "only the immediate of cmp [rdi+0x90], 10 changes, to 20", patch.rva);
+    }
+    Check(JoinRetryPatches(60)[0].replacement[6] == 120, "60 s is 120 hellos, still a positive imm8");
+    // Around it: the count goes up by one per hello (12D5CEC), jle skips the restart (to 12D5D1D, the send),
+    // the restart is Close then Accept, every 500 ms (the movss at 12D5CD2 reloads 500.0 from 1765A7C).
+    Check(std::memcmp(image.At(0x12D5CEC, 6), "\xFF\x87\x90\x00\x00\x00", 6) == 0, "inc dword [rdi+0x90] just before", 0x12D5CEC);
+    Check(CallTargets(image.At(0x12D5D0B, 5), 0x12D5D0B, 0x12C7BE0) && CallTargets(image.At(0x12D5D18, 5), 0x12D5D18, 0x12C7180) &&
+              CallTargets(image.At(0x12D5D4B, 5), 0x12D5D4B, 0x12C8F50),
+          "the restart closes (12C7BE0) and accepts (12C7180); the jle lands before the hello send (12C8F50)", 0x12D5D0B);
+    Check(RipTarget(0x12D5CD2, 8) == 0x1765A7C, "the hello interval is reloaded from 1765A7C", 0x12D5CD2);
+    {
+        float interval = 0.0f;
+        std::memcpy(&interval, image.At(0x1765A7C, 4), 4);
+        Check(interval == 500.0f, "and it is 500 ms", 0x1765A7C);
+    }
+
+    // Hand aim (handaim.h) rests on the game dropping a packet that starts 00 00 'M' 'S' unread, and on these:
+    // 1. The receive loops ask EOS for every channel (RequestedChannel = null) and hand each packet to the
+    //    subscribers at manager+0x1F0 (12C71F0) without looking at the channel.
+    Check(std::memcmp(image.At(0x12C8D1D, 13), "\xC7\x44\x24\x60\x00\x10\x00\x00\x48\x89\x74\x24\x68", 13) == 0 &&
+              std::memcmp(image.At(0x12C8CED, 2), "\x33\xF6", 2) == 0 && RipTarget(0x12C8D84, 6) == 0x1755058 &&
+              CallTargets(image.At(0x12C8DB5, 5), 0x12C8DB5, 0x12C71F0),
+          "12C8CC0 receives with MaxDataSizeBytes 0x1000 and RequestedChannel null (rsi = 0)", 0x12C8D1D);
+    Check(std::memcmp(image.At(0x12C9CFD, 6), "\x33\xFF\x48\x89\x7D\xDF", 6) == 0 && RipTarget(0x12C9D5A, 6) == 0x1755058 &&
+              CallTargets(image.At(0x12C9D91, 5), 0x12C9D91, 0x12C71F0),
+          "12C9CA0 likewise (RequestedChannel = rdi = 0)", 0x12C9CFD);
+    // 2. Only two subscribers are ever added (12D2FD0): packet::Controller (12D27E0) and the join handshake
+    //    (12D5EBE), whose std::function calls land in 12D2540 and 12D5570.
+    Check(CallTargets(image.At(0x12D27E0, 5), 0x12D27E0, 0x12D2FD0) && CallTargets(image.At(0x12D5EBE, 5), 0x12D5EBE, 0x12D2FD0),
+          "the two subscriptions", 0x12D27E0);
+    Check(std::memcmp(image.At(0x12D32A0, 9), "\x48\x83\xC1\x08\xE9\x97\xF2\xFF\xFF", 9) == 0 &&
+              std::memcmp(image.At(0x12D6050, 9), "\x48\x83\xC1\x08\xE9\x17\xF5\xFF\xFF", 9) == 0,
+          "their calls jump to 12D2540 and 12D5570", 0x12D32A0);
+    // 3. packet::Controller skips a packet under 8 bytes or whose bytes 0 and 1 are both zero.
+    Check(std::memcmp(image.At(0x12D2564, 10), "\x83\x7A\x10\x08\x0F\x82\xA8\x00\x00\x00", 10) == 0 &&
+              std::memcmp(image.At(0x12D25A2, 11), "\x80\x3F\x00\x75\x09\x80\x7F\x01\x00\x74\x2C", 11) == 0,
+          "12D2540: size < 8 or bytes 0 and 1 zero -> 12D25D9 (nothing)", 0x12D25A2);
+    // 4. The join handshake reads only a packet from its own peer whose first dword is zero.
+    Check(std::memcmp(image.At(0x12D5606, 9), "\x83\x3A\x00\x0F\x85\x62\x01\x00\x00", 9) == 0,
+          "12D5570: first dword not zero -> 12D5771 (nothing)", 0x12D5606);
+    // 5. The game's data goes out through 12C8BC0, whose SendPacket returns to 12C8C5A (the hook's cue), on
+    //    channel 0 - the hand aim channel is not one the game uses.
+    Check(RipTarget(0x12C8C54, 6) == 0x1755050 && std::memcmp(image.At(0x12C8C3B, 5), "\xC6\x44\x24\x40\x00", 5) == 0 &&
+              kHandAimChannel != 0,
+          "12C8BC0 sends on channel 0 and returns to 12C8C5A", 0x12C8C54);
+    // 6. A player's soldier holds its room user: CreateOnlinePlayer stores the shared_ptr<eos::User> it found
+    //    in the room's slot vector (12B9E80) at soldier+0x1ED0, and User+0x18 is the ProductUserId.
+    Check(CallTargets(image.At(0x5911D3, 5), 0x5911D3, 0x12B9E80) &&
+              std::memcmp(image.At(0x591254, 7), "\x49\x89\x87\xD0\x1E\x00\x00", 7) == 0,
+          "591130 stores the user at soldier+0x1ED0", 0x591254);
+
+    // 7. Without EDF6VR the plugin turns another player's rapid-fire catch-up shot (690420) itself: hooks on the
+    //    instruction before and after each `call 696FD0`, never on the call EDF6VR redirects.
+    const auto catchUpHooks = HandAimCatchUpHooks();
+    Check(catchUpHooks.size() == 8, "six catch-up hooks and the per-shot receive's two");
+    // The paced replay: 691EAB (weapon tick 6934F0 -> 691DC0) sends a remote count-synced weapon to 6947E0 with dl = 0.
+    Check(CallTargets(image.At(0x6943DD, 5), 0x6943DD, 0x691DC0) &&
+              std::memcmp(image.At(0x691F81, 5), "\xE9\x5A\x28\x00\x00", 5) == 0 &&
+              std::memcmp(image.At(0x691F8D, 5), "\xE9\x4E\x28\x00\x00", 5) == 0,
+          "the weapon tick reaches the paced replay 6947E0", 0x691F81);
+    // The per-shot receive (692540): rsi holds the weapon from 69255F to the call at 692A24 (`mov rcx, rsi` at 692A21).
+    Check(std::memcmp(image.At(0x69255F, 3), "\x48\x8B\xF1", 3) == 0 && std::memcmp(image.At(0x692A21, 3), "\x48\x8B\xCE", 3) == 0 &&
+              CallTargets(image.At(0x692A24, 5), 0x692A24, kCatchUpFire) && kPerShotReceive == 0x692A12,
+          "the per-shot receive's weapon is rsi at 692A12", 0x692A12);
+    // Its muzzle is rdi: the index modulo +0x1E0 (692582 div, 692589 `mov rdi, rdx`), kept at [rbp-0x21] across the
+    // loop that reuses rdi (6929D5 puts it back), and the call's edx (692A1F `mov edx, edi`). 698500 rebuilds that
+    // muzzle (6925C0); 7606A0 then writes the message's muzzle over it only in mode 0 or 1 (6925D6..6925F0), so a
+    // weapon in any other mode fires from the rebuilt muzzle along this machine's aim - the one the plugin turns.
+    Check(std::memcmp(image.At(0x692582, 10), "\x48\xF7\xB6\xE0\x01\x00\x00\x48\x8B\xFA", 10) == 0 &&
+              std::memcmp(image.At(0x6929D5, 4), "\x48\x8B\x7D\xDF", 4) == 0 &&
+              std::memcmp(image.At(0x692A1F, 2), "\x8B\xD7", 2) == 0 &&
+              CallTargets(image.At(0x6925C0, 5), 0x6925C0, 0x698500) &&
+              std::memcmp(image.At(0x6925D6, 15), "\x8B\x96\x40\x15\x00\x00\x85\xD2\x74\x07\x83\xFA\x01\x75\x10", 15) == 0 &&
+              CallTargets(image.At(0x6925F0, 5), 0x6925F0, 0x7606A0),
+          "the per-shot receive fires muzzle rdi, from the message only in mode 0 or 1", 0x6925D6);
+    // Between the turn and the call only the call's arguments, and the put-back is right after it.
+    Check(std::memcmp(image.At(kPerShotReceive, 0x12), "\xC6\x44\x24\x20\x01\x4C\x8D\x4D\x7F\x4C\x8B\x45\xC7\x8B\xD7\x48\x8B\xCE", 0x12) == 0 &&
+              kPerShotCall == kPerShotReceive + 0x12 && kPerShotAfter == kPerShotCall + 5 &&
+              std::memcmp(image.At(0x692A32, 2), "\x7D\x06", 2) == 0,
+          "after the per-shot turn only the call's arguments; the put-back's cmp feeds the jge at 692A32", kPerShotCall);
+    for (const auto& hook : catchUpHooks) {
+        const Patch verify{hook.name, hook.rva, hook.original, hook.original};
+        Check(Matches(image.At(hook.rva, hook.original.size()), verify) && HandAimCatchUpHandler(hook.rva) != nullptr,
+              hook.name, hook.rva);
+    }
+    // 690420's sites put the turn on the 7-byte `lea r9, [rbx+0xBD0]` 0x14 before the call; the paced replay's on the
+    // 5-byte `mov byte [rsp+0x20], 1` 0xD before it. The put-back is the instruction right after each call.
+    const auto kAfterOk = [&](int i) {
+        const std::uint32_t distance = kCatchUpCalls[i] - kCatchUpBefore[i];
+        return (distance == 0x14 || (i == 2 && distance == 0xD)) && kCatchUpAfter[i] == kCatchUpCalls[i] + 5;
+    };
+    for (int i = 0; i < kCatchUpSites; ++i) {
+        Check(CallTargets(image.At(kCatchUpCalls[i], 5), kCatchUpCalls[i], kCatchUpFire), "the catch-up loop calls 696FD0",
+              kCatchUpCalls[i]);
+        Check(kAfterOk(i), "the hooks sit right around the call", kCatchUpCalls[i]);
+        // 6969A0 rebuilds the muzzle 0x14 bytes before the turn; between the turn and the call only the call's
+        // arguments - `mov byte [rsp+0x20], 1; xor r8d, r8d; xor edx, edx; mov rcx, rbx` - so the shot is muzzle 0
+        // of the weapon in rbx and nothing rebuilds the muzzle after the turn.
+        Check(CallTargets(image.At(kCatchUpBefore[i] - 0x14 + 0x03, 5), kCatchUpBefore[i] - 0x14 + 0x03, 0x6969A0) ||
+                  CallTargets(image.At(kCatchUpBefore[i] - 0x11, 5), kCatchUpBefore[i] - 0x11, 0x6969A0) ||
+                  CallTargets(image.At(kCatchUpBefore[i] - 0x14, 5), kCatchUpBefore[i] - 0x14, 0x6969A0),
+              "6969A0 rebuilds the muzzle before the turn", kCatchUpBefore[i]);
+        const unsigned char* arguments = image.At(kCatchUpCalls[i] - 13, 13);
+        Check(std::memcmp(arguments, "\xC6\x44\x24\x20\x01\x45\x33\xC0\x33\xD2\x48\x8B\xCB", 13) == 0,
+              "after the turn only the call's arguments", kCatchUpCalls[i]);
+    }
+    Check(std::memcmp(image.At(0x59B428, 14), "\x48\x8B\xBB\x50\x19\x00\x00\x48\x8B\x83\x60\x19\x00\x00", 14) == 0 &&
+              kOwnedWeapons == 0x1950 && kOwnedWeaponCount == 0x1960,
+          "the soldier's weapon loop reads its list at +0x1950, count +0x1960", 0x59B428);
+    Check(std::memcmp(image.At(0x69054C, 7), "\x48\x8B\x8B\x20\x01\x00\x00", 7) == 0 && kWeaponOwner == 0x120,
+          "690420 itself reads the weapon's owner at +0x120", 0x69054C);
+    Check(std::memcmp(image.At(0x68CCFA, 7), "\x0F\x11\x86\x50\x03\x00\x00", 7) == 0 &&
+              std::memcmp(image.At(0x691943, 7), "\x0F\x10\x87\x50\x03\x00\x00", 7) == 0 &&
+              CallTargets(image.At(0x6976CA, 5), 0x6976CA, 0x691560) && kWeaponFireVector == 0x350,
+          "+0x350 is FireVector (68CCFA), read by the shot's setup 691560 that 696FD0 calls", 0x68CCFA);
+
     // Packet sizes (packetsize.h): the hook at 12CFFD0's entry, and the three facts the log lines state.
     const auto packetHooks = PacketSizeHooks();
     Check(packetHooks.size() == 1, "one packet size hook");
@@ -672,11 +844,13 @@ int main(int argc, char** argv) {
     allCalls.insert(allCalls.end(), diagnosticCalls.begin(), diagnosticCalls.end());
     const auto recoveryCalls = RecoveryCalls();
     allCalls.insert(allCalls.end(), recoveryCalls.begin(), recoveryCalls.end());
+    allCalls.insert(allCalls.end(), versionCalls.begin(), versionCalls.end());
     allCalls.insert(allCalls.end(), sortieCalls.begin(), sortieCalls.end());
     auto allHooks = missionHooks;
     allHooks.insert(allHooks.end(), spawnHooks.begin(), spawnHooks.end());
     const auto diagnosticHooks = DiagnosticHooks();
     allHooks.insert(allHooks.end(), diagnosticHooks.begin(), diagnosticHooks.end());
+    allHooks.insert(allHooks.end(), versionHooks.begin(), versionHooks.end());
     allHooks.insert(allHooks.end(), armorHooks.begin(), armorHooks.end());
     const auto ghostHooks = GhostHooks();
     allHooks.insert(allHooks.end(), ghostHooks.begin(), ghostHooks.end());
@@ -712,6 +886,13 @@ int main(int argc, char** argv) {
             Check((mirrored < 0x5D || mirrored > 0x93) && (mirrored < 0x5E || mirrored > 0x92) && (mirrored < 0x5C || mirrored > 0x94) &&
                       (mirrored < 0x5F || mirrored > 0x91),
                   "MultiSlot 1.2.1-1.2.5 searches (and earlier ones) do not list it", hook.rva);
+            // 1.6.0: enemies grow stronger past four players, which 1.2.6-1.5.38 do not do.
+            Check(mirrored < 0x54 || mirrored > 0x57, "MultiSlot 1.2.6-1.5.38 (join check 0x54..0x57) refuses it", hook.rva);
+            Check(mirrored < 0x54, "MultiSlot 1.2.6-1.5.38 searches ([0x54, 0x94] at most) do not list it", hook.rva);
+            Check(mirrored < 0x4C || mirrored > 0x4F, "the offline ten-player experiment (centre 0x70) is not this family", hook.rva);
+            // 1.6.6: HARDEST and INFERNO enemies hit harder past four players, which 1.6.0-1.6.5 do not do.
+            Check(mirrored < 0x44 || mirrored > 0x47, "MultiSlot 1.6.0-1.6.5 (join check 0x44..0x47) refuses it", hook.rva);
+            Check(mirrored < 0x44, "MultiSlot 1.6.0-1.6.5 searches ([0x44, 0x94] at most) do not list it", hook.rva);
             Check(mirrored >= 2 * (kSearchTypeCenter - 4) - 0x94, "the published values stay inside the search range of the next family", hook.rva);
         }
     }
@@ -744,7 +925,9 @@ int main(int argc, char** argv) {
     all.insert(all.end(), missionPatches.begin(), missionPatches.end());
     all.insert(all.end(), positionPatches.begin(), positionPatches.end());
     all.insert(all.end(), facingPatches.begin(), facingPatches.end());
+    all.insert(all.end(), joinRetryPatches.begin(), joinRetryPatches.end());
     allHooks.insert(allHooks.end(), hostHooks.begin(), hostHooks.end());
+    allHooks.insert(allHooks.end(), catchUpHooks.begin(), catchUpHooks.end());
     auto spans = WriteSpans(all, allCalls, allHooks);
     // The remote-player correction factor is built at load (its operand depends on where the constant
     // lands), so it is not in the tables above - but it is still a write into EDF.dll and has to keep

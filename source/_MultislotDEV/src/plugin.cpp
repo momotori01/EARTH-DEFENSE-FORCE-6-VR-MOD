@@ -35,11 +35,13 @@
 #include "traffic.h"
 #include "gaplog.h"
 #include "packetsize.h"
+#include "handaim.h"
+#include "versionmsg.h"
 
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.5.34";
+constexpr const char* kVersion = "1.6.6";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -139,10 +141,13 @@ struct SlotWrite {
 // All or nothing: a half-applied set could publish a 5-slot room that unmodded players can join,
 // read a capacity from a call that was never redirected, or page a member list the builder never sees.
 bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int ghosts, bool diagnostics, bool armor, bool recovery,
-           bool desync, float smoothing, bool positions, bool facing, ThunkPage& thunks) {
+           bool desync, float smoothing, bool positions, bool facing, int joinRetrySeconds, bool handAim,
+           ThunkPage& thunks) {
     auto patches = GuestPatches();
     const auto sessionPatches = SessionPatches();
     patches.insert(patches.end(), sessionPatches.begin(), sessionPatches.end());
+    const auto joinRetryPatches = JoinRetryPatches(joinRetrySeconds);
+    patches.insert(patches.end(), joinRetryPatches.begin(), joinRetryPatches.end());
     if (positions) {
         const auto positionPatches = PositionPatches();
         patches.insert(patches.end(), positionPatches.begin(), positionPatches.end());
@@ -153,6 +158,7 @@ bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int gho
     }
     std::vector<Hook> hooks;
     for (const auto& site : HostModeHooks()) hooks.push_back({site, HostModeHookHandler(site.rva)});
+    for (const auto& site : VersionMessageHooks()) hooks.push_back({site, VersionMessageHookHandler(site.rva)});
     if (armor)
         for (const auto& site : ArmorHooks()) hooks.push_back({site, ArmorHookHandler(site.rva)});
     if (diagnostics)
@@ -161,6 +167,22 @@ bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int gho
         for (const auto& site : PacketSizeHooks()) hooks.push_back({site, PacketSizeHookHandler(site.rva)});
     if (desync)
         for (const auto& site : DesyncHooks()) hooks.push_back({site, DesyncHookHandler(site.rva)});
+    // Optional, unlike everything else here: when these four are not the expected code only this part goes,
+    // since without it the rest of the plugin works exactly as before (rapid-fire shots then keep one aim).
+    if (handAim) {
+        const auto catchUp = HandAimCatchUpHooks();
+        bool expected = true;
+        for (const auto& site : catchUp) {
+            const Patch verify{site.name, site.rva, site.original, site.original};
+            expected = expected && site.rva + site.original.size() <= kImageSize && Matches(base + site.rva, verify);
+        }
+        if (expected)
+            for (const auto& site : catchUp) hooks.push_back({site, HandAimCatchUpHandler(site.rva)});
+        else
+            Log("HANDAIM: the rapid-fire catch-up sites (EDF+%X...) are not the expected code; other players' "
+                "rapid-fire shots keep their single aim here. Nothing else is affected",
+                catchUp.empty() ? 0u : catchUp[0].rva);
+    }
     if (mission) {
         const auto missionPatches = MissionPatches();
         patches.insert(patches.end(), missionPatches.begin(), missionPatches.end());
@@ -186,6 +208,7 @@ bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int gho
         for (const auto& call : SortieRecordCalls()) redirects.push_back({call, SortieRecordCallHandler(call.rva)});
     if (recovery)
         for (const auto& call : RecoveryCalls()) redirects.push_back({call, reinterpret_cast<void*>(&FinalHelloHook)});
+    for (const auto& call : VersionMessageCalls()) redirects.push_back({call, VersionMessageCallHandler(call.rva)});
     if (mission) {
         for (const auto& call : MissionCalls()) redirects.push_back({call, MissionCallHandler(call.rva)});
         if (ghosts > 0)
@@ -390,6 +413,18 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     // On by default since 1.2.2, so reports from real rooms come with the lobby and P2P lines (the log caps itself).
     const bool netLog = GetPrivateProfileIntW(L"MultiSlot", L"NetLog", 1, iniPath) != 0;
     const bool recovery = GetPrivateProfileIntW(L"MultiSlot", L"HandshakeRecovery", 1, iniPath) != 0;
+    // How long the join handshake waits for a member before restarting the connection (patches.h). The
+    // game's 5 s cut down relayed connections that take 4-5 s, every try, until the 20 s deadline emptied
+    // the room (2026-10-04). On by default for the same reason as the position fix: a link is restarted
+    // by either end, so it only stops when everyone has it. 5 = the game's own.
+    constexpr int kJoinRetryDefault = 10;
+    int joinRetrySeconds =
+        static_cast<int>(GetPrivateProfileIntW(L"MultiSlot", L"JoinRetrySeconds", kJoinRetryDefault, iniPath));
+    if (joinRetrySeconds < kVanillaJoinRetrySeconds || joinRetrySeconds > kMaxJoinRetrySeconds) {
+        Log("[MultiSlot] JoinRetrySeconds=%d is outside %d..%d; using %d", joinRetrySeconds, kVanillaJoinRetrySeconds,
+            kMaxJoinRetrySeconds, kJoinRetryDefault);
+        joinRetrySeconds = kJoinRetryDefault;
+    }
     // Measurement first: EDF6 says itself that it holds routine sync under about 320 kbps and leaves the
     // less important updates out near that, and an 8-player room carries up to 28 P2P links where 4
     // carry 6. Nothing had measured whether the game reaches its own ceiling, which decides whether
@@ -419,6 +454,11 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     // key, so a session can tell the two apart if one of them turns out to cost something.
     const bool facingEveryPacket =
         GetPrivateProfileIntW(L"Sync", L"FacingEveryPacket", kPositionDefault, iniPath) != 0;
+    // Which way a VR player's other hand fires, to and from the others who have the mod (handaim.h). On by
+    // default: it sends nothing until EDF6VR hands it a direction, and a player without it drops the packets
+    // unread, so it is only ever a cost where it is also a use.
+    const bool handAim = GetPrivateProfileIntW(L"Sync", L"HandAim", 1, iniPath) != 0;
+    SetHandAimEnabled(handAim);
     SetTrafficMeter(trafficMeter);
     SetReliableGameTraffic(reliableTraffic);
     const bool clearLatch = GetPrivateProfileIntW(L"Sync", L"ClearSyncLatch", 0, iniPath) != 0;
@@ -566,13 +606,17 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     // The patch only takes when a percentage was asked for and it differs from the stock 0.05.
     InitDesyncMeter(base, smoothing > 0.0f ? smoothing : kVanillaSmoothing);
     InitPacketSize(base);
+    InitHandAim(base);
+    InitVersionMessage(base);
     if (!Apply(base, roomView.dummies, mission, spawns, ghosts, netLog, copyArmorKey || copyArmorPad, recovery,
-               desyncMeter, smoothing, positionEveryPacket, facingEveryPacket, thunks)) {
+               desyncMeter, smoothing, positionEveryPacket, facingEveryPacket, joinRetrySeconds, handAim, thunks)) {
         KeepMenuLayout(false);
         return false;
     }
     KeepMenuLayout(true);
-    Log("Joining: normal rooms and MultiSlot rooms are both listed and joinable");
+    Log("Joining: normal rooms and MultiSlot rooms are both listed and joinable; a MultiSlot room of another "
+        "version (SEARCH_TYPE family other than 0x%X..0x%X) is refused, from the room list too, with a message "
+        "saying whether it is older or newer", 2 * kSearchTypeCenter - 0x94, 2 * kSearchTypeCenter - 0x91);
     Log("Rooms: %d user slots, packet sessions and voice chat HUD records (P2P links to every member of a %d-player "
         "room; 4 or fewer: the extra ones stay empty)", kMaxPlayers, kMaxPlayers);
     Log("Hosting: %dPlayer MOD %s (%ls on a menu screen outside a room; inside one those page through the "
@@ -586,12 +630,24 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             copyArmorHint, copyArmorIgnore, copyArmorCaps[0], copyArmorCaps[1], copyArmorCaps[2], copyArmorCaps[3]);
     else
         Log("Copy armor: off, the armor sites are untouched");
+    if (joinRetrySeconds > kVanillaJoinRetrySeconds)
+        Log("Joining: a member not yet confirmed has %d s before the game restarts the connection to them, "
+            "instead of %d (EDF+%X); relayed connections take 4-5 s and were cut down every try. The 20 s "
+            "deadline is the game's ([MultiSlot] JoinRetrySeconds, %d = the game's own)",
+            joinRetrySeconds, kVanillaJoinRetrySeconds, kJoinRetrySite, kVanillaJoinRetrySeconds);
+    else
+        Log("Joining: the game restarts the connection to a member not yet confirmed after %d s, as it does "
+            "without this mod (JoinRetrySeconds=%d)", kVanillaJoinRetrySeconds, joinRetrySeconds);
     Log("Room screen: 4 member panels per page, switched with %ls; fake members %s", roomView.pageHint[0] ? roomView.pageHint : L"(nothing)",
         roomView.dummies ? "ON (test mode: F6 adds one to the room's member list, F7 removes one)" : "off");
     if (mission) {
         Log("Mission: players 5-%d get loadout sidecars, player slots 5-%d and spawn points (4 or fewer: unchanged)",
             kMaxPlayers, kMaxPlayers);
-        Log("Mission: 5+ players online - enemy durability, damage and speed stay at the 4-player values");
+        Log("Mission: 5+ players online - enemy durability and damage: the game's 4-player factor plus, per player "
+            "past four, %.2f/%.2f/%.2f/%.2f/%.2f (EASY/NORMAL/HARD/HARDEST/INFERNO); damage %.2f/%.2f/%.2f/%.2f/%.2f",
+            kScaleSteps[0].durability, kScaleSteps[1].durability, kScaleSteps[2].durability, kScaleSteps[3].durability,
+            kScaleSteps[4].durability, kScaleSteps[0].damage, kScaleSteps[1].damage, kScaleSteps[2].damage,
+            kScaleSteps[3].damage, kScaleSteps[4].damage);
         if (spawns) {
             // The factor is (players + 1) / 5 (spawn.cpp), written out so the log says what every machine does.
             char factors[160]{};
@@ -609,8 +665,8 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("Mission: Extend=0, mission code untouched (only rooms of up to four players can start safely)");
     if (ghosts > 0)
         Log("Test: GhostPlayers=%d - a mission started alone online gets %d idle copies of you as extra players", ghosts, ghosts);
-    if (netLog || recovery || trafficMeter || reliableTraffic) {
-        const int imports = InstallNetLog(game, netLog, recovery);
+    if (netLog || recovery || trafficMeter || reliableTraffic || handAim) {
+        const int imports = InstallNetLog(game, netLog, recovery, handAim);
         if (netLog)
             Log("Net log: %d EOS imports redirected (NetLog=0 turns the detailed log off; the log file keeps its newest 2 MB)", imports);
         else
@@ -630,6 +686,14 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             "off). Counting only - no packet is changed");
     else
         Log("Sync/TrafficMeter=0: the game's own bandwidth is not measured");
+    if (handAim)
+        Log("Sync/HandAim=1: when EDF6VR fires a weapon of yours in its own hand's direction, that direction goes to "
+            "the others with this mod (channel %u, packets the game drops unread on machines without it), and "
+            "theirs comes back so their rapid-fire weapons fire along it here, VR or not (EDF+6904F7/690603/694894; "
+            "EDF6VR puts their single shots on the hand in the game's own message). Nothing is sent until EDF6VR asks",
+            static_cast<unsigned>(kHandAimChannel));
+    else
+        Log("Sync/HandAim=0: hand directions are neither sent nor used");
     if (reliableTraffic)
         Log("Sync/ReliableGameTraffic=1: EDF6's UnreliableUnordered game packets are sent as "
             "ReliableUnordered, so EOS resends the ones that are lost. EXPERIMENT: a resent packet arrives "
