@@ -1,5 +1,19 @@
-﻿EDF6VR 3.1.7
+﻿EDF6VR 3.1.8
 =============================
+
+CHANGES IN 3.1.8
+New:
+- Ranger dual wield: the left gun now has its own reticle too.
+Changes:
+- Vehicles: aiming by pointing your gun hand is now on at first only in the
+  Nix (with the Gravis and the Combat Wagon). If you played an older
+  version, it is turned off once for the other vehicles too. To use it
+  there, tick them under Vehicle hand aim in EDF6 VR setting.exe.
+Fixes:
+- Fencer: hand cannons now fire along the barrel. Before, their shots left a
+  little below it, so a shot held level hit the ground in front of you. Each
+  weapon's own accuracy (B+ and so on) is unchanged.
+- Still bundles EDF6MultiSlot 1.6.7.
 
 CHANGES IN 3.1.7
 Fixes:
@@ -636,7 +650,8 @@ Main tab:
                   folder next to EDF6 VR setting.exe as
                   EDF6VR-logs-<date>-<time>.zip. Send it with a bug report.
 Extra VR settings tab:
-  VR cockpit, vehicle hand aim (on or off for each kind of vehicle), compact
+  VR cockpit, vehicle hand aim (on or off for each kind of vehicle; on at
+  first in the Nix only), compact
   HUD (on or off, and where: the corner of your view or the right or left
   wrist), aim mark size, sight line thickness (laser sights, throw guides and
   vehicle aim lines, each on its own), recoil, shot vibration, desktop mirror,
@@ -766,7 +781,7 @@ This Ranger-only feature recreates alternating fire between two weapons in VR.
 - Both guns stop all reload progress while dual wielding, even when empty.
   Return to single wield to resume normal reloading of the equipped weapon.
 - Two-hand support aiming and zoom are unavailable during dual wield.
-  Entering dual wield while zoomed cancels zoom. No separate left reticle is shown.
+  Entering dual wield while zoomed cancels zoom. The left gun has its own reticle.
 - Repeated shots build spread separately for each hand, increasing in proportion
   to the accumulated recoil up to 20 extra degrees. Slower fire accumulates less
   recoil naturally; there is no special protection for low-rate weapons.

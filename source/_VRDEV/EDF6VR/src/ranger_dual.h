@@ -64,6 +64,35 @@ bool FencerTurnRows(float rows[3][4],const float from[3],const float to[3]) noex
 // guide_probe.h: the soldier's own aim as a world direction.
 bool GuideAimForward(void* soldier,float* out) noexcept;
 thread_local DualShotContext g_dualShot{};
+// Every shot's direction as the game hands it to its accuracy cone (4E820, at
+// 691B10), whoever fires and whenever: the bullet is made right after, on this
+// thread, inside the same call (691560 -> 260AEB -> 22E9C0, the shot hook's
+// caller chain). shot_origin.h turns a Fencer's bullet from this direction onto
+// the drawn barrel, so the cone survives and nothing else of the game's own
+// aim does (the hand cannon's arm-animation shot left about 10 degrees under
+// its barrel, 2026-10-05: "普通に構えて発射すると目の前の地面に当たる").
+struct SpreadInput { float direction[3]{}; float cone=0; ULONGLONG at=0; bool valid=false; };
+thread_local SpreadInput g_spreadInput{};
+void NoteSpreadInput(const float* direction,float maximum) noexcept {
+    g_spreadInput.valid=false;
+    if(!direction) return;
+    float length=0;
+    for(int j=0;j<3;++j) length+=direction[j]*direction[j];
+    length=std::sqrt(length);
+    if(!std::isfinite(length) || length<1e-4f || !std::isfinite(maximum) || maximum<0) return;
+    for(int j=0;j<3;++j) g_spreadInput.direction[j]=direction[j]/length;
+    g_spreadInput.cone=maximum; g_spreadInput.at=GetTickCount64(); g_spreadInput.valid=true;
+}
+// The direction a bullet built along `from` was aimed before its cone: the
+// last one noted on this thread, if it is recent and `from` lies inside its cone
+// (half a degree to spare); otherwise nullptr.
+const float* SpreadInputFor(const float from[3],ULONGLONG now) noexcept {
+    if(!g_spreadInput.valid || now-g_spreadInput.at>250) return nullptr;
+    float c=0;
+    for(int j=0;j<3;++j) c+=from[j]*g_spreadInput.direction[j];
+    const float off=std::acos(std::clamp(c,-1.0f,1.0f));
+    return off<=g_spreadInput.cone+0.0087f?g_spreadInput.direction:nullptr;
+}
 void LateLatchHand(WeaponHoldCommand&) noexcept;
 bool ValidateHoldCommand(const WeaponHoldCommand&,void*) noexcept;
 struct DualWeaponProfile { unsigned table,tick; const char* name; };
@@ -405,6 +434,7 @@ void PrepareLeftFireTurn(void* weapon,void* attachment,const float* gameDirectio
     g_dualShot.haveFireTurn=true;
 }
 void* __fastcall HookDualSpread(void* output,const float* direction,float minimum,float maximum,std::uint64_t* rng) {
+    NoteSpreadInput(direction,maximum);
     if(g_dualShot.active) {
         const unsigned hand=g_dualShot.hand;
         for(unsigned j=0;j<3;++j)g_dualFireDirection[hand][j]=direction[j];

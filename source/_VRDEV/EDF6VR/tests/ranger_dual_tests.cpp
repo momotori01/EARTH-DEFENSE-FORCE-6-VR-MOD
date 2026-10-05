@@ -5,6 +5,7 @@
 #include "../src/plugin.cpp"
 #undef SetPadState
 #include <limits>
+#include <array>
 static int failures=0,ticks=0,poses=0,zoomCalls=0,holsterCalls=0,draws=0;
 #define CHECK(x) do {if(!(x)){printf("FAIL %d: %s\n",__LINE__,#x);++failures;}}while(false)
 alignas(16) static unsigned char soldier[0x2200]{},otherSoldier[0x2200]{},weapons[3][0x2000]{},slots[0x150]{},body[0x220]{},bones[2][0x220]{},attachments[2][0xF0]{};
@@ -380,6 +381,137 @@ static void CheckMenuBoard() {
     Sleep(350);
     CHECK(!edf6vr::g_openxr.MenuOpen());
 }
+// ranger_dual.h NoteSpreadInput / SpreadInputFor and the turn shot_origin.h
+// makes with them: a bullet built inside its cone around the noted direction is
+// turned from that direction onto the barrel, so its angle off the barrel is
+// its cone deviation (the game's accuracy kept) and nothing of an aim the
+// direction was off (the hand cannon's 10 degrees gone).
+static void CheckBarrelFromCone() {
+    auto unit=[](float x,float y,float z){float l=std::sqrt(x*x+y*y+z*z);return std::array<float,3>{x/l,y/l,z/l};};
+    auto angle=[](const float* a,const float* b){float c=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];return std::acos(std::clamp(c,-1.0f,1.0f));};
+    const float noted[3]={0,0,2};
+    NoteSpreadInput(noted,0.05f);
+    const auto dir=unit(0,0,1);
+    const auto inside=unit(std::sin(0.03f),0,std::cos(0.03f));   // 0.03 rad off: inside a 0.05 cone
+    const auto outside=unit(std::sin(0.07f),0,std::cos(0.07f));  // past 0.05 + half a degree
+    const ULONGLONG now=GetTickCount64();
+    const float* got=SpreadInputFor(inside.data(),now);
+    CHECK(got && std::fabs(got[2]-1)<1e-6f);
+    CHECK(!SpreadInputFor(outside.data(),now));
+    CHECK(!SpreadInputFor(inside.data(),now+300));                 // stale
+    // The turn: the game aimed 10 degrees under the barrel; the bullet left 0.03 rad
+    // to the side of that aim.
+    const float down=10*0.01745329f;
+    const auto aim=unit(0,-std::sin(down),std::cos(down));
+    float built[3][4]{};
+    {   // the bullet's rows: forward = the aim turned 0.03 rad to the side
+        float rows[3][4]={{1,0,0,0},{0,1,0,0},{0,0,1,0}};
+        CHECK(FencerTurnRows(rows,dir.data(),inside.data()));
+        CHECK(FencerTurnRows(rows,dir.data(),aim.data()));
+        std::memcpy(built,rows,sizeof built);
+    }
+    float forward[3]={built[2][0],built[2][1],built[2][2]};
+    NoteSpreadInput(aim.data(),0.05f);
+    const float* before=SpreadInputFor(forward,GetTickCount64());
+    CHECK(before && angle(before,aim.data())<1e-5f);
+    const auto barrel=unit(0.2f,0.1f,1);
+    float rows[3][4];std::memcpy(rows,built,sizeof rows);
+    CHECK(FencerTurnRows(rows,before,barrel.data()));
+    const float now2[3]={rows[2][0],rows[2][1],rows[2][2]};
+    CHECK(std::fabs(angle(now2,barrel.data())-0.03f)<2e-3f);       // the cone survives, the 10 degrees do not
+    // The old turn, from the soldier's aim (level, 10 degrees above the built aim), kept them.
+    std::memcpy(rows,built,sizeof rows);
+    CHECK(FencerTurnRows(rows,dir.data(),barrel.data()));
+    const float old[3]={rows[2][0],rows[2][1],rows[2][2]};
+    CHECK(angle(old,barrel.data())>9*0.01745329f);
+    float bad[3]={NAN,0,1};NoteSpreadInput(bad,0.05f);CHECK(!SpreadInputFor(forward,GetTickCount64()));
+}
+// The Ranger's left gun has a second reticle: published after the left hold
+// command is built (PublishRangerSecondAim), not where the right one is
+// (PublishSecondAim), where AfterUpdate has just wiped that command.
+static void CheckRangerSecondAim() {
+    const bool vr=g_vrEnabled,hand=g_handAiming,dual=g_dualActive.load(),fencer=g_fencerActive.load();
+    const float yaw=g_yawOffset;
+    const auto saved=g_leftHoldCommand;
+    g_vrEnabled=true;g_handAiming=true;g_dualActive=true;g_fencerActive=false;g_yawOffset=0.4f;
+    float got[3]{};
+    // Mid-update, the command wiped: the second reticle is not touched.
+    const float before[3]={0,0,-1};
+    edf6vr::g_openxr.SetAimDirection2(before);
+    g_leftHoldCommand={};
+    PublishSecondAim();
+    CHECK(edf6vr::g_openxr.AimDirection2(got) && got[2]==-1.0f);
+    // A wiped command after the build (the left hand lost): no reticle.
+    PublishRangerSecondAim(true);
+    CHECK(!edf6vr::g_openxr.AimDirection2(got));
+    // Built: along the hand's forward, the way the main reticle maps the aim.
+    g_leftHoldCommand.tracked=true;
+    const float pitch=0.3f,turn=-1.1f;
+    g_leftHoldCommand.hand.axes[2][0]=std::sin(turn)*std::cos(pitch);
+    g_leftHoldCommand.hand.axes[2][1]=std::sin(pitch);
+    g_leftHoldCommand.hand.axes[2][2]=std::cos(turn)*std::cos(pitch);
+    PublishRangerSecondAim(true);
+    const auto want=edf6vr::AimToReference(turn,pitch,g_yawOffset);
+    CHECK(edf6vr::g_openxr.AimDirection2(got));
+    CHECK(std::fabs(got[0]-want.x)<1e-4f && std::fabs(got[1]-want.y)<1e-4f && std::fabs(got[2]-want.z)<1e-4f);
+    // ...and it is the hand's own direction, not the right gun's.
+    CHECK(std::fabs(got[1]-std::sin(pitch))<1e-4f);
+    // A hand weapon's command is not always unit length: still the same way.
+    for(auto& v:g_leftHoldCommand.hand.axes[2]) v*=2;
+    PublishRangerSecondAim(true);
+    CHECK(edf6vr::g_openxr.AimDirection2(got) && std::fabs(got[0]-want.x)<1e-4f && std::fabs(got[1]-want.y)<1e-4f);
+    // The mid-update call leaves the Ranger's alone.
+    PublishSecondAim();
+    CHECK(edf6vr::g_openxr.AimDirection2(got) && std::fabs(got[0]-want.x)<1e-4f);
+    // Out of the soldier's view (a vehicle), out of VR, or without hand aim: none.
+    PublishRangerSecondAim(false);CHECK(!edf6vr::g_openxr.AimDirection2(got));
+    g_vrEnabled=false;PublishRangerSecondAim(true);CHECK(!edf6vr::g_openxr.AimDirection2(got));g_vrEnabled=true;
+    g_handAiming=false;PublishRangerSecondAim(true);CHECK(!edf6vr::g_openxr.AimDirection2(got));g_handAiming=true;
+    // The left gun put away: none, from either call.
+    PublishRangerSecondAim(true);CHECK(edf6vr::g_openxr.AimDirection2(got));
+    g_dualActive=false;
+    PublishRangerSecondAim(true);CHECK(!edf6vr::g_openxr.AimDirection2(got));
+    edf6vr::g_openxr.SetAimDirection2(before);
+    PublishSecondAim();CHECK(!edf6vr::g_openxr.AimDirection2(got));
+    // The Fencer's is PublishSecondAim's: the Ranger's call leaves it.
+    g_fencerActive=true;
+    edf6vr::g_openxr.SetAimDirection2(before);
+    PublishRangerSecondAim(true);CHECK(edf6vr::g_openxr.AimDirection2(got) && got[2]==-1.0f);
+    edf6vr::g_openxr.SetAimDirection2(nullptr);
+    g_leftHoldCommand=saved;g_vrEnabled=vr;g_handAiming=hand;g_dualActive=dual;g_fencerActive=fencer;g_yawOffset=yaw;
+}
+// Vehicle hand aim, on at first in the Nix only: an older INI's seats are
+// turned off once, and a seat ticked again afterwards stays on.
+static void CheckVehicleHandAimDefaults() {
+    wchar_t dir[MAX_PATH]{},path[MAX_PATH]{};GetTempPathW(MAX_PATH,dir);
+    swprintf_s(path,L"%sedf6vr_handaim_%lu.ini",dir,GetCurrentProcessId());
+    const char older[]="[VR]\r\nVehicleHandAimNix=1\r\nVehicleHandAimDepth=0\r\nVehicleHandAimBarga=0\r\nVehicleHandAimTank=1\r\n"
+                       "VehicleHandAimCombat=1\r\nVehicleHandAimHeli=1\r\nVehicleHandAimGunner=1\r\nVehicleHandAimBruteGunner=1\r\n";
+    FILE* file=nullptr;_wfopen_s(&file,path,L"wb");CHECK(file!=nullptr);if(!file)return;
+    fwrite(older,1,sizeof(older)-1,file);fclose(file);
+    bool saved[kHandAimClasses];std::memcpy(saved,g_vehicleHandAimOn,sizeof saved);
+    CHECK(RetireVehicleHandAimDefaults(path));
+    ReadVehicleHandAim(path);
+    for(int i=0;i<kHandAimClasses;++i)CHECK(g_vehicleHandAimOn[i]==(i==0));
+    CHECK(GetPrivateProfileIntW(L"VR",L"VehicleHandAimDefaults",0,path)==2);
+    // Ticked again (the settings program writes 1): kept from now on.
+    WritePrivateProfileStringW(L"VR",L"VehicleHandAimTank",L"1",path);
+    CHECK(!RetireVehicleHandAimDefaults(path));
+    ReadVehicleHandAim(path);
+    CHECK(g_vehicleHandAimOn[static_cast<int>(edf6vr::HandAimClass::Tank)]);
+    CHECK(g_vehicleHandAimOn[static_cast<int>(edf6vr::HandAimClass::Nix)]);
+    // The Nix switched off by the player is not turned back on.
+    DeleteFileW(path);_wfopen_s(&file,path,L"wb");CHECK(file!=nullptr);if(!file)return;
+    const char nixOff[]="[VR]\r\nVehicleHandAimNix=0\r\n";fwrite(nixOff,1,sizeof(nixOff)-1,file);fclose(file);
+    CHECK(RetireVehicleHandAimDefaults(path));ReadVehicleHandAim(path);
+    for(int i=0;i<kHandAimClasses;++i)CHECK(!g_vehicleHandAimOn[i]);
+    // No keys at all: the code's own defaults, the Nix only.
+    DeleteFileW(path);
+    ReadVehicleHandAim(path);
+    for(int i=0;i<kHandAimClasses;++i)CHECK(g_vehicleHandAimOn[i]==(i==0));
+    DeleteFileW(path);
+    std::memcpy(g_vehicleHandAimOn,saved,sizeof saved);
+}
 int wmain(int argc,wchar_t** argv) {
     if(argc!=2)return 2;
     const auto module=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
@@ -616,5 +748,8 @@ int wmain(int argc,wchar_t** argv) {
     CheckTrackedBoundsAndOutput();
     CheckHandAimSync();
     CheckMenuBoard();
+    CheckBarrelFromCone();
+    CheckRangerSecondAim();
+    CheckVehicleHandAimDefaults();
     printf("Ranger dual production checks: %d failures\n",failures);return failures?1:0;
 }

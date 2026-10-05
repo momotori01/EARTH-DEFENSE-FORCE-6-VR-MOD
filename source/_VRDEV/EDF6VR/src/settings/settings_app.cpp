@@ -58,12 +58,12 @@ enum : int {
     ID_HD_USE,
 };
 // The hand aim's switches, one a kind of seat, as the mod reads them ([VR]),
-// with their defaults (the Depth Crawler and the Barga off).
+// with their defaults (on in the Nix only).
 struct HandAimKind { const wchar_t* label; const char* key; bool on; };
 constexpr HandAimKind kHandAimKinds[8]={{L"Nix","VehicleHandAimNix",true},{L"Depth",
-    "VehicleHandAimDepth",false},{L"Barga","VehicleHandAimBarga",false},{L"Tank","VehicleHandAimTank",true},
-    {L"Combat","VehicleHandAimCombat",true},{L"Heli","VehicleHandAimHeli",true},{L"Gun seat","VehicleHandAimGunner",true},
-    {L"Brute gun","VehicleHandAimBruteGunner",true}};
+    "VehicleHandAimDepth",false},{L"Barga","VehicleHandAimBarga",false},{L"Tank","VehicleHandAimTank",false},
+    {L"Combat","VehicleHandAimCombat",false},{L"Heli","VehicleHandAimHeli",false},{L"Gun seat","VehicleHandAimGunner",false},
+    {L"Brute gun","VehicleHandAimBruteGunner",false}};
 // The sight lines' thickness, each a share of the game's own ([Render]; the defaults are the user's choice).
 struct SightKey { const wchar_t* label; const char* key; const char* fallback; };
 constexpr SightKey kSightKeys[3]={{L"Laser","LaserSightWidth","0.1"},{L"Throw","ThrowGuideWidth","0.2"},
@@ -597,13 +597,16 @@ void LoadAll() {
     const bool cockpit=IniOn(ini,"VR","VehicleCockpit",true);
     Say(g_stCockpit,cockpit?L"Now: On":L"Now: Off"); SetCheck(g_cbCockpit,cockpit);
     {
-        std::wstring off;int on=0;
+        std::wstring off,onList;int on=0;
         for(int i=0;i<8;++i) {
             const bool now=IniOn(ini,"VR",kHandAimKinds[i].key,kHandAimKinds[i].on);
             SetCheck(g_cbHandAim[i],now);
-            if(now)++on;else off+=(off.empty()?L"":L", ")+std::wstring(kHandAimKinds[i].label);
+            std::wstring& list=now?onList:off;
+            if(now)++on;
+            list+=(list.empty()?L"":L", ")+std::wstring(kHandAimKinds[i].label);
         }
-        Say(g_stHandAim,on==8?L"Now: On for all":on==0?L"Now: Off for all":L"Now: On, except "+off);
+        // The shorter list: "On for Nix" rather than seven seats it is off for.
+        Say(g_stHandAim,on==8?L"Now: On for all":on==0?L"Now: Off for all":on<=4?L"Now: On for "+onList:L"Now: On, except "+off);
     }
     const bool hud=IniOn(ini,"Render","UiCluster",true);
     int place=std::atoi(IniValue(ini,"Render","UiClusterPlace","0").c_str());

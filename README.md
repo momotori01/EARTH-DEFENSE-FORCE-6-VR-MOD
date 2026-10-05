@@ -22,7 +22,7 @@ Already installed 2.1.0 or later? Close the game, open **EDF6 VR setting.exe** i
 - **Left-handed mode** for Rangers, Wing Divers and Air Raiders: hold and fire the gun with the left hand ([how to switch it on](#left-handed-mode)).
 - Hand models for all four classes, with fingers that follow the trigger, grip and stick.
 - Recoil animation and per-hand firing vibration.
-- Rangers can dual wield (reach behind your left shoulder and press grip).
+- Rangers can dual wield (reach behind your left shoulder and press grip), each gun with its own reticle.
 - Laser sights and thrown-weapon guides leave the weapon in your hand, with
   the landing marker following the line, and they do not lean while you run
   or roll.
@@ -87,7 +87,7 @@ Everything outside the game is set in **EDF6 VR setting.exe**, next to `EDF6.exe
 | Extra VR settings tab | |
 |---|---|
 | **VR cockpit** | A cockpit around you in vehicles, on or off. |
-| **Vehicle hand aim** | Aim vehicles by pointing your gun hand, on or off for each kind of vehicle. |
+| **Vehicle hand aim** | Aim vehicles by pointing your gun hand, on or off for each kind of vehicle (on at first in the Nix only). |
 | **Compact HUD** | On or off, and where: the corner of your view, or the right or left wrist. |
 | **Aim mark size** | The reticle's size (0.5 is normal). |
 | **Sight line thickness** | The thickness of laser sights, throw guides and vehicle aim lines, each on its own (1 is the game's own width; defaults 0.1, 0.2 and 0.3). |

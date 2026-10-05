@@ -223,7 +223,19 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                         // the aim: it was built as far as 82 degrees off the game's aim
                         // (residual, 2026-09-27), which a turn by the aim's own arc keeps,
                         // and it has no spread to carry through.
-                        const float* turnFrom=spear?from:aimed;
+                        // A hand weapon's bullet is turned from the direction the
+                        // game aimed it along before its accuracy cone (ranger_dual.h
+                        // NoteSpreadInput), when that is known: the cone is all that
+                        // stays of the game's own aim. An arm-animation shot (the hand
+                        // cannons) was built about 10 degrees under the aim, and turned
+                        // from the aim it kept those 10 degrees under the barrel.
+                        // Not the missiles: theirs leave 26 to 30 degrees off the aim
+                        // by the game's own launch (no FireVector or AngleAdjust in
+                        // the data), climbing before they home, and are kept so.
+                        const bool homing=edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_HomingShoot@@");
+                        const float* beforeCone=handShot&&!homing?SpreadInputFor(from,GetTickCount64()):nullptr;
+                        if(beforeCone) g_fencerBulletFromCone[hand].fetch_add(1,std::memory_order_relaxed);
+                        const float* turnFrom=beforeCone?beforeCone:spear?from:aimed;
                         float cb=cw;
                         if(handShot && FencerDrawnBarrel(hand,reinterpret_cast<void*>(shot->weapon),barrel))
                             cb=std::clamp(turnFrom[0]*barrel[0]+turnFrom[1]*barrel[1]+turnFrom[2]*barrel[2],-1.0f,1.0f);

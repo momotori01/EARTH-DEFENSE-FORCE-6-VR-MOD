@@ -3369,6 +3369,13 @@ void OpenXrRuntime::SetAimDirection2(const float reference[3]) noexcept {
     g_aim2Z.store(reference[2]/length,std::memory_order_relaxed);
     g_aim2Known.store(true,std::memory_order_relaxed);
 }
+bool OpenXrRuntime::AimDirection2(float reference[3]) const noexcept {
+    if(!g_aim2Known.load(std::memory_order_relaxed)) return false;
+    reference[0]=g_aim2X.load(std::memory_order_relaxed);
+    reference[1]=g_aim2Y.load(std::memory_order_relaxed);
+    reference[2]=g_aim2Z.load(std::memory_order_relaxed);
+    return true;
+}
 void OpenXrRuntime::SetBinocularZoom(float magnification) noexcept {
     g_binocularZoom.store(std::isfinite(magnification) && magnification>=1 && magnification<=40
                          ?magnification:1,std::memory_order_relaxed);

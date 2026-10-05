@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.1.7'
+VERSION = '3.1.8'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.7.zip'
@@ -107,9 +107,17 @@ MULTISLOT_DLL_SHA = 'A77C8C9199E54FBFBC6DDBFABC9750C8A204B2884940F077044065E614D
 # EDF6MultiSlot 1.6.7 (its exception log keeps fatal ones, seat and vehicle
 # appearance logging; rooms as 1.6.6 -- ZIP and DLL hashes checked here on
 # 2026-10-05, the rebuilt ZIP 7E9DC310).
-# VERIFIED_* below: the 3.1.7 build.
-VERIFIED_VR_SHA = '5BB298D0B61FDBF8B59B61A79B5E6A97EF07EDC77F8A44F32F4A4AAE2B2805E0'
-VERIFIED_SETTINGS_SHA = 'EC454BB8C4E5F03A7FB3E0F09C70C3F68493DD3F6A9BA95669BE746556807D68'
+# 3.1.8 (the user: "動作確認 / それじゃあまとめて"): the Ranger's left gun gets
+# its reticle (published after the left hold command is built; checked on
+# hardware, RETICLE aim2=1 while dual wielding); Fencer hand cannons fire along
+# the barrel from the direction the game gave the accuracy cone (cone kept;
+# checked on hardware). Vehicle hand aim on at first in the Nix only (the
+# user: "ビーグルのコントローラエイム、ニクス以外は既定値でオフにしておいて"; an older
+# INI's seats turned off once, VehicleHandAimDefaults=2; tested).
+# EDF6MultiSlot 1.6.7 as in 3.1.7.
+# VERIFIED_* below: the 3.1.8 build.
+VERIFIED_VR_SHA = '175F09C8648E3DBBF509B977184021199779CB4EFEB79C382571BC844EEC934F'
+VERIFIED_SETTINGS_SHA = 'E3AA9F44C8D1F04342E817F49D8F607B6AB39443A7AAFFE7DFE7ED1E89AE38B1'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

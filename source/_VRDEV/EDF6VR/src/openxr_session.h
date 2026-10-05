@@ -157,6 +157,8 @@ public:
     void SetAimDirection(const float reference[3],bool handAim=false) noexcept;
     // A second reticle, for the other hand's weapon (Ranger dual wield, Fencer).
     void SetAimDirection2(const float reference[3]) noexcept;
+    // What SetAimDirection2 last left: false when there is no second reticle.
+    bool AimDirection2(float reference[3]) const noexcept;
     void SetBinocularZoom(float magnification) noexcept;
     void SetReticle(bool follows,int pixels,float distanceMetres,float scale) noexcept;
 

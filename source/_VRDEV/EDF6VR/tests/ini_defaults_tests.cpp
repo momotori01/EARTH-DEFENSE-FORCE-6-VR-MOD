@@ -149,6 +149,15 @@ int wmain(int argc,wchar_t** argv) {
         DeleteFileW(backup.c_str());
     }
     if(argc>1) ShippedIniGainsLeftHanded(argv[1],path);
+    if(argc>1) {
+        // Vehicle hand aim ships on in the Nix only, and without the marker the
+        // mod writes once it has turned an older INI's seats off.
+        CHECK(Get(L"VR",L"VehicleHandAimNix",argv[1])==L"1");
+        for(const wchar_t* key:{L"VehicleHandAimDepth",L"VehicleHandAimBarga",L"VehicleHandAimTank",L"VehicleHandAimCombat",
+                                L"VehicleHandAimHeli",L"VehicleHandAimGunner",L"VehicleHandAimBruteGunner"})
+            CHECK(Get(L"VR",key,argv[1])==L"0");
+        CHECK(Get(L"VR",L"VehicleHandAimDefaults",argv[1])==L"<none>");
+    }
     else { printf("FAIL: the shipped INI's path is the first argument\n"); ++failures; }
     printf("EDF6VR INI defaults tests: %d failures\n",failures);
     return failures?1:0;

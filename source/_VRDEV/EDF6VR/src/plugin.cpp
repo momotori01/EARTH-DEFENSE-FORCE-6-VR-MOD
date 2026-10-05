@@ -659,8 +659,10 @@ constexpr int kHandAimClasses=static_cast<int>(edf6vr::HandAimClass::Count);
 constexpr const wchar_t* kHandAimKeys[kHandAimClasses]={L"VehicleHandAimNix",L"VehicleHandAimDepth",L"VehicleHandAimBarga",
     L"VehicleHandAimTank",L"VehicleHandAimCombat",L"VehicleHandAimHeli",L"VehicleHandAimGunner",L"VehicleHandAimBruteGunner"};
 constexpr const char* kHandAimNames[kHandAimClasses]={"nix","depth","barga","tank","combat","heli","gunner","brute-gunner"};
-constexpr bool kHandAimDefault[kHandAimClasses]={true,false,false,true,true,true,true,true};
-bool g_vehicleHandAimOn[kHandAimClasses]={true,false,false,true,true,true,true,true};
+// On at first in the Nix only (the user, 2026-10-05: "ビーグルのコントローラエイム、
+// ニクス以外は既定値でオフにしておいて").
+constexpr bool kHandAimDefault[kHandAimClasses]={true,false,false,false,false,false,false,false};
+bool g_vehicleHandAimOn[kHandAimClasses]={true,false,false,false,false,false,false,false};
 float g_vehicleHandAimLevel=12.f,g_vehicleHandAimDead=10.f,g_vehicleHandAimFull=25.f,g_vehicleHandAimBuzz=.03f;
 bool NixArmAimActive() noexcept;   // nix_arm_aim.h
 void HandAimReport() noexcept;     // hand_aim_sync.h
@@ -2202,6 +2204,19 @@ void ReadCrewFigureTest(const wchar_t* path) noexcept {
     const int colour=static_cast<int>(GetPrivateProfileIntW(L"Diagnostics",L"CrewFigureTestColour",-1,path));
     edf6vr::SetCrewFigureTest(kind,look,colour==-2?edf6vr::kCrewTestOwnColours:colour>=0&&colour<12?static_cast<unsigned>(colour):0xFFu);
 }
+// An INI from 3.1.7 or older holds the old defaults, 1 for the tanks, the
+// combat vehicles, the helicopters and the gun seats, and a merge never
+// revises a key. So at load those seats are turned off once, and the INI keeps
+// VehicleHandAimDefaults=2 to say it was done: a seat ticked again afterwards
+// stays on. The key is written only here; in the shipped INI the merge would
+// add it before this check. True when it turned them off.
+bool RetireVehicleHandAimDefaults(const wchar_t* path) noexcept {
+    if(GetPrivateProfileIntW(L"VR",L"VehicleHandAimDefaults",0,path)>=2) return false;
+    for(int i=0;i<kHandAimClasses;++i)
+        if(!kHandAimDefault[i]) WritePrivateProfileStringW(L"VR",kHandAimKeys[i],L"0",path);
+    WritePrivateProfileStringW(L"VR",L"VehicleHandAimDefaults",L"2",path);
+    return true;
+}
 // [VR] VehicleHandAim*: at load and with the live tunables.
 void ReadVehicleHandAim(const wchar_t* path) noexcept {
     for(int i=0;i<kHandAimClasses;++i)g_vehicleHandAimOn[i]=GetPrivateProfileIntW(L"VR",kHandAimKeys[i],kHandAimDefault[i]?1:0,path)!=0;
@@ -2278,6 +2293,8 @@ void Settings() noexcept {
     g_testRequestPoints=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Diagnostics",L"MissionRequestPoints",0,path)),0,1000000);
     g_stickButtons=GetPrivateProfileIntW(L"VR",L"RightStickButtons",1,path)!=0;
     g_stickButtonEdge=ReadFloat(path,L"RightStickButtonEdge",0.6f,0.2f,0.95f,L"VR");
+    if(RetireVehicleHandAimDefaults(path))
+        Log("VEHICLEHANDAIM on at first in the Nix only: the other seats were turned off once (tick them again in EDF6 VR setting.exe)");
     ReadVehicleHandAim(path);
     ReadCrewFigureTest(path);
     g_gripPress=ReadFloat(path,L"GripPress",0.75f,0.05f,1.0f,L"VR");
@@ -5670,6 +5687,8 @@ void AfterUpdate(void* camera) noexcept {
             left.time=g_leftHoldCommand.refreshed;
             edf6vr::PublishLaserFrame(left,0);
         } else edf6vr::ClearLaserFrame(0);
+        // Its reticle too, for the same reason (fencer_dual.h).
+        PublishRangerSecondAim(fpsApplied);
         // The lock-on markers come from the game's own HUD data and are drawn in
         // world space. Vehicle seats aim with the head, so they need them too,
         // and the lock-on sight's frame, which goes with the cut-away HUD panel.
@@ -7232,7 +7251,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.1.7 cockpit loading, with EDF6MultiSlot 1.6.7. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 3.1.8 cockpit loading, with EDF6MultiSlot 1.6.7. Fencer weapons aim the barrel itself; no dead band on the aim.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');

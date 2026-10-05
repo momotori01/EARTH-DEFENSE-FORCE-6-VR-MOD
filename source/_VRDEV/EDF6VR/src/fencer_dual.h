@@ -444,6 +444,9 @@ std::atomic<unsigned long long> g_fencerCarrySkips{0};   // carries skipped: the
 thread_local bool g_fencerSwapLive=false;
 thread_local float g_fencerSwapNative[4]{};
 std::atomic<unsigned long long> g_fencerBulletAligned[2]{},g_fencerCarryAdopted{0};
+// Bullets turned from the direction the game aimed them along before their cone
+// (shot_origin.h, NoteSpreadInput): the cone kept, the game's own aim not.
+std::atomic<unsigned long long> g_fencerBulletFromCone[2]{};
 std::atomic<float> g_fencerBulletAlignDeg[2]{};
 // Shots that fell outside the arc the alignment is willing to correct, and
 // the worst angle seen. A hand weapon that is past it shoots along its raw
@@ -1798,12 +1801,13 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
     if(tick-g_fencerReportAt>5000) {
         g_fencerReportAt=tick;
         const unsigned known=g_fencerSlopeCount[0]+g_fencerSlopeCount[1];
-        Log("FENCERDUAL on heavy=%d left=%p right=%p built=%llu refused=%llu ticks=%llu swapped=%llu kicks=%llu invalid=%llu shots L/R=%llu/%llu bulletTurns=%llu lastTurn=%.1fdeg rightRow2vsAim=%.1fdeg(%llu) drawTurn=%.1fdeg hands=%d muzzleWrites=%llu muzzleFar L/R=%llu/%llu laserMatrixCarries=%llu bulletSkips=%llu tickWrites L/R=%llu/%llu ownMatrix L/R=%llu/%llu guideUpdates=%llu guideCarries=%llu carrySkips=%llu adopted=%llu aligned L/R=%llu/%llu(%.1f/%.1fdeg) farOff L/R=%llu(%.0f)/%llu(%.0f) vsNative L/R=%.0f/%.0f vsWanted L/R=%.0f/%.0f axisMap frozen=%llu overrides=%llu contradicted=%llu held=%llu direct L/R=%llu/%llu staleBarrel L/R=%llu/%llu barrel L/R=%.2f/%.2f conf L/R=%.2f/%.2f coef=%.3f gainSamples=%u gain(pitch,yaw)@full=%.4f,%.4f slope=%.4f,%.4f trail L/R=%.2f/%.2f mount L/R=%s/%s bone=%s(%.2f)/%s(%.2f) dy=%.2f/%.2f roll=%.0f/%.0f pairChanges=%llu left target=(%.1f,%.1f) smooth=(%.1f,%.1f) right=(%.1f,%.1f) lastKick=(%.4f,%.4f,%.4f)",
+        Log("FENCERDUAL on heavy=%d left=%p right=%p built=%llu refused=%llu ticks=%llu swapped=%llu kicks=%llu invalid=%llu shots L/R=%llu/%llu bulletTurns=%llu lastTurn=%.1fdeg rightRow2vsAim=%.1fdeg(%llu) drawTurn=%.1fdeg hands=%d muzzleWrites=%llu muzzleFar L/R=%llu/%llu laserMatrixCarries=%llu bulletSkips=%llu tickWrites L/R=%llu/%llu ownMatrix L/R=%llu/%llu guideUpdates=%llu guideCarries=%llu carrySkips=%llu adopted=%llu aligned L/R=%llu/%llu(%.1f/%.1fdeg) fromCone L/R=%llu/%llu farOff L/R=%llu(%.0f)/%llu(%.0f) vsNative L/R=%.0f/%.0f vsWanted L/R=%.0f/%.0f axisMap frozen=%llu overrides=%llu contradicted=%llu held=%llu direct L/R=%llu/%llu staleBarrel L/R=%llu/%llu barrel L/R=%.2f/%.2f conf L/R=%.2f/%.2f coef=%.3f gainSamples=%u gain(pitch,yaw)@full=%.4f,%.4f slope=%.4f,%.4f trail L/R=%.2f/%.2f mount L/R=%s/%s bone=%s(%.2f)/%s(%.2f) dy=%.2f/%.2f roll=%.0f/%.0f pairChanges=%llu left target=(%.1f,%.1f) smooth=(%.1f,%.1f) right=(%.1f,%.1f) lastKick=(%.4f,%.4f,%.4f)",
             g_fencerHeavyAim,left.weapon,right.weapon,g_fencerBuilt.load(),g_fencerRefused.load(),g_fencerTicks.load(),g_fencerSwapped.load(),
             g_fencerKicks.load(),g_fencerInvalid.load(),g_shotCount[0].load(),g_shotCount[1].load(),
             g_fencerBulletTurns.load(),g_fencerBulletTurnDeg.load(),g_fencerRightRow2Deg.load(),g_fencerBulletRightChecks.load(),g_fencerDrawTurnDeg.load(),g_fencerHandWeapons?1:0,g_fencerMuzzleWrites.load(),g_fencerMuzzleFar[0].load(),g_fencerMuzzleFar[1].load(),g_fencerTransformTurns.load(),g_fencerBulletSkips.load(),g_fencerTickWrites[0].load(),g_fencerTickWrites[1].load(),
             g_fencerOwnMatrixCarries[0].load(),g_fencerOwnMatrixCarries[1].load(),g_fencerGuideUpdates.load(),g_fencerGuideCarries.load(),g_fencerCarrySkips.load(),g_fencerCarryAdopted.load(),
             g_fencerBulletAligned[0].load(),g_fencerBulletAligned[1].load(),g_fencerBulletAlignDeg[0].load(),g_fencerBulletAlignDeg[1].load(),
+            g_fencerBulletFromCone[0].load(),g_fencerBulletFromCone[1].load(),
             g_fencerBulletFarOff[0].load(),g_fencerBulletFarOffDeg[0].load(),g_fencerBulletFarOff[1].load(),g_fencerBulletFarOffDeg[1].load(),
             g_fencerVsNativeDeg[0].load(),g_fencerVsNativeDeg[1].load(),g_fencerVsWantedDeg[0].load(),g_fencerVsWantedDeg[1].load(),
             g_fencerMapFrozen.load(),g_fencerMapOverrides.load(),g_fencerMapContradicted.load(),g_fencerMapHeld.load(),g_fencerDirectAimed[0].load(),g_fencerDirectAimed[1].load(),g_fencerStaleBarrel[0].load(),g_fencerStaleBarrel[1].load(),g_fencerBarrelReach[0],g_fencerBarrelReach[1],g_fencerMapConfidence[0],g_fencerMapConfidence[1],coefficient,known,
@@ -2251,6 +2255,13 @@ void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept {
 }
 // The second reticle: the Fencer's left aim (its target, as the right reticle
 // shows the soldier's) or the Ranger's left gun.
+//
+// The Ranger's comes from the left hold command, which AfterUpdate wipes on
+// entry and PublishRangerDualHands builds again at its end. Read here, where
+// the right reticle is published, it was always the wiped one, so the left gun
+// never had a reticle (2026-10-04 test: 1342 left shots, aim2=0 throughout;
+// the user: "レンジャーの左手装備時もレティクル出るようにして"). The Ranger's is
+// published after that build, by PublishRangerSecondAim.
 void PublishSecondAim() noexcept {
     auto reference=[&](float yaw,float pitchUp,float out[3]) {
         const auto r=edf6vr::AimToReference(yaw,pitchUp,g_yawOffset); out[0]=r.x; out[1]=r.y; out[2]=r.z;
@@ -2264,11 +2275,24 @@ void PublishSecondAim() noexcept {
         } else edf6vr::g_openxr.SetAimDirection2(nullptr);
         return;
     }
-    if(g_dualActive.load() && g_leftHoldCommand.tracked && g_vrEnabled && g_handAiming) {
+    if(g_dualActive.load()) return;
+    edf6vr::g_openxr.SetAimDirection2(nullptr);
+}
+// The Ranger's left gun's reticle, once AfterUpdate has built the left hold
+// command (PublishRangerDualHands): along that hand's forward, which is the way
+// its shots leave (RANGERDUAL offHand L=0.0deg over those 1342 shots). The
+// Fencer's stays PublishSecondAim's; anything else has no second reticle.
+void PublishRangerSecondAim(bool fps) noexcept {
+    if(g_fencerActive.load()) return;
+    if(fps && g_dualActive.load() && g_leftHoldCommand.tracked && g_vrEnabled && g_handAiming) {
         const float* f=g_leftHoldCommand.hand.axes[2];
-        float d[3]{}; reference(std::atan2(f[0],f[2]),std::asin(std::clamp(f[1],-1.0f,1.0f)),d);
-        edf6vr::g_openxr.SetAimDirection2(d);
-        return;
+        const float length=std::sqrt(f[0]*f[0]+f[1]*f[1]+f[2]*f[2]);
+        if(std::isfinite(length) && length>0.5f) {
+            const auto r=edf6vr::AimToReference(std::atan2(f[0],f[2]),std::asin(std::clamp(f[1]/length,-1.0f,1.0f)),g_yawOffset);
+            const float d[3]={r.x,r.y,r.z};
+            edf6vr::g_openxr.SetAimDirection2(d);
+            return;
+        }
     }
     edf6vr::g_openxr.SetAimDirection2(nullptr);
 }
