@@ -21,6 +21,11 @@ struct Last {
     std::uint32_t counter = 0;
 };
 Last last[3];
+// A vehicle repeats every seat request it holds every few seconds (2026-10-05: 256 of one log's 400 lines), so
+// requests are kept in a ring and each one is written once, whatever came between.
+constexpr int kRecentRequests = 32;
+Last recentRequests[kRecentRequests];
+int nextRequest = 0;
 
 // Vehicles seen recently: a vehicle runs its update every frame, so one missing for kVehicleGoneMs is gone
 // (and its address may come back as another).
@@ -109,11 +114,20 @@ void OnRequest(CpuContext* context) {
 
 std::size_t FormatRideLine(RideEvent event, const void* soldier, const void* vehicle, int seat,
                            std::uint32_t counter, char* out, std::size_t size) {
-    Last& previous = last[static_cast<int>(event)];
-    if (previous.soldier == soldier && previous.vehicle == vehicle && previous.seat == seat &&
-        previous.counter == counter)
-        return 0;
-    previous = {soldier, vehicle, seat, counter};
+    const Last now{soldier, vehicle, seat, counter};
+    const auto same = [&](const Last& other) {
+        return other.soldier == soldier && other.vehicle == vehicle && other.seat == seat && other.counter == counter;
+    };
+    if (event == RideEvent::Request) {
+        for (const auto& recent : recentRequests)
+            if (same(recent)) return 0;
+        recentRequests[nextRequest] = now;
+        nextRequest = (nextRequest + 1) % kRecentRequests;
+    } else {
+        Last& previous = last[static_cast<int>(event)];
+        if (same(previous)) return 0;
+        previous = now;
+    }
     char name[96], who[64];
     ClassName(vehicle, name, sizeof(name));
     Who(soldier, who, sizeof(who));
@@ -169,6 +183,8 @@ std::size_t NoteVehicle(const void* vehicle, std::uint64_t now, char* out, std::
 void ResetRideLogForTest() {
     for (auto& entry : seen) entry = Seen{};
     for (auto& entry : last) entry = Last{};
+    for (auto& entry : recentRequests) entry = Last{};
+    nextRequest = 0;
     linesLeft.store(kRideLogLines);
     game = 0;
 }

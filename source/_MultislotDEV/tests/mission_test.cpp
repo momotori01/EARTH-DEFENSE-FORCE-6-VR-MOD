@@ -458,6 +458,37 @@ int main() {
     GhostHookHandler(0x790BA6)(&count);
     Check(count.rax == 1 && ActiveGhosts() == 0, "GhostPlayers=0 leaves the count alone");
 
+    // Boarding a Caliban or a Grape: the seat list (r12 ints at rsi, the game's -1s, list[0] already set) gets
+    // seat playerIndex+1 (r13) when the vehicle has it; a player past the seats may take any back seat, and
+    // nothing is written past the list (a guard word after it stays as it was).
+    for (const std::uint32_t site : {0x61D48Du, 0x65BA9Bu}) {
+        std::int32_t list[8];
+        const auto seatList = [&](std::int64_t seats, std::int64_t index) {
+            for (auto& entry : list) entry = -1;
+            list[0] = static_cast<std::int32_t>(index);
+            list[seats] = 0x5EA75EA7;  // just past the list
+            CpuContext board{};
+            board.rsi = reinterpret_cast<std::uint64_t>(list);
+            board.r12 = static_cast<std::uint64_t>(seats);
+            board.r13 = static_cast<std::uint64_t>(index);
+            MissionHookHandler(site)(&board);
+        };
+        seatList(5, 1);
+        Check(list[0] == 1 && list[1] == -1 && list[2] == 1 && list[3] == -1 && list[4] == -1 && list[5] == 0x5EA75EA7,
+              "player index 1 in a five-seat vehicle: its own back seat 2, as the game does");
+        seatList(5, 3);
+        Check(list[4] == 3 && list[1] == -1 && list[5] == 0x5EA75EA7, "player index 3: back seat 4, the last one");
+        for (const std::int64_t index : {4, 5, 7}) {
+            seatList(5, index);
+            Check(list[1] == index && list[2] == index && list[3] == index && list[4] == index && list[5] == 0x5EA75EA7,
+                  "player index 4+ in a five-seat vehicle: any back seat, nothing past the list");
+        }
+        seatList(6, 5);
+        Check(list[6] == 0x5EA75EA7 && list[1] == 5 && list[5] == 5, "a six-seat vehicle: player index 5 has no seat 6 either");
+        seatList(5, -1);
+        Check(list[0] == -1 && list[1] == -1 && list[5] == 0x5EA75EA7, "no player index (-1): the game's own write to seat 0");
+    }
+
     VirtualFree(image, 0, MEM_RELEASE);
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

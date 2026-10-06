@@ -343,7 +343,7 @@ int main(int argc, char** argv) {
         Check(hook.original.size() >= 5 && hook.displacedOffset + hook.displacedSize <= hook.original.size(), "hook covers a jump", hook.rva);
     }
     for (const auto& call : missionCalls) Check(CallTargets(image.At(call.rva, 5), call.rva, call.target), call.name, call.rva);
-    Check(missionPatches.size() == 27 && missionHooks.size() == 25 && missionCalls.size() == 5, "mission table sizes");
+    Check(missionPatches.size() == 27 && missionHooks.size() == 27 && missionCalls.size() == 5, "mission table sizes");
     // The ninth remote flag would land on the user vector CreatePlayers keeps at rsp+0x30 and re-reads
     // every pass of the loop that writes the flags (mission.cpp, RemoteFlagHandler).
     const std::uint8_t vectorBegin[] = {0x48, 0x8B, 0x7C, 0x24, 0x30};  // 1D98E9 mov rdi, [rsp+0x30]
@@ -833,6 +833,39 @@ int main(int argc, char** argv) {
               std::memcmp(image.At(0x63262B, 7), "\x48\x8D\x8B\xE0\xFE\xFF\xFF", 7) == 0 &&
               kSoldierRideCounter == 0x1824,
           "a seat request: rbx vehicle+0x120, r14d seat, r15d counter, rsi soldier, refused outside 0..[+0x618]", kRideRequest);
+
+    // Back seats (mission.cpp PassengerSeatHandler). A vehicle's vtable slot 49 boards a soldier: 633B80 (the
+    // first seat 6346D0 accepts) for most, 61D310 for the Caliban, 65B910 for the Grape and the trucks - which
+    // first allow only seat 0 and seat playerIndex+1 through a list of one int per seat that 633AE0 reads.
+    const std::uint64_t imageBase = image.nt->OptionalHeader.ImageBase;
+    Check(SlotTargets(image.At(0x17DB718, 8), imageBase, 0x61D310) && SlotTargets(image.At(0x17E0338, 8), imageBase, 0x65B910) &&
+              SlotTargets(image.At(0x17DD140, 8), imageBase, 0x65B910) && SlotTargets(image.At(0x17DCC38, 8), imageBase, 0x65B910) &&
+              SlotTargets(image.At(0x17D9128, 8), imageBase, 0x633B80),
+          "boarding: Rescuetank 61D310, Car / Truck / RoboTruck 65B910, Tank 403 the common 633B80", 0x17DB718);
+    struct SeatList {
+        std::uint32_t user, index, count, keep, first, store, call;
+    };
+    // user: rcx = the soldier's User (+0x1ED0); index: `movsxd r13, [rcx+0x48]` (User+0x48 = player index);
+    // count: rdi = the seat count (+0x618 of the vehicle in r15 / r14); keep: `mov r12, rdi` once the list is
+    // allocated; first: `mov [rsi], r13d`; store: the hooked `mov [rsi+r13*4+4], r13d`; call: 633AE0 with the list.
+    for (const SeatList& site : {SeatList{0x61D3A1, 0x61D3C0, 0x61D3D9, 0x61D456, 0x61D48A, 0x61D48D, 0x61D49B},
+                                 SeatList{0x65B9AF, 0x65B9CE, 0x65B9E7, 0x65BA64, 0x65BA98, 0x65BA9B, 0x65BAA9}}) {
+        Check(std::memcmp(image.At(site.user, 7), "\x48\x8B\x88\xD0\x1E\x00\x00", 7) == 0 &&
+                  std::memcmp(image.At(site.index, 4), "\x4C\x63\x69\x48", 4) == 0 &&
+                  std::memcmp(image.At(site.count, 2), "\x49\x8B", 2) == 0 &&
+                  std::memcmp(image.At(site.count + 3, 4), "\x18\x06\x00\x00", 4) == 0 &&
+                  (image.At(site.count + 2, 1)[0] & 0xF8) == 0xB8 &&  // mov rdi, [r8..r15 + disp32]
+                  std::memcmp(image.At(site.keep, 3), "\x4C\x8B\xE7", 3) == 0 &&
+                  std::memcmp(image.At(site.first, 3), "\x44\x89\x2E", 3) == 0 &&
+                  std::memcmp(image.At(site.store, 5), "\x46\x89\x6C\xAE\x04", 5) == 0 &&
+                  CallTargets(image.At(site.call, 5), site.call, 0x633AE0),
+              "the seat list: r13 player index, r12 seat count, rsi the list, seat index+1 stored unbounded", site.store);
+    }
+    // 633AE0 walks the seats with the list beside them and skips a seat whose entry is negative.
+    Check(std::memcmp(image.At(0x633AFA, 7), "\x48\x69\xB1\x18\x06\x00\x00", 7) == 0 &&
+              std::memcmp(image.At(0x633B20, 5), "\x83\x3F\x00\x7C\x12", 5) == 0 &&
+              CallTargets(image.At(0x633B2E, 5), 0x633B2E, 0x6346D0),
+          "633AE0: every seat, skipped when its list entry is negative, else 6346D0", 0x633B20);
 
     // Packet sizes (packetsize.h): the hook at 12CFFD0's entry, and the three facts the log lines state.
     const auto packetHooks = PacketSizeHooks();

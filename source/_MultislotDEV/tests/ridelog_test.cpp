@@ -108,6 +108,12 @@ int main() {
     Check(Has(Line(RideEvent::Request, soldier, 1, 6), "older than their change 7 - dropped"),
           "a request older than the soldier's last change is dropped");
     Check(Line(RideEvent::Request, soldier, 1, 6).empty(), "and the same request again writes nothing");
+    // A vehicle resends every request it holds: two alternating requests are each written once.
+    alignas(16) static unsigned char other[0x2000]{};
+    Check(!Line(RideEvent::Request, other, 3, 2).empty() && Line(RideEvent::Request, soldier, 1, 6).empty() &&
+              Line(RideEvent::Request, other, 3, 2).empty() && Line(RideEvent::Request, soldier, 2, 7).empty(),
+          "requests that come back between others are not written again");
+    Check(!Line(RideEvent::Request, other, 3, 3).empty(), "but a new change of the same seat is");
 
     // A vehicle that is not readable at all still gives a line.
     char text[320]{};

@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.1.8'
+VERSION = '3.1.9'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.7.zip'
-MULTISLOT_SHA = '7E9DC3104E2DCE517FDBB38CF81064822703D9D72AEB8C6F112CC2FE19A0C0E3'
-MULTISLOT_DLL_SHA = 'A77C8C9199E54FBFBC6DDBFABC9750C8A204B2884940F077044065E614DF6C6F'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.8.zip'
+MULTISLOT_SHA = '89B9B035A45F826C1D33F42D38F732F6EF9357FE9B0A1C392FADD6E305C406B2'
+MULTISLOT_DLL_SHA = 'FFF2831D19EACB2F4AA91BAB147E16F4A58156EE269AFD3B25616E84BA22C8EC'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -115,9 +115,13 @@ MULTISLOT_DLL_SHA = 'A77C8C9199E54FBFBC6DDBFABC9750C8A204B2884940F077044065E614D
 # user: "ビーグルのコントローラエイム、ニクス以外は既定値でオフにしておいて"; an older
 # INI's seats turned off once, VehicleHandAimDefaults=2; tested).
 # EDF6MultiSlot 1.6.7 as in 3.1.7.
-# VERIFIED_* below: the 3.1.8 build.
-VERIFIED_VR_SHA = '175F09C8648E3DBBF509B977184021199779CB4EFEB79C382571BC844EEC934F'
-VERIFIED_SETTINGS_SHA = 'E3AA9F44C8D1F04342E817F49D8F607B6AB39443A7AAFFE7DFE7ED1E89AE38B1'
+# 3.1.9 (the user: "マルチの修正をまとめてアップして ... 内容コレだけなら確認不要"): EDF6MultiSlot 1.6.8
+# (player 5+ seat lists of the Caliban, Grape and trucks written out of range -> heap corruption; rooms as
+# 1.6.6 -- ZIP and DLL hashes checked here on 2026-10-06, README diff = the update section only). The VR DLL
+# also leaves an old vehicle-recoil state's node array alone (no play effect, not in the notes).
+# VERIFIED_* below: the 3.1.9 build.
+VERIFIED_VR_SHA = '4B194BDA3AE68C605C0FC4C2700451AC097A34CF1BD4A681B7F8DC476F7940B2'
+VERIFIED_SETTINGS_SHA = '2FE9D71657389EE7CEFBB3573675866F07E68F83F07793135F02D70A4604BF1B'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

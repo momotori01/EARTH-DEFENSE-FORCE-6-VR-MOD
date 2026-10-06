@@ -268,6 +268,10 @@ std::vector<MidSite> MissionHooks() {
         {"result items cleared for players 5+", 0x78E693, {0x48, 0x89, 0x81, 0xD4, 0x4F, 0x01, 0x00}, 0, 7},
         {"result item totals include players 5+", 0x2C865F, {0x41, 0x89, 0x8B, 0x0C, 0x0E, 0x00, 0x00}, 0, 7},
         {"result item totals include players 5+ (recount)", 0x2C9402, {0x03, 0x96, 0x10, 0x0E, 0x00, 0x00}, 0, 6},
+        // Boarding a Caliban (61D310) or a Grape or truck (65B910): `mov [rsi + r13*4 + 4], r13d` marks seat
+        // playerIndex+1 in a list of one int per seat - without a bound (mission.cpp PassengerSeatHandler).
+        {"back seat of players 5+ (Caliban)", 0x61D48D, {0x46, 0x89, 0x6C, 0xAE, 0x04}, 0, 0},
+        {"back seat of players 5+ (Grape, trucks)", 0x65BA9B, {0x46, 0x89, 0x6C, 0xAE, 0x04}, 0, 0},
     };
 }
 

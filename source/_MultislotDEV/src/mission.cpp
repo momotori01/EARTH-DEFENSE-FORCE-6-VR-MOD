@@ -208,6 +208,29 @@ void PlayerTagIndexHandler(CpuContext* context) {
         LogOnce(14, "MISSION HUD colour of player index %lld uses one of the four the HUD has", index);
 }
 
+// Boarding a Caliban (Vehicle507_Rescuetank, vtable slot 49 = 61D310) or a Grape or truck (Vehicle_Car,
+// Vehicle60X_Truck, Vehicle607_RoboTruck: 65B910) builds a list of one int per seat (r12 of them, at rsi), all -1,
+// sets list[0] (the driver's seat) and then list[playerIndex+1] to the player index (r13 = User+0x48), and
+// 633AE0 seats the player in the first listed seat that is free and in reach (6346D0). Each player of four has
+// a back seat of their own; a five-seat vehicle has none for player index 4 and up, whose write went past the
+// list's end - heap corruption, which ended the sixth player's game twice on 2026-10-04 and twice on 2026-10-05,
+// each time on boarding, without reaching any crash handler - and left them no back seat at all. Here the
+// write stays in the list: a player past the seats may take any back seat that is free.
+void PassengerSeatHandler(CpuContext* context) {
+    auto* list = reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(context->rsi));
+    const auto seats = static_cast<std::int64_t>(context->r12);
+    const auto index = static_cast<std::int64_t>(context->r13);
+    if (!list) return;
+    if (index + 1 >= 0 && index + 1 < seats) {
+        list[index + 1] = static_cast<std::int32_t>(index);
+        return;
+    }
+    if (index < 0) return;
+    for (std::int64_t seat = 1; seat < seats; ++seat) list[seat] = static_cast<std::int32_t>(index);
+    LogOnce(15, "MISSION player index %lld boards a Caliban, Grape or truck: any free back seat (its own is past the vehicle's seats)",
+            index);
+}
+
 // ResultSync_Begin clears the game's four item counts; the sidecars are cleared with them.
 void ClearItemsHandler(CpuContext*) { std::memset(sidecarItems, 0, sizeof(sidecarItems)); }
 
@@ -433,6 +456,8 @@ MidHandler MissionHookHandler(std::uint32_t rva) {
         case 0x78E693: return &ClearItemsHandler;
         case 0x2C865F: return &ItemTotalsHandler;
         case 0x2C9402: return &ItemRecountHandler;
+        case 0x61D48D:
+        case 0x65BA9B: return &PassengerSeatHandler;
         default: return nullptr;
     }
 }

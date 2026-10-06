@@ -512,6 +512,38 @@ static void CheckVehicleHandAimDefaults() {
     DeleteFileW(path);
     std::memcpy(g_vehicleHandAimOn,saved,sizeof saved);
 }
+// The vehicle recoil draw keeps its hands off an old state's node array: the
+// vehicle it names may be gone (the next mission's start, 2026-10-05).
+static void CheckVehicleRecoilStaleState() {
+    void* reserved=VirtualAlloc(nullptr,0x10000,MEM_RESERVE,PAGE_NOACCESS);CHECK(reserved!=nullptr);if(!reserved)return;
+    static unsigned char model[0x40]{},other[0x40]{};
+    VehicleRecoilPublished state{};
+    state.model=model;state.partCount=1;state.parts[0].moves[0]=3;state.parts[0].moveCount=1;
+    state.nodes=static_cast<unsigned char*>(reserved);state.nodeCount=8;
+    state.seen=GetTickCount64()-60000;
+    AcquireSRWLockExclusive(&g_vehicleRecoilLock);const auto savedState=g_vehicleRecoilDraw;g_vehicleRecoilDraw=state;ReleaseSRWLockExclusive(&g_vehicleRecoilLock);
+    const auto savedFrame=g_vehicleRecoilFrame;g_vehicleRecoilFrame={};
+    const bool recoil=g_vehicleRecoilOn;g_vehicleRecoilOn=true;
+    static std::atomic<int> faults{0};faults=0;
+    void* handler=AddVectoredExceptionHandler(1,[](EXCEPTION_POINTERS* e)->LONG{
+        if(e->ExceptionRecord->ExceptionCode==EXCEPTION_ACCESS_VIOLATION) faults.fetch_add(1);
+        return EXCEPTION_CONTINUE_SEARCH;});
+    CHECK(!VehicleRecoilDraw(other,nullptr,0,nullptr));
+    CHECK(faults==0);
+    CHECK(g_vehicleRecoilFrame.valid && !g_vehicleRecoilFrame.pivotOk[0]);
+    // A fresh state still has its pivot read (here from a readable array).
+    alignas(16) static unsigned char nodes[8*0x110]{};
+    reinterpret_cast<float*>(nodes+3*0x110+0xB0)[12]=1.5f;
+    state.nodes=nodes;state.seen=GetTickCount64();
+    AcquireSRWLockExclusive(&g_vehicleRecoilLock);g_vehicleRecoilDraw=state;ReleaseSRWLockExclusive(&g_vehicleRecoilLock);
+    g_vehicleRecoilFrame={};
+    VehicleRecoilDraw(other,nullptr,0,nullptr);
+    CHECK(faults==0 && g_vehicleRecoilFrame.pivotOk[0] && g_vehicleRecoilFrame.pivot[0][0]==1.5f);
+    RemoveVectoredExceptionHandler(handler);
+    g_vehicleRecoilOn=recoil;g_vehicleRecoilFrame=savedFrame;
+    AcquireSRWLockExclusive(&g_vehicleRecoilLock);g_vehicleRecoilDraw=savedState;ReleaseSRWLockExclusive(&g_vehicleRecoilLock);
+    VirtualFree(reserved,0,MEM_RELEASE);
+}
 int wmain(int argc,wchar_t** argv) {
     if(argc!=2)return 2;
     const auto module=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
@@ -751,5 +783,6 @@ int wmain(int argc,wchar_t** argv) {
     CheckBarrelFromCone();
     CheckRangerSecondAim();
     CheckVehicleHandAimDefaults();
+    CheckVehicleRecoilStaleState();
     printf("Ranger dual production checks: %d failures\n",failures);return failures?1:0;
 }

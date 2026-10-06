@@ -619,8 +619,13 @@ bool VehicleRecoilDraw(void* model,void* renderContext,int pass,void* view) noex
         AcquireSRWLockShared(&g_vehicleRecoilLock); frame.state=g_vehicleRecoilDraw; ReleaseSRWLockShared(&g_vehicleRecoilLock);
         AcquireSRWLockShared(&g_nixArmLock); std::memcpy(frame.turns,g_nixArmTurns,sizeof(frame.turns)); frame.nix=g_nixArmShared; ReleaseSRWLockShared(&g_nixArmLock);
         AcquireSRWLockShared(&g_cabinHeadLock); frame.head=g_cabinHeadFix; ReleaseSRWLockShared(&g_cabinHeadLock);
+        // Only a state the draw below would use (250 ms): an old one names the
+        // node array of a vehicle that may be gone. Read anyway, at the next
+        // mission's start, it faulted once inside the __try (2026-10-05 23:05:28,
+        // EDF6VR.dll+5936A), which the MultiSlot exception log records.
+        const bool fresh=frame.state.model && frame.state.partCount && nowTick-frame.state.seen<=250;
         for(unsigned p=0;p<frame.state.partCount && p<kVehicleRecoilParts;++p)
-            frame.pivotOk[p]=VehicleRecoilNodeAt(frame.state.nodes,frame.state.parts[p].moves[0],frame.pivot[p]);
+            frame.pivotOk[p]=fresh && VehicleRecoilNodeAt(frame.state.nodes,frame.state.parts[p].moves[0],frame.pivot[p]);
         frame.valid=true; frame.takenAt=nowTick;
         g_vehicleRecoilFrames.fetch_add(1,std::memory_order_relaxed);
     }
