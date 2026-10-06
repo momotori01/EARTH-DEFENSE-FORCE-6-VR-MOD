@@ -458,6 +458,51 @@ int main() {
     GhostHookHandler(0x790BA6)(&count);
     Check(count.rax == 1 && ActiveGhosts() == 0, "GhostPlayers=0 leaves the count alone");
 
+    // Air Raider credit (693F18): the weapon (rsi) loses the risen credit (eax) from its reload counter +0xE68 -
+    // all of it with four or fewer players or offline; with five or more, its share for the number of Air
+    // Raiders in the loadout records (+0, 2 = Air Raider; players 5+ in the sidecars) and 5% less for each
+    // player past four, the part of a point carried to the next kill.
+    {
+        alignas(16) static unsigned char weapon[0x1000]{};
+        const auto setPlayers = [&](std::int32_t players) { std::memcpy(status.data() + 0x14FF8, &players, 4); };
+        const auto setClass = [&](int index, std::int32_t soldier) {
+            auto* record = index < 4 ? status.data() + kLoadoutRecords + index * kLoadoutRecordSize
+                                     : const_cast<std::uint8_t*>(LoadoutSidecar(index));
+            std::memcpy(record, &soldier, 4);
+        };
+        const auto charge = [&](std::uint32_t rise) {
+            std::int32_t left = 10000;
+            std::memcpy(weapon + 0xE68, &left, 4);
+            CpuContext tick{};
+            tick.rsi = reinterpret_cast<std::uint64_t>(weapon);
+            tick.rax = 0xFFFFFFFF00000000ull | rise;  // eax is the rise; the upper half is whatever was there
+            MissionHookHandler(0x693F18)(&tick);
+            std::memcpy(&left, weapon + 0xE68, 4);
+            return 10000 - left;
+        };
+        info[0x68] = 1;  // online
+        for (int i = 0; i < 8; ++i) setClass(i, 0);
+        setClass(0, 2);
+        setClass(1, 2);
+        setPlayers(4);
+        Check(charge(100) == 100 && charge(7) == 7, "four players: every point, as the game gives it");
+        setPlayers(6);  // two Air Raiders of six: 75% x 90% = 67.5%
+        Check(charge(100) == 67 && charge(100) == 68, "six players, two Air Raiders: 67.5%, the half point kept for the next kill");
+        setClass(5, 2);  // a third, in a sidecar: 50% x 90% = 45%
+        Check(charge(20) + charge(20) == 18, "a third Air Raider (player 6, in a sidecar): 45%");
+        setPlayers(5);
+        for (int i = 0; i < 8; ++i) setClass(i, 0);
+        setClass(4, 2);  // one Air Raider of five: 95%
+        Check(charge(200) == 190, "one Air Raider of five: 95%");
+        setPlayers(8);
+        for (int i = 0; i < 8; ++i) setClass(i, 2);  // eight Air Raiders of eight: 20% x 80% = 16%
+        Check(charge(100) == 16, "eight Air Raiders of eight: 16%");
+        info[0x68] = 0;  // offline: never cut, whatever the stale count says
+        Check(charge(100) == 100, "offline: every point");
+        info[0x68] = 1;
+        setPlayers(0);
+    }
+
     // Boarding a Caliban or a Grape: the seat list (r12 ints at rsi, the game's -1s, list[0] already set) gets
     // seat playerIndex+1 (r13) when the vehicle has it; a player past the seats may take any back seat, and
     // nothing is written past the list (a guard word after it stays as it was).

@@ -343,7 +343,7 @@ int main(int argc, char** argv) {
         Check(hook.original.size() >= 5 && hook.displacedOffset + hook.displacedSize <= hook.original.size(), "hook covers a jump", hook.rva);
     }
     for (const auto& call : missionCalls) Check(CallTargets(image.At(call.rva, 5), call.rva, call.target), call.name, call.rva);
-    Check(missionPatches.size() == 27 && missionHooks.size() == 27 && missionCalls.size() == 5, "mission table sizes");
+    Check(missionPatches.size() == 27 && missionHooks.size() == 28 && missionCalls.size() == 5, "mission table sizes");
     // The ninth remote flag would land on the user vector CreatePlayers keeps at rsp+0x30 and re-reads
     // every pass of the loop that writes the flags (mission.cpp, RemoteFlagHandler).
     const std::uint8_t vectorBegin[] = {0x48, 0x8B, 0x7C, 0x24, 0x30};  // 1D98E9 mov rdi, [rsp+0x30]
@@ -866,6 +866,26 @@ int main(int argc, char** argv) {
               std::memcmp(image.At(0x633B20, 5), "\x83\x3F\x00\x7C\x12", 5) == 0 &&
               CallTargets(image.At(0x633B2E, 5), 0x633B2E, 0x6346D0),
           "633AE0: every seat, skipped when its list entry is negative, else 6346D0", 0x633B20);
+
+    // Air Raider credit (mission.cpp CreditHandler). The weapon data's "ReloadType" goes to weapon+0x208 (68C8F6 ->
+    // 68C932). In the weapon tick (6934F0) types 0 and 3 and 1 (edi = 1, 693B4B) count down by themselves; any other
+    // (2, credit) reads its team's credit total - [020B2978]+0x38, 0x38 bytes per team (owner +0x314), the float at
+    // +0x30 - takes the rise over weapon+0xE80 (over 1500 it is already compressed by the game), and at 693F18 takes
+    // it off the reload counter +0xE68, then remembers the total (693F1E).
+    Check(RipTarget(0x68C8F6, 7) == 0x17E29D0 && std::memcmp(image.At(0x17E29D0, 22), "R\0e\0l\0o\0a\0d\0T\0y\0p\0e\0\0\0", 22) == 0 &&
+              std::memcmp(image.At(0x68C932, 6), "\x89\x86\x08\x02\x00\x00", 6) == 0,
+          "ReloadType is weapon+0x208", 0x68C932);
+    Check(std::memcmp(image.At(0x693B4B, 5), "\xBF\x01\x00\x00\x00", 5) == 0 &&
+              std::memcmp(image.At(0x693E8D, 0x1F), "\x8B\x86\x08\x02\x00\x00\x85\xC0\x0F\x84\x98\x00\x00\x00\x83\xF8\x03\x0F\x84\x8F\x00\x00\x00\x3B\xC7\x0F\x84\x8F\x00\x00\x00", 0x1F) == 0 &&
+              std::memcmp(image.At(0x693EAC, 14), "\x48\x8B\x86\x20\x01\x00\x00\x48\x63\x88\x14\x03\x00\x00", 14) == 0 &&
+              RipTarget(0x693EC4, 7) == 0x20B2978 &&
+              std::memcmp(image.At(0x693ECB, 14), "\x48\x6B\xC9\x38\x48\x8B\x42\x38\xF3\x0F\x10\x74\x01\x30", 14) == 0 &&
+              std::memcmp(image.At(0x693ED9, 11), "\x0F\x28\xC6\xF3\x0F\x5C\x86\x80\x0E\x00\x00", 11) == 0 &&
+              std::memcmp(image.At(0x693F14, 18), "\x85\xC0\x7E\x0E\x29\x86\x68\x0E\x00\x00\xF3\x0F\x11\xB6\x80\x0E\x00\x00", 18) == 0,
+          "a credit weapon takes its team's risen credit off +0xE68 at 693F18 (eax > 0), then remembers the total", 0x693F18);
+    // A player's soldier type is their loadout record's first int (7FFDA3 -> 7FFDAA for the HUD).
+    Check(std::memcmp(image.At(0x7FFDAA, 7), "\x8B\x84\x01\x78\x4C\x01\x00", 7) == 0,
+          "the soldier type is loadout record +0", 0x7FFDAA);
 
     // Packet sizes (packetsize.h): the hook at 12CFFD0's entry, and the three facts the log lines state.
     const auto packetHooks = PacketSizeHooks();

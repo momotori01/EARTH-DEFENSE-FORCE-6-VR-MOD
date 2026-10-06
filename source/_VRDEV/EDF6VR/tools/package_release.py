@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.1.9'
+VERSION = '3.1.10'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.8.zip'
-MULTISLOT_SHA = '89B9B035A45F826C1D33F42D38F732F6EF9357FE9B0A1C392FADD6E305C406B2'
-MULTISLOT_DLL_SHA = 'FFF2831D19EACB2F4AA91BAB147E16F4A58156EE269AFD3B25616E84BA22C8EC'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
+MULTISLOT_SHA = 'B88E15F753147555A3367679E79A3FADC0B4C6D6E156C4159B2BF13C8CA9E780'
+MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E202757F'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -119,9 +119,14 @@ MULTISLOT_DLL_SHA = 'FFF2831D19EACB2F4AA91BAB147E16F4A58156EE269AFD3B25616E84BA2
 # (player 5+ seat lists of the Caliban, Grape and trucks written out of range -> heap corruption; rooms as
 # 1.6.6 -- ZIP and DLL hashes checked here on 2026-10-06, README diff = the update section only). The VR DLL
 # also leaves an old vehicle-recoil state's node array alone (no play effect, not in the notes).
-# VERIFIED_* below: the 3.1.9 build.
-VERIFIED_VR_SHA = '4B194BDA3AE68C605C0FC4C2700451AC097A34CF1BD4A681B7F8DC476F7940B2'
-VERIFIED_SETTINGS_SHA = '2FE9D71657389EE7CEFBB3573675866F07E68F83F07793135F02D70A4604BF1B'
+# 3.1.10 (the user: "まるちMODアプデしたからまとめて ... これだけでいい", then "アップはしないでね"):
+# EDF6MultiSlot 1.6.9 (Air Raider credit share with 5+ players; its details only in the zip's README, the
+# user's wish: "webで読める説明は不要") -- ZIP and DLL hashes checked here on 2026-10-06, README diff = the
+# update section only. Versions compare numerically everywhere (Update-EDF6VR.ps1 [version], settings_core
+# ParseVersion, MultiSlot VersionAt), so 3.1.10 is newer than 3.1.9.
+# VERIFIED_* below: the 3.1.10 build.
+VERIFIED_VR_SHA = '3BA9DCD7A3F8892E636247B63E1A1114A2C887724165C110324027C5A6A4F56E'
+VERIFIED_SETTINGS_SHA = '7DA098AE43375D265D82F887FC4180B57494D826F75E60292F9294605C02BB3E'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

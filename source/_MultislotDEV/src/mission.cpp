@@ -254,6 +254,86 @@ void ItemTotalsHandler(CpuContext* context) {
 }
 
 // 2C92E0 before `add edx, [rsi+0xE10]`: edx/ecx and [rsi+0xE08]/[rsi+0xE0C] hold the totals.
+// Air Raider credit with five or more players online (1.6.9, the user's numbers of 2026-10-06). Every enemy
+// killed adds its value to its team's credit total ([020B2978]+0x38, 0x38 bytes per team, the float at +0x30),
+// the same total for every Air Raider, and each credit weapon (ReloadType 2, weapon+0x208) takes the rise since
+// it last looked (weapon+0xE80) off its reload counter (weapon+0xE68) in the weapon tick (6934F0, at 693F18).
+// With five or more players there are more enemies (spawn.h) and the support adds up over every Air Raider,
+// so each Air Raider's share is cut by how many the mission has, and by 5% for each player past four - the
+// extra enemies would otherwise pay only the Air Raiders. Each machine charges its own weapons, so this needs
+// nothing from anyone else; four or fewer players keep the game's own credit.
+constexpr int kCreditShare[kMaxPlayers + 1] = {100, 100, 75, 50, 40, 30, 25, 20, 20};  // % by Air Raiders
+constexpr int kCreditWhole = 10000;  // the scale is kept in hundredths of a percent, so it adds up exactly
+constexpr std::int32_t kAirRaider = 2;  // loadout record +0: 0 Ranger, 1 Wing Diver, 2 Air Raider, 3 Fencer
+constexpr std::size_t kWeaponReloadLeft = 0xE68;
+
+int MissionAirRaiders(int players) {
+    std::uint64_t status = 0;
+    std::memcpy(&status, game + kGameStatusPointer, sizeof(status));
+    if (!status) return 0;
+    int raiders = 0;
+    for (int index = 0; index < players && index < kMaxPlayers; ++index) {
+        const std::uint8_t* record = index < kVanillaPlayers
+                                         ? At(status + kLoadoutRecords + static_cast<std::uint64_t>(index) * kLoadoutRecordSize)
+                                         : LoadoutSidecar(index);
+        std::int32_t soldier = -1;
+        if (record) std::memcpy(&soldier, record, sizeof(soldier));
+        if (soldier == kAirRaider) ++raiders;
+    }
+    return raiders;
+}
+
+// kCreditWhole with four or fewer players; otherwise the share of one Air Raider of `raiders` in a mission of
+// `players`, 5% less for each player past four, out of kCreditWhole.
+int CreditScale(int players, int raiders) {
+    if (players <= kVanillaPlayers) return kCreditWhole;
+    const int counted = players > kMaxPlayers ? kMaxPlayers : players;
+    const int share = raiders < 1 ? 1 : raiders > kMaxPlayers ? kMaxPlayers : raiders;
+    return kCreditShare[share] * (100 - 5 * (counted - kVanillaPlayers));
+}
+
+// The part of a point each weapon has not been given yet, so a cut never rounds a small kill away.
+struct CreditRest {
+    const void* weapon;
+    std::int64_t rest;  // out of kCreditWhole
+};
+constexpr int kCreditRests = 32;
+CreditRest creditRests[kCreditRests];
+int nextCreditRest = 0;
+std::atomic<int> loggedCredit{-1};
+
+// 693F18 `sub [rsi+0xE68], eax`: rsi the weapon, eax the credit risen since it last looked (above 0 here).
+void CreditHandler(CpuContext* context) {
+    auto* weapon = At(context->rsi);
+    const auto rise = static_cast<std::int32_t>(static_cast<std::uint32_t>(context->rax));
+    const int players = OnlineSession() ? MissionPlayers() : 0;
+    const int scale = players > kVanillaPlayers ? CreditScale(players, MissionAirRaiders(players)) : kCreditWhole;
+    std::int32_t left = 0;
+    std::memcpy(&left, weapon + kWeaponReloadLeft, sizeof(left));
+    if (scale >= kCreditWhole) {
+        left -= rise;
+        std::memcpy(weapon + kWeaponReloadLeft, &left, sizeof(left));
+        return;
+    }
+    CreditRest* slot = nullptr;
+    for (auto& entry : creditRests)
+        if (entry.weapon == weapon) slot = &entry;
+    if (!slot) {
+        slot = &creditRests[nextCreditRest];
+        nextCreditRest = (nextCreditRest + 1) % kCreditRests;
+        *slot = {weapon, 0};
+    }
+    const std::int64_t exact = static_cast<std::int64_t>(rise) * scale + slot->rest;
+    slot->rest = exact % kCreditWhole;
+    left -= static_cast<std::int32_t>(exact / kCreditWhole);
+    std::memcpy(weapon + kWeaponReloadLeft, &left, sizeof(left));
+    const int raiders = MissionAirRaiders(players);
+    const int key = players * 16 + raiders;
+    if (loggedCredit.exchange(key) != key)
+        Log("MISSION Air Raider credit: %d players, %d Air Raider(s) - each gets %.2f%% of the points", players, raiders,
+            CreditScale(players, raiders) / 100.0);
+}
+
 void ItemRecountHandler(CpuContext* context) {
     const std::uint64_t sums = SidecarItemSums();
     const auto a = static_cast<std::uint32_t>(sums), b = static_cast<std::uint32_t>(sums >> 32);
@@ -458,6 +538,7 @@ MidHandler MissionHookHandler(std::uint32_t rva) {
         case 0x2C9402: return &ItemRecountHandler;
         case 0x61D48D:
         case 0x65BA9B: return &PassengerSeatHandler;
+        case 0x693F18: return &CreditHandler;
         default: return nullptr;
     }
 }

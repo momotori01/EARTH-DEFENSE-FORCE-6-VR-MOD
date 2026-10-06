@@ -272,6 +272,9 @@ std::vector<MidSite> MissionHooks() {
         // playerIndex+1 in a list of one int per seat - without a bound (mission.cpp PassengerSeatHandler).
         {"back seat of players 5+ (Caliban)", 0x61D48D, {0x46, 0x89, 0x6C, 0xAE, 0x04}, 0, 0},
         {"back seat of players 5+ (Grape, trucks)", 0x65BA9B, {0x46, 0x89, 0x6C, 0xAE, 0x04}, 0, 0},
+        // The weapon tick's `sub [rsi+0xE68], eax`: a credit weapon's reload counter takes the credit risen
+        // since it last looked (mission.cpp CreditHandler: an Air Raider's share with five or more players).
+        {"Air Raider credit with 5+ players", 0x693F18, {0x29, 0x86, 0x68, 0x0E, 0x00, 0x00}, 0, 0},
     };
 }
 
