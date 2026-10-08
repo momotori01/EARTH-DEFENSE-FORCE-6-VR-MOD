@@ -544,6 +544,99 @@ static void CheckVehicleRecoilStaleState() {
     AcquireSRWLockExclusive(&g_vehicleRecoilLock);g_vehicleRecoilDraw=savedState;ReleaseSRWLockExclusive(&g_vehicleRecoilLock);
     VirtualFree(reserved,0,MEM_RELEASE);
 }
+// Fencer shoulder weapons that fire straight ahead (the mortars): which ones,
+// by the real vtables and the launch vector at weapon+0x350; the shell turned
+// from its cone's input onto the hand's aim; the guide line's throw turned the
+// same way with the game's start and owner motion kept, in the drawn arc and
+// in the landing rays. The dip is the one measured on 2026-10-09: 12 degrees.
+static float* g_seenVelocity=nullptr;static float g_seenVelocityCopy[3]{};
+static void* __fastcall FakeGuideArc(void*,float*,float* velocity,float*) {
+    for(int j=0;j<3;++j) g_seenVelocityCopy[j]=velocity[j];g_seenVelocity=velocity;return nullptr;
+}
+static float g_seenRay[2][3]{};
+static void* __fastcall FakeGuideRay(void*,void*,unsigned char* items,int,int) {
+    std::memcpy(g_seenRay[0],items,12);std::memcpy(g_seenRay[1],items+0x10,12);return nullptr;
+}
+static void CheckShoulderStraight() {
+    auto angle=[](const float* a,const float* b){float c=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];return std::acos(std::clamp(c,-1.0f,1.0f));};
+    alignas(16) static unsigned char weapon[0x1000]{},entries[0x100]{};
+    const bool shoulder0=g_fencerShoulder[0],shoulder1=g_fencerShoulder[1],active=g_fencerActive.load();
+    void* const was0=g_fencerWeapons[0].load();void* const was1=g_fencerWeapons[1].load();
+    FencerShadow savedShadow{};AcquireSRWLockShared(&g_fencerShadowLock);savedShadow=g_fencerShadow;ReleaseSRWLockShared(&g_fencerShadowLock);
+    DualAt<void*>(weapon,0)=g_image.base+0x17E3F18;            // Weapon_HeavyShoot
+    const float straight[4]={0,0,1,1},javelin[4]={0,1,1,1};
+    std::memcpy(weapon+0x350,straight,16);
+    g_fencerShoulder[0]=true;g_fencerShoulder[1]=false;
+    CHECK(FencerStraightShoulder(0,weapon));
+    CHECK(!FencerStraightShoulder(1,weapon));                  // held in a hand, not on a shoulder
+    std::memcpy(weapon+0x350,javelin,16);
+    CHECK(!FencerStraightShoulder(0,weapon));                  // the javelins' designed lob stays
+    std::memcpy(weapon+0x350,straight,16);
+    DualAt<void*>(weapon,0)=g_image.base+0x17E40A0;            // Weapon_HomingShoot
+    CHECK(!FencerStraightShoulder(0,weapon));
+    DualAt<void*>(weapon,0)=g_image.base+0x17E3F18;
+    // The left hand's aim: the shadow's smoothed aim, level and straight ahead.
+    AcquireSRWLockExclusive(&g_fencerShadowLock);g_fencerShadow={};g_fencerShadow.valid=true;ReleaseSRWLockExclusive(&g_fencerShadowLock);
+    float aim[3]{};
+    CHECK(FencerHandAimForward(0,nullptr,aim) && std::fabs(aim[2]-1)<1e-6f);
+    // The shell: the game's aim before its cone is 12 degrees under the hand's aim;
+    // the shell left 0.006 rad to the side of that. Turned from the noted input it
+    // is 0.006 rad off the aim; the old turn (by the aims' own arc) kept the 12.
+    const float dip=12*0.01745329f;
+    const float dipped[3]={0,-std::sin(dip),std::cos(dip)};
+    NoteSpreadInput(dipped,0.01f);
+    float rows[3][4]={{1,0,0,0},{0,1,0,0},{0,0,1,0}};
+    const float side[3]={std::sin(0.006f),0,std::cos(0.006f)},ahead[3]={0,0,1};
+    CHECK(FencerTurnRows(rows,ahead,side) && FencerTurnRows(rows,ahead,dipped));
+    const float built[3]={rows[2][0],rows[2][1],rows[2][2]};
+    const float* input=SpreadInputFor(built,GetTickCount64());
+    CHECK(input && angle(input,dipped)<1e-5f);
+    if(input) {
+        CHECK(FencerTurnRows(rows,input,aim));
+        const float shot[3]={rows[2][0],rows[2][1],rows[2][2]};
+        CHECK(std::fabs(angle(shot,aim)-0.006f)<1e-3f);
+    }
+    CHECK(angle(built,aim)>11*0.01745329f);
+    // The guide: the matrices give the dipped direction (row 2 of the entry rows
+    // times the +Z launch vector), the throw is 2 units a step.
+    DualAt<unsigned char*>(weapon,0x1D0)=entries;
+    const float r0[4]={1,0,0,0},r1[4]={0,std::cos(dip),std::sin(dip),0},r2[4]={0,-std::sin(dip),std::cos(dip),0},at[4]={5,1,-3,1};
+    std::memcpy(entries+0x50,r0,16);std::memcpy(entries+0x60,r1,16);std::memcpy(entries+0x70,r2,16);std::memcpy(entries+0x80,at,16);
+    DualAt<float>(weapon,0x894)=2.0f;
+    g_fencerActive=true;g_fencerWeapons[0].store(weapon);g_fencerWeapons[1].store(nullptr);
+    GuideDeltas d{};
+    CHECK(GuideComputeDeltas(weapon,d) && d.valid && d.shiftOnly && d.ownStart && d.hand==0);
+    for(int j=0;j<3;++j) CHECK(std::fabs(d.shift[j]-2*(aim[j]-dipped[j]))<1e-5f && d.delta[j]==0 && d.start[j]==at[j]);
+    // The drawn arc: the game's step (throw plus 0.3 of owner motion) comes out
+    // as the throw along the aim plus the same owner motion; the start is not moved.
+    auto arcOriginal=g_guideArcOriginal;auto rayOriginal=g_guideRayOriginal;
+    g_guideArcOriginal=FakeGuideArc;g_guideRayOriginal=FakeGuideRay;
+    float start[3]={5,1,-3},velocity[3]={0.3f+2*dipped[0],2*dipped[1],2*dipped[2]},gravity[3]{0,-0.01f,0};
+    g_guideLine=d;HookGuideArc(nullptr,start,velocity,gravity);g_guideLine={};
+    CHECK(start[0]==5 && start[1]==1 && start[2]==-3);
+    CHECK(std::fabs(g_seenVelocityCopy[0]-0.3f)<1e-5f && std::fabs(g_seenVelocityCopy[1])<1e-5f && std::fabs(g_seenVelocityCopy[2]-2)<1e-5f);
+    // The first landing ray spans one step from the start: its end moves by the shift.
+    alignas(16) unsigned char item[0xD0]{};
+    const float first[4]={5,1,-3,1},second[4]={5+0.3f+2*dipped[0],1+2*dipped[1],-3+2*dipped[2],1};
+    std::memcpy(item,first,16);std::memcpy(item+0x10,second,16);
+    g_guideRay=d;g_guideRayIndex=0;g_guideRayHaveLast=false;
+    HookGuideRay(nullptr,nullptr,item,1,0);
+    CHECK(g_seenRay[0][0]==5 && g_seenRay[0][1]==1 && g_seenRay[0][2]==-3);
+    CHECK(std::fabs(g_seenRay[1][0]-5.3f)<1e-5f && std::fabs(g_seenRay[1][1]-1)<1e-5f && std::fabs(g_seenRay[1][2]+1)<1e-5f);
+    GuideRayEnd();
+    // A javelin, or matrices 31 degrees off the aim (a weapon change): nothing.
+    std::memcpy(weapon+0x350,javelin,16);
+    CHECK(!GuideComputeDeltas(weapon,d) && !d.valid);
+    std::memcpy(weapon+0x350,straight,16);
+    const float wide=31*0.01745329f;
+    const float f1[4]={0,std::cos(wide),std::sin(wide),0},f2[4]={0,-std::sin(wide),std::cos(wide),0};
+    std::memcpy(entries+0x60,f1,16);std::memcpy(entries+0x70,f2,16);
+    CHECK(!GuideComputeDeltas(weapon,d));
+    g_guideArcOriginal=arcOriginal;g_guideRayOriginal=rayOriginal;
+    g_fencerShoulder[0]=shoulder0;g_fencerShoulder[1]=shoulder1;g_fencerActive=active;
+    g_fencerWeapons[0].store(was0);g_fencerWeapons[1].store(was1);
+    AcquireSRWLockExclusive(&g_fencerShadowLock);g_fencerShadow=savedShadow;ReleaseSRWLockExclusive(&g_fencerShadowLock);
+}
 int wmain(int argc,wchar_t** argv) {
     if(argc!=2)return 2;
     const auto module=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
@@ -784,5 +877,6 @@ int wmain(int argc,wchar_t** argv) {
     CheckRangerSecondAim();
     CheckVehicleHandAimDefaults();
     CheckVehicleRecoilStaleState();
+    CheckShoulderStraight();
     printf("Ranger dual production checks: %d failures\n",failures);return failures?1:0;
 }

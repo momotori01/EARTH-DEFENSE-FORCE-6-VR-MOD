@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.1.10'
+VERSION = '3.1.11'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
@@ -124,9 +124,12 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # user's wish: "webで読める説明は不要") -- ZIP and DLL hashes checked here on 2026-10-06, README diff = the
 # update section only. Versions compare numerically everywhere (Update-EDF6VR.ps1 [version], settings_core
 # ParseVersion, MultiSlot VersionAt), so 3.1.10 is newer than 3.1.9.
-# VERIFIED_* below: the 3.1.10 build.
-VERIFIED_VR_SHA = '3BA9DCD7A3F8892E636247B63E1A1114A2C887724165C110324027C5A6A4F56E'
-VERIFIED_SETTINGS_SHA = '7DA098AE43375D265D82F887FC4180B57494D826F75E60292F9294605C02BB3E'
+# 3.1.11 (the user: "OK,まとめてアップして ... 内容はコレだけだから確認無しでアップしてOK"): Fencer shoulder weapons
+# that fire straight ahead -- shells and guide line onto the hand's aim, not the post-shot barrel dip (shot_origin.h,
+# guide_probe.h; tested). EDF6MultiSlot 1.6.9 as in 3.1.10.
+# VERIFIED_* below: the 3.1.11 build.
+VERIFIED_VR_SHA = 'D19FAAB1B2A952BC1D6CFCDCAE56A84258CE7A5CC8C4D592F1C2DCA28C909292'
+VERIFIED_SETTINGS_SHA = '567CD1DC1096192956667650112D19571E6519402FF3B6E7A46236998B700580'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

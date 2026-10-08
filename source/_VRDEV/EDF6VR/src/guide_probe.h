@@ -295,6 +295,9 @@ struct GuideDeltas {
     float delta[3]{};     // how far the start moves
     float wanted[3]{};    // the step the arc should walk with: the weapon's
                           // own throw, with no owner motion added to it
+    bool shiftOnly=false; // a Fencer shoulder weapon: the game's step is kept,
+    float shift[3]{};     // owner motion and all, and this added to it -- the
+                          // throw turned from the matrices' direction to the aim
     float start[3]{};     // the game's start, which the ray walk begins at
 };
 std::atomic<unsigned long long> g_guideLineMoved[2]{},g_guideLineRefused{0},g_guideNoMuzzle{0},
@@ -351,11 +354,43 @@ bool GuideAttachmentWeapon(void* attachment,void*& weapon) noexcept {
         return weapon!=nullptr;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+// A Fencer shoulder weapon that fires straight ahead (FencerStraightShoulder):
+// its line keeps the game's start and the game's step, and only its throw is
+// turned from the direction the weapon's matrices give (GuideProbeArc, the same
+// read 688680 makes) onto the hand's aim, where its shells are turned too. After
+// a shot the barrel joint's animation drops those matrices 10 to 17 degrees for a
+// moment (FENCERGUIDESPIKE, 2026-10-09) while the barrel as drawn stays up, and
+// the line and the landing marker went down with them. Past 30 degrees the
+// matrices are not this weapon's aim at all (a weapon change) and nothing is done.
+bool FencerStraightGuide(void* weapon,GuideDeltas& out) noexcept {
+    const unsigned hand=weapon==g_fencerWeapons[0].load(std::memory_order_relaxed)?0u:1u;
+    if(!FencerStraightShoulder(hand,weapon)) return false;
+    float start[3]{},direction[3]{},aim[3]{},speed=0;
+    if(!GuideProbeArc(weapon,start,direction)) return false;
+    __try {
+        if(!edf6vr::Readable(weapon,0x900)) return false;
+        speed=*reinterpret_cast<const float*>(static_cast<unsigned char*>(weapon)+0x894);
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    if(!std::isfinite(speed) || speed<=0) return false;
+    if(!FencerHandAimForward(hand,GuideWeaponOwner(weapon),aim)) return false;
+    const float c=std::clamp(aim[0]*direction[0]+aim[1]*direction[1]+aim[2]*direction[2],-1.0f,1.0f);
+    if(!std::isfinite(c) || c<0.866f) return false;   // 30 degrees
+    for(int j=0;j<3;++j) {
+        out.start[j]=start[j]; out.shift[j]=speed*(aim[j]-direction[j]);
+        if(!std::isfinite(out.shift[j])) { out={}; return false; }
+    }
+    out.shiftOnly=true; out.ownStart=true; out.hand=hand; out.valid=true;
+    g_fencerShoulderGuides[hand].fetch_add(1,std::memory_order_relaxed);
+    g_fencerShoulderGuideDeg[hand].store(std::acos(c)*57.29578f,std::memory_order_relaxed);
+    return true;
+}
 bool GuideComputeDeltas(void* weapon,GuideDeltas& out) noexcept {
     out={};
+    if(!weapon) return false;
     // A Fencer weapon already carries its own transforms onto the hand inside
-    // its tick, so its guide starts at the hand and must not be moved twice.
-    if(!weapon || FencerWeaponActive(weapon)) return false;
+    // its tick, so its guide starts at the hand and must not be moved twice;
+    // only a straight shoulder weapon's throw is turned.
+    if(FencerWeaponActive(weapon)) return FencerStraightGuide(weapon,out);
     WeaponHoldCommand command{};
     const unsigned match=GuideProbeMatch(weapon,command);
     if(!match || !command.tracked || !ValidateHoldCommand(command,command.model)) return false;
@@ -480,9 +515,12 @@ void* __fastcall HookGuideArc(void* points,float* start,float* velocity,float* g
             bool ok=true;
             for(int j=0;j<3;++j) {
                 moved[j]=start[j]+carry.delta[j];
-                if(!std::isfinite(moved[j]) || !std::isfinite(carry.wanted[j])) ok=false;
+                if(!std::isfinite(moved[j]) || !std::isfinite(carry.wanted[j]) || !std::isfinite(carry.shift[j])) ok=false;
             }
-            if(ok) {
+            if(ok && carry.shiftOnly) {
+                for(int j=0;j<3;++j) velocity[j]+=carry.shift[j];
+                g_fencerShoulderArcs[carry.hand>1?1:carry.hand].fetch_add(1,std::memory_order_relaxed);
+            } else if(ok) {
                 float offset=0,lead=0;
                 for(int j=0;j<3;++j) {
                     offset+=carry.delta[j]*carry.delta[j];
@@ -539,7 +577,8 @@ void* __fastcall HookGuideRay(void* queue,void* set,unsigned char* items,int cou
                 // is exact.
                 if(!n) {
                     for(int j=0;j<3;++j)
-                        g_guideRayStep[j]=g_guideRay.wanted[j]-(second[j]-first[j]);
+                        g_guideRayStep[j]=g_guideRay.shiftOnly?g_guideRay.shift[j]
+                                                              :g_guideRay.wanted[j]-(second[j]-first[j]);
                 }
                 const float from=n?static_cast<float>(4*n-3):0.0f,to=static_cast<float>(4*n+1);
                 for(int j=0;j<3;++j) g_guideRayLast[j]=second[j];

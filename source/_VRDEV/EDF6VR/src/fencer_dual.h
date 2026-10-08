@@ -447,6 +447,17 @@ std::atomic<unsigned long long> g_fencerBulletAligned[2]{},g_fencerCarryAdopted{
 // Bullets turned from the direction the game aimed them along before their cone
 // (shot_origin.h, NoteSpreadInput): the cone kept, the game's own aim not.
 std::atomic<unsigned long long> g_fencerBulletFromCone[2]{};
+// Shoulder weapons that fire straight ahead, whose shells and guide line are
+// turned onto the hand's aim (shot_origin.h, guide_probe.h): shells turned from
+// their cone's input, guide computations, and the arcs and the last angle taken
+// out. After each shot the barrel joint's animation pitches the weapon's own
+// matrices 5 to 17 degrees down for a moment; the left shells, both guide lines
+// and the landing marker went with it, while the barrel as drawn stays up
+// (FENCERSHOTAIM, FENCERGUIDESPIKE, 2026-10-09; the user: "射撃後砲身とズレて赤い
+// ガイド線が下を向いていました"; a player: the light mortar is off target after one
+// shot in VR, after three or four on a flat screen).
+std::atomic<unsigned long long> g_fencerShoulderFromCone[2]{},g_fencerShoulderGuides[2]{},g_fencerShoulderArcs[2]{};
+std::atomic<float> g_fencerShoulderGuideDeg[2]{};
 std::atomic<float> g_fencerBulletAlignDeg[2]{};
 // Shots that fell outside the arc the alignment is willing to correct, and
 // the worst angle seen. A hand weapon that is past it shoots along its raw
@@ -603,6 +614,46 @@ bool FencerTurnRows(float rows[3][4],const float from[3],const float to[3]) noex
         const float along=axis[0]*v[0]+axis[1]*v[1]+axis[2]*v[2];
         for(int j=0;j<3;++j) rows[r][j]=v[j]*c+k[j]*s+axis[j]*along*(1-c);
     }
+    return true;
+}
+// A shoulder weapon that fires straight ahead: a Weapon_HeavyShoot on this
+// hand's shoulder whose launch vector is +Z. That vector is weapon+0x350, (0,0,1)
+// unless the weapon data gives a FireVector (68CCFA), and it is what 688680 builds
+// the guide from. Of every back-mounted weapon in the game data only the javelin
+// catapults (h_attach_needle01) have one, (0,1,1): their 45-degree lob is
+// designed and stays theirs. The mortars, cannons, gatlings and disruptors have
+// none (AngleAdjust 0 everywhere), so all of their shot leaves along the aim.
+// The missiles are Weapon_HomingShoot and are not this.
+bool FencerStraightShoulder(unsigned hand,void* weapon) noexcept {
+    if(hand>1 || !g_fencerShoulder[hand] || !weapon) return false;
+    if(!edf6vr::HasType(g_image,weapon,".?AVWeapon_HeavyShoot@@")) return false;
+    __try {
+        if(!edf6vr::Readable(weapon,0x360)) return false;
+        const auto* v=reinterpret_cast<const float*>(static_cast<unsigned char*>(weapon)+0x350);
+        const float n=std::sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+        return std::isfinite(n) && n>1e-4f && v[2]/n>0.99985f;   // within a degree of +Z
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// The aim a hand's shells are turned onto: the shadow's smoothed aim for the
+// left, the soldier's for the right -- the saved one inside the left tick, where
+// the soldier holds the shadow (shot_origin.h reads them the same way).
+bool FencerHandAimForward(unsigned hand,void* soldier,float out[3]) noexcept {
+    float smooth[4]{};
+    if(hand==0) {
+        FencerShadow shadow{};
+        AcquireSRWLockShared(&g_fencerShadowLock); shadow=g_fencerShadow; ReleaseSRWLockShared(&g_fencerShadowLock);
+        if(!shadow.valid) return false;
+        smooth[0]=shadow.smooth[0]; smooth[1]=shadow.smooth[1];
+    } else if(g_fencerSwapLive) {
+        std::memcpy(smooth,g_fencerSwapNative,sizeof smooth);
+    } else {
+        __try {
+            if(!soldier || !edf6vr::Readable(soldier,0x1250)) return false;
+            std::memcpy(smooth,static_cast<unsigned char*>(soldier)+0x1240,sizeof smooth);
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    if(!std::isfinite(smooth[0]) || !std::isfinite(smooth[1])) return false;
+    FencerAimForward(smooth[0],smooth[1],out);
     return true;
 }
 
@@ -1801,13 +1852,14 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
     if(tick-g_fencerReportAt>5000) {
         g_fencerReportAt=tick;
         const unsigned known=g_fencerSlopeCount[0]+g_fencerSlopeCount[1];
-        Log("FENCERDUAL on heavy=%d left=%p right=%p built=%llu refused=%llu ticks=%llu swapped=%llu kicks=%llu invalid=%llu shots L/R=%llu/%llu bulletTurns=%llu lastTurn=%.1fdeg rightRow2vsAim=%.1fdeg(%llu) drawTurn=%.1fdeg hands=%d muzzleWrites=%llu muzzleFar L/R=%llu/%llu laserMatrixCarries=%llu bulletSkips=%llu tickWrites L/R=%llu/%llu ownMatrix L/R=%llu/%llu guideUpdates=%llu guideCarries=%llu carrySkips=%llu adopted=%llu aligned L/R=%llu/%llu(%.1f/%.1fdeg) fromCone L/R=%llu/%llu farOff L/R=%llu(%.0f)/%llu(%.0f) vsNative L/R=%.0f/%.0f vsWanted L/R=%.0f/%.0f axisMap frozen=%llu overrides=%llu contradicted=%llu held=%llu direct L/R=%llu/%llu staleBarrel L/R=%llu/%llu barrel L/R=%.2f/%.2f conf L/R=%.2f/%.2f coef=%.3f gainSamples=%u gain(pitch,yaw)@full=%.4f,%.4f slope=%.4f,%.4f trail L/R=%.2f/%.2f mount L/R=%s/%s bone=%s(%.2f)/%s(%.2f) dy=%.2f/%.2f roll=%.0f/%.0f pairChanges=%llu left target=(%.1f,%.1f) smooth=(%.1f,%.1f) right=(%.1f,%.1f) lastKick=(%.4f,%.4f,%.4f)",
+        Log("FENCERDUAL on heavy=%d left=%p right=%p built=%llu refused=%llu ticks=%llu swapped=%llu kicks=%llu invalid=%llu shots L/R=%llu/%llu bulletTurns=%llu lastTurn=%.1fdeg rightRow2vsAim=%.1fdeg(%llu) drawTurn=%.1fdeg hands=%d muzzleWrites=%llu muzzleFar L/R=%llu/%llu laserMatrixCarries=%llu bulletSkips=%llu tickWrites L/R=%llu/%llu ownMatrix L/R=%llu/%llu guideUpdates=%llu guideCarries=%llu carrySkips=%llu adopted=%llu aligned L/R=%llu/%llu(%.1f/%.1fdeg) fromCone L/R=%llu/%llu shoulderFromCone L/R=%llu/%llu farOff L/R=%llu(%.0f)/%llu(%.0f) vsNative L/R=%.0f/%.0f vsWanted L/R=%.0f/%.0f axisMap frozen=%llu overrides=%llu contradicted=%llu held=%llu direct L/R=%llu/%llu staleBarrel L/R=%llu/%llu barrel L/R=%.2f/%.2f conf L/R=%.2f/%.2f coef=%.3f gainSamples=%u gain(pitch,yaw)@full=%.4f,%.4f slope=%.4f,%.4f trail L/R=%.2f/%.2f mount L/R=%s/%s bone=%s(%.2f)/%s(%.2f) dy=%.2f/%.2f roll=%.0f/%.0f pairChanges=%llu left target=(%.1f,%.1f) smooth=(%.1f,%.1f) right=(%.1f,%.1f) lastKick=(%.4f,%.4f,%.4f)",
             g_fencerHeavyAim,left.weapon,right.weapon,g_fencerBuilt.load(),g_fencerRefused.load(),g_fencerTicks.load(),g_fencerSwapped.load(),
             g_fencerKicks.load(),g_fencerInvalid.load(),g_shotCount[0].load(),g_shotCount[1].load(),
             g_fencerBulletTurns.load(),g_fencerBulletTurnDeg.load(),g_fencerRightRow2Deg.load(),g_fencerBulletRightChecks.load(),g_fencerDrawTurnDeg.load(),g_fencerHandWeapons?1:0,g_fencerMuzzleWrites.load(),g_fencerMuzzleFar[0].load(),g_fencerMuzzleFar[1].load(),g_fencerTransformTurns.load(),g_fencerBulletSkips.load(),g_fencerTickWrites[0].load(),g_fencerTickWrites[1].load(),
             g_fencerOwnMatrixCarries[0].load(),g_fencerOwnMatrixCarries[1].load(),g_fencerGuideUpdates.load(),g_fencerGuideCarries.load(),g_fencerCarrySkips.load(),g_fencerCarryAdopted.load(),
             g_fencerBulletAligned[0].load(),g_fencerBulletAligned[1].load(),g_fencerBulletAlignDeg[0].load(),g_fencerBulletAlignDeg[1].load(),
             g_fencerBulletFromCone[0].load(),g_fencerBulletFromCone[1].load(),
+            g_fencerShoulderFromCone[0].load(),g_fencerShoulderFromCone[1].load(),
             g_fencerBulletFarOff[0].load(),g_fencerBulletFarOffDeg[0].load(),g_fencerBulletFarOff[1].load(),g_fencerBulletFarOffDeg[1].load(),
             g_fencerVsNativeDeg[0].load(),g_fencerVsNativeDeg[1].load(),g_fencerVsWantedDeg[0].load(),g_fencerVsWantedDeg[1].load(),
             g_fencerMapFrozen.load(),g_fencerMapOverrides.load(),g_fencerMapContradicted.load(),g_fencerMapHeld.load(),g_fencerDirectAimed[0].load(),g_fencerDirectAimed[1].load(),g_fencerStaleBarrel[0].load(),g_fencerStaleBarrel[1].load(),g_fencerBarrelReach[0],g_fencerBarrelReach[1],g_fencerMapConfidence[0],g_fencerMapConfidence[1],coefficient,known,
@@ -1834,9 +1886,12 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
             g_fencerRide[0][0].changeRoot,g_fencerRide[0][0].changeJoint,g_fencerRide[0][1].changeRoot,g_fencerRide[0][1].changeJoint,
             g_fencerRide[0][2].changeRoot,g_fencerRide[0][2].changeJoint,g_fencerRide[1][0].changeRoot,g_fencerRide[1][0].changeJoint,
             g_fencerRide[1][1].changeRoot,g_fencerRide[1][1].changeJoint,g_fencerRide[1][2].changeRoot,g_fencerRide[1][2].changeJoint);
-        Log("FENCERGUIDE off its usual angle, on foot/in a dash or jump: L=%.1f/%.1fdeg R=%.1f/%.1fdeg usual L/R=%.1f/%.1f spikes L/R=%u/%u",
+        Log("FENCERGUIDE off its usual angle, on foot/in a dash or jump: L=%.1f/%.1fdeg R=%.1f/%.1fdeg usual L/R=%.1f/%.1f spikes L/R=%u/%u "
+            "straightened L/R=%llu/%llu last=%.1f/%.1fdeg arcs L/R=%llu/%llu",
             g_fencerGuideWatch[0].worst[0],g_fencerGuideWatch[0].worst[1],g_fencerGuideWatch[1].worst[0],g_fencerGuideWatch[1].worst[1],
-            g_fencerGuideWatch[0].baseline,g_fencerGuideWatch[1].baseline,g_fencerGuideWatch[0].spikes,g_fencerGuideWatch[1].spikes);
+            g_fencerGuideWatch[0].baseline,g_fencerGuideWatch[1].baseline,g_fencerGuideWatch[0].spikes,g_fencerGuideWatch[1].spikes,
+            g_fencerShoulderGuides[0].load(),g_fencerShoulderGuides[1].load(),g_fencerShoulderGuideDeg[0].load(),g_fencerShoulderGuideDeg[1].load(),
+            g_fencerShoulderArcs[0].load(),g_fencerShoulderArcs[1].load());
         for(auto& w:g_fencerGuideWatch) { w.worst[0]=w.worst[1]=0; }
         Log("SHIELDSTATE shown lowered/guard=%llu/%llu offAnchor=%llu downs=%llu trigger L/R=%.2f/%.2f"
             " guard tests=%llu on the left aim=%llu blocked there=%llu sites=%u/4",

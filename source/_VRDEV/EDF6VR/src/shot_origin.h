@@ -236,6 +236,15 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                         const float* beforeCone=handShot&&!homing?SpreadInputFor(from,GetTickCount64()):nullptr;
                         if(beforeCone) g_fencerBulletFromCone[hand].fetch_add(1,std::memory_order_relaxed);
                         const float* turnFrom=beforeCone?beforeCone:spear?from:aimed;
+                        // A shoulder weapon that fires straight ahead (fencer_dual.h
+                        // FencerStraightShoulder) is turned the same way, onto the
+                        // hand's aim rather than a barrel: the barrel joint's
+                        // animation after a shot builds it 5 to 17 degrees low
+                        // (FENCERSHOTAIM, 2026-10-09), and only its cone is the
+                        // weapon's. Without a cone input it is left as it was.
+                        const float* shoulderFrom=!handShot && !sweeps && !homing
+                            && FencerStraightShoulder(hand,reinterpret_cast<void*>(shot->weapon))
+                            ?SpreadInputFor(from,GetTickCount64()):nullptr;
                         float cb=cw;
                         if(handShot && FencerDrawnBarrel(hand,reinterpret_cast<void*>(shot->weapon),barrel))
                             cb=std::clamp(turnFrom[0]*barrel[0]+turnFrom[1]*barrel[1]+turnFrom[2]*barrel[2],-1.0f,1.0f);
@@ -259,6 +268,10 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                                 g_fencerBulletAligned[hand].fetch_add(1,std::memory_order_relaxed);
                                 g_fencerBulletAlignDeg[hand].store(std::acos(cb)*57.29578f,std::memory_order_relaxed);
                             }
+                        } else if(shoulderFrom) {
+                            const float c=std::clamp(shoulderFrom[0]*want[0]+shoulderFrom[1]*want[1]+shoulderFrom[2]*want[2],-1.0f,1.0f);
+                            if(c>kAlignFloor && (c>=0.99999f || FencerTurnRows(rows,shoulderFrom,want)))
+                                g_fencerShoulderFromCone[hand].fetch_add(1,std::memory_order_relaxed);
                         } else if(isLeft && shadow.valid) {
                             // Shoulder weapons keep their lob: the arc from the
                             // direction it was built along to the shadow's, and

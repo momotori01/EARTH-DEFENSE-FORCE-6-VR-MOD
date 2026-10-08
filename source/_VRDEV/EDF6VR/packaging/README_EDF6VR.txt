@@ -1,5 +1,11 @@
-﻿EDF6VR 3.1.10
+﻿EDF6VR 3.1.11
 =============================
+
+CHANGES IN 3.1.11
+Fixes:
+- Fencer: the line of fire of shoulder weapons went off after a shot. This
+  is fixed.
+- Still bundles EDF6MultiSlot 1.6.9.
 
 CHANGES IN 3.1.10
 Fixes:
