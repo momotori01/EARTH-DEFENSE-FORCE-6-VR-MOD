@@ -135,6 +135,29 @@ int wmain(int argc,wchar_t** argv) {
     for(unsigned cmd=0;cmd<11;++cmd)
         CHECK(nested.batch.stages[static_cast<std::size_t>(edf6vr::PerfStage::NativeCommand0)+cmd].count==3);
     CHECK(nested.batch.stages[static_cast<std::size_t>(edf6vr::PerfStage::NativeProcess)].count==3);
+    // ShareEyeShadows: the right eye's shadow viewport (g_shadowRepeat) loses
+    // its object batches and cmd0's depth clear, nothing else; outside it both
+    // are forwarded unchanged.
+    {
+        CHECK(InstallShadowShare());
+        CHECK(!InstallShadowShare());            // 11E2215 no longer calls 113D390
+        static unsigned clears=0; static float clearDepth=0; static unsigned clearFlags=0;
+        g_viewportClear=[](void*,unsigned,const void*,float depth,unsigned,unsigned flags) { ++clears; clearDepth=depth; clearFlags=flags; };
+        const auto before=commandCalls;
+        g_shadowRepeat=true;
+        HookViewportClear(nullptr,0,nullptr,1.f,0,3);
+        CHECK(clears==0);
+        ProbeUmbraCommand(commander,4); CHECK(commandCalls==before);
+        ProbeUmbraCommand(commander,0); CHECK(commandCalls==before+1 && lastCommand==0);
+        ProbeUmbraCommand(commander,1); CHECK(commandCalls==before+2 && lastCommand==1);
+        g_shadowRepeat=false;
+        HookViewportClear(nullptr,0,nullptr,.5f,0,3);
+        CHECK(clears==1 && clearDepth==.5f && clearFlags==3);
+        ProbeUmbraCommand(commander,4); CHECK(commandCalls==before+3 && lastCommand==4);
+        CHECK(g_shadowSkippedBatches.load()==1 && g_shadowSkippedClears.load()==1);
+        commandCalls=before;
+        edf6vr::DrainPerf();
+    }
     void* getterOriginals[]={reinterpret_cast<void*>(&GetView),reinterpret_cast<void*>(&GetProjection)};
     for(unsigned i=0;i<2;++i) {auto slot=reinterpret_cast<void**>(g_image.base+kUmbraTraceSlots[i]);bool changed=false;CHECK(edf6vr::ReplacePointer(slot,*slot,getterOriginals[i],changed));}
     CHECK(!PatchUmbraTrace(getterOriginals[1],getterOriginals[0]));

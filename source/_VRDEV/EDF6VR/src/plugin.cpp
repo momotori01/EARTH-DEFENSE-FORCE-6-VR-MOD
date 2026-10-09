@@ -58,6 +58,8 @@
 #include "gpu_profile.h"
 #include "gpu_split.h"
 #include <algorithm>
+#include <unordered_map>
+#include <map>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -77,6 +79,19 @@ using ModelDraw=void (__fastcall*)(void*,void*,int,void*);
 ModelDraw g_modelOriginal=nullptr;
 bool g_earlyXrFrame=false;
 bool g_nativeStereoProbe=false; // immutable after Settings, before hooks
+// Occlusion query results (native_renderer_probe.h HookQueryResult): calls,
+// ready and time by kind (0 asked without waiting, 1 waiting).
+std::atomic<unsigned long long> g_queryCalls[2]{},g_queryReady[2]{};
+std::atomic<long long> g_queryTicks[2]{};
+// The same time by view: [eye 0, eye 1, outside the stereo loop] x [main, far, shadow, other].
+std::atomic<long long> g_queryViewTicks[3][4]{};
+std::atomic<unsigned long long> g_queryViewCalls[3][4]{};
+thread_local unsigned g_umbraViewMode=3;
+// [Render] ShareEyeShadows (default 1): the right eye's shadow viewports keep
+// the left eye's maps (native_renderer_probe.h). Object batches and clears left out.
+bool g_shareShadows=false;
+thread_local bool g_shadowRepeat=false;
+std::atomic<unsigned long long> g_shadowSkippedBatches{0},g_shadowSkippedClears{0};
 bool g_nativeWorldRequested=true;
 thread_local float g_nativeProducerIpd=0;
 std::atomic<bool> g_nativeStereoProbeActive{false};
@@ -786,6 +801,7 @@ short ToAxis(float value) noexcept {
 
 void Log(const char* format,...) noexcept;
 double Now() noexcept;
+#include "viewport_gpu.h"
 
 // Save a number back to the file it was read from.
 void RememberIn(const wchar_t* section,const wchar_t* key,float value) noexcept {
@@ -1980,6 +1996,30 @@ void ReportPerf(ULONGLONG now) noexcept {
     if(cpu.samples && cpuFrequency.QuadPart>0)
         Log("NATIVECPU mainSamples=%llu cpuMs=%.4f wallMs=%.4f sampleEvery=16 (CPU includes spinning; OS accounting is coarse)",
             cpu.samples,cpu.cpu100ns*.0001,1000.0*static_cast<double>(cpu.wallTicks)/static_cast<double>(cpuFrequency.QuadPart));
+    {
+        static unsigned long long lastCalls[2]{},lastReady[2]{};static long long lastTicks[2]{};
+        unsigned long long calls[2],ready[2];long long ticks[2];
+        for(int k=0;k<2;++k) { calls[k]=g_queryCalls[k].load(); ready[k]=g_queryReady[k].load(); ticks[k]=g_queryTicks[k].load(); }
+        if(cpuFrequency.QuadPart>0 && (calls[0]!=lastCalls[0] || calls[1]!=lastCalls[1]))
+            Log("OCCLUSION results calls nowait/wait=%llu/%llu ready=%llu/%llu ms=%.2f/%.2f",
+                calls[0]-lastCalls[0],calls[1]-lastCalls[1],ready[0]-lastReady[0],ready[1]-lastReady[1],
+                1000.0*static_cast<double>(ticks[0]-lastTicks[0])/static_cast<double>(cpuFrequency.QuadPart),
+                1000.0*static_cast<double>(ticks[1]-lastTicks[1])/static_cast<double>(cpuFrequency.QuadPart));
+        for(int k=0;k<2;++k) { lastCalls[k]=calls[k]; lastReady[k]=ready[k]; lastTicks[k]=ticks[k]; }
+        static long long lastView[3][4]{};static unsigned long long lastViewCalls[3][4]{};
+        double ms[3][4]{};unsigned long long n[3][4]{};
+        for(int e=0;e<3;++e) for(int m=0;m<4;++m) {
+            const long long t=g_queryViewTicks[e][m].load(); const unsigned long long c=g_queryViewCalls[e][m].load();
+            if(cpuFrequency.QuadPart>0) ms[e][m]=1000.0*static_cast<double>(t-lastView[e][m])/static_cast<double>(cpuFrequency.QuadPart);
+            n[e][m]=c-lastViewCalls[e][m]; lastView[e][m]=t; lastViewCalls[e][m]=c;
+        }
+        if(n[0][0]||n[1][0]||n[0][2]||n[1][2])
+            Log("OCCLUSION byView eye0 main=%.1fms/%llu shadow=%.1fms/%llu far=%.1fms/%llu  eye1 main=%.1fms/%llu shadow=%.1fms/%llu far=%.1fms/%llu  other=%.1fms/%llu",
+                ms[0][0],n[0][0],ms[0][2],n[0][2],ms[0][1],n[0][1],ms[1][0],n[1][0],ms[1][2],n[1][2],ms[1][1],n[1][1],
+                ms[2][0]+ms[2][1]+ms[2][2]+ms[2][3],n[2][0]+n[2][1]+n[2][2]+n[2][3]);
+    }
+    if(viewport_gpu::enabled) viewport_gpu::Report();
+    if(g_shareShadows) Log("SHADOWSHARE skipped batches=%llu clears=%llu (totals)",g_shadowSkippedBatches.load(),g_shadowSkippedClears.load());
     const auto gpu=edf6vr::DrainGpuProfile();
     Log("GPU trialPhase=%d skipped=%llu invalid=%llu scope=VR-only sampleEvery=4 (0 warmup/normal,1 A64,2 B32,3 done,4 abort)",
         edf6vr::WarpTrialPhase(),gpu.skipped,gpu.invalid);
@@ -2048,6 +2088,8 @@ void ReportPerf(ULONGLONG now) noexcept {
 void OnGameFrame(void* backBuffer,unsigned width,unsigned height,unsigned sampleCount) {
     void* captureDevice=nullptr; void* captureContext=nullptr;
     // Research: the GPU's frame, present to present (gpu_split.h; [Diagnostics] GpuSplit).
+    if(viewport_gpu::enabled && edf6vr::GameDevice(captureDevice,captureContext))
+        viewport_gpu::Present(static_cast<ID3D11Device*>(captureDevice),static_cast<ID3D11DeviceContext*>(captureContext));
     if(edf6vr::GpuSplitEnabled() && edf6vr::GameDevice(captureDevice,captureContext))
         edf6vr::GpuSplitPresent(static_cast<ID3D11Device*>(captureDevice),static_cast<ID3D11DeviceContext*>(captureContext));
     if(edf6vr::WeaponLayerCapturePending() && edf6vr::GameDevice(captureDevice,captureContext))
@@ -2235,6 +2277,19 @@ void Settings() noexcept {
     wcscpy_s(g_logPath,path); wcscat_s(g_logPath,L"EDF6VR.log");
     wcscpy_s(g_modDirectory,path);
     if(wcscat_s(path,L"EDF6VR.ini")) return;
+    // A self-test (virtualvr/run_virtual.ps1) names a folder of its own in
+    // EDF6VR_TEST_DIR, and the INI, the headset fit written beside it and the
+    // log are that folder's: nothing the player set or measured is touched.
+    {
+        wchar_t test[MAX_PATH]{};
+        const DWORD n=GetEnvironmentVariableW(L"EDF6VR_TEST_DIR",test,MAX_PATH);
+        const DWORD kind=n && n<MAX_PATH-16?GetFileAttributesW(test):INVALID_FILE_ATTRIBUTES;
+        if(kind!=INVALID_FILE_ATTRIBUTES && (kind&FILE_ATTRIBUTE_DIRECTORY)) {
+            if(test[n-1]!=L'\\') wcscat_s(test,L"\\");
+            wcscpy_s(g_logPath,test); wcscat_s(g_logPath,L"EDF6VR.log");
+            wcscpy_s(path,test); wcscat_s(path,L"EDF6VR.ini");
+        }
+    }
     wcscpy_s(g_iniPath,path);
     // Before anything is read: the INI is not in the package, so a fresh
     // install gets the shipped one and an update gets only its new keys.
@@ -7064,6 +7119,7 @@ bool DrawHeldWeapon(void* model,void* renderContext,int pass,void* view) {
 // Read-only unwind, at most two samples per pass bucket (18 lines per process).
 // Identify the native renderer's parents before attempting world stereo reentry.
 // No repeated rendering, frame waits, or writes to the model/context/view.
+#include "render_sampler.h"
 #include "native_renderer_probe.h"
 #include "world_distance.h"
 bool AllowNativeWorldPair() noexcept {return edf6vr::NativeWorldLive() && edf6vr::NativeWorldCompositeAvailable();}
@@ -7251,7 +7307,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.1.11 cockpit loading, with EDF6MultiSlot 1.6.9. Fencer weapons aim the barrel itself; no dead band on the aim.");
+    Log("EDF6VR 3.1.12 cockpit loading, with EDF6MultiSlot 1.6.9. The right eye reuses the left eye's shadows.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7358,6 +7414,9 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     // whole test measured nothing. Deleting code by pattern is how that happens.
     g_shotProbe=GetPrivateProfileIntW(L"VR",L"ShotOriginProbe",0,g_iniPath)!=0;
     g_autoDeploy=GetPrivateProfileIntW(L"Test",L"AutoDeploy",0,g_iniPath)!=0;
+    g_sampleRenderThread=GetPrivateProfileIntW(L"Test",L"SampleRenderThread",0,g_iniPath)!=0;
+    viewport_gpu::enabled=GetPrivateProfileIntW(L"Test",L"ViewportGpu",0,g_iniPath)!=0;
+    g_shareShadows=GetPrivateProfileIntW(L"Render",L"ShareEyeShadows",1,g_iniPath)!=0;
     g_fireOriginLift=ReadFloat(g_iniPath,L"FireOriginLift",0.0f,-5.0f,5.0f,L"VR");
     g_watchBullets=GetPrivateProfileIntW(L"VR",L"WatchBullets",1,g_iniPath)!=0;
     g_shotFromMuzzle=GetPrivateProfileIntW(L"VR",L"ShotFromMuzzle",1,g_iniPath)!=0;
@@ -7612,6 +7671,14 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         if(g_nativeStereoProbe) {
             const bool imports=InstallUmbraProbe();
             const bool commands=imports && InstallUmbraCommandProbe();
+            const bool queries=commands && InstallQueryResultProbe();
+            Log("OCCLUSION result probe=%d (QUERY_RESULTS 11E4244 -> 1631790)",queries?1:0);
+            if(g_shareShadows) {
+                const bool shared=commands && InstallShadowShare();
+                Log("SHADOWSHARE hook=%d (right eye's shadow viewports: no clear, no object batches)",shared?1:0);
+                if(!shared) g_shareShadows=false;
+            }
+            StartRenderSampler();
             const bool matchRequested=GetPrivateProfileIntW(L"Render",L"MatchRenderedPose",1,g_iniPath)!=0;
             const bool traceRequested=GetPrivateProfileIntW(L"Diagnostics",L"MotionTrace",0,g_iniPath)!=0;
             const bool getters=(matchRequested || traceRequested || g_nativeWorldRequested) && imports && InstallUmbraTrace();

@@ -132,6 +132,7 @@ void __fastcall ProbeUmbraResolve(void* camera) {
     edf6vr::SubmitPerf(batch);
 }
 void __fastcall ProbeUmbraProcess(void* camera,void* commander) {
+    NoteRenderThread();
     const bool enabled=g_nativeStereoProbeActive.load(std::memory_order_relaxed);
     const int nativeEye=edf6vr::NativeWorldRenderEye();
     if(ClaimUmbraSample(camera,2)) {
@@ -173,7 +174,13 @@ void __fastcall ProbeUmbraProcess(void* camera,void* commander) {
     // dropped where the whole viewport is, which is the renderer's loop, not
     // here. UMBRAORDER shows that loop as shadow, shadow, far, main.
     const auto start=edf6vr::PerfNow();
+    g_umbraViewMode=mode<3?mode:3u;
+    viewport_gpu::Begin(commander,nativeEye,g_umbraViewMode);
+    g_shadowRepeat=g_shareShadows && nativeEye==1 && mode==2;
     g_umbraProcess(camera,commander);
+    g_shadowRepeat=false;
+    viewport_gpu::End(nativeEye,g_umbraViewMode);
+    g_umbraViewMode=3;
     edf6vr::EndNativeWorldView();
     const auto elapsed=edf6vr::PerfNow()-start;
     cpuSample.Finish(elapsed);
@@ -184,6 +191,9 @@ void __fastcall ProbeUmbraProcess(void* camera,void* commander) {
     edf6vr::SubmitPerf(batch);
 }
 void __fastcall ProbeUmbraCommand(void* commander,unsigned command) {
+    // The right eye's shadow viewport (ShareEyeShadows): its object batches would
+    // draw the left eye's maps again from the same camera.
+    if(g_shadowRepeat && command==4) { g_shadowSkippedBatches.fetch_add(1,std::memory_order_relaxed); return; }
     if(!g_nativeStereoProbeActive.load(std::memory_order_relaxed)) { g_umbraCommand(commander,command); return; }
     const auto start=edf6vr::PerfNow();
     g_umbraCommand(commander,command);
@@ -206,6 +216,64 @@ bool InstallUmbraCommandProbe() noexcept {
     g_umbraCommand=reinterpret_cast<UmbraCommand>(*slot);
     bool changed=false;
     return edf6vr::ReplacePointer(slot,reinterpret_cast<void*>(g_umbraCommand),reinterpret_cast<void*>(&ProbeUmbraCommand),changed);
+}
+// Occlusion query results (Umbra's QUERY_RESULTS, command 6, 11E41F5..). For
+// each query of the viewport 1631790(query, object, context, &pixels, wait)
+// reads it with ID3D11DeviceContext::GetData -- no DONOTFLUSH flag -- and when
+// `wait` (12D6194, Umbra's own word for that query) is set it spins on that
+// call, under a time limit, until the GPU has the answer. In VR that is where
+// the CPU stands waiting for the GPU: 8.5 ms of a 29.8 ms frame over about 630
+// calls on the virtual headset (2026-10-09), all of it in the two main views.
+// Measured here by kind and view, read only. Not waiting (objects vanish,
+// 16 ms) or answering "visible" when not ready (48 ms) were tried and dropped
+// (research/render/perf_experiments_20261009).
+using QueryResult=bool(__fastcall*)(void*,void*,void*,void*,unsigned char);
+QueryResult g_queryResult=nullptr;
+// (the counters are declared at the top of plugin.cpp: the report reads them)
+bool __fastcall HookQueryResult(void* query,void* object,void* context,void* pixels,unsigned char wait) {
+    const auto start=edf6vr::PerfNow();
+    const bool ready=g_queryResult(query,object,context,pixels,wait);
+    const unsigned kind=wait?1u:0u;
+    g_queryCalls[kind].fetch_add(1,std::memory_order_relaxed);
+    if(ready) g_queryReady[kind].fetch_add(1,std::memory_order_relaxed);
+    const auto spent=edf6vr::PerfNow()-start;
+    g_queryTicks[kind].fetch_add(spent,std::memory_order_relaxed);
+    const int eye=edf6vr::NativeWorldRenderEye();
+    const unsigned e=eye==0?0u:eye==1?1u:2u, m=g_umbraViewMode<4?g_umbraViewMode:3u;
+    g_queryViewTicks[e][m].fetch_add(spent,std::memory_order_relaxed);
+    g_queryViewCalls[e][m].fetch_add(1,std::memory_order_relaxed);
+    return ready;
+}
+// [Render] ShareEyeShadows (2026-10-09, default 1). Each eye's loop of the renderer (11978D0)
+// is shadow, shadow, far, main, and ClassifyNativeWorldResolve moves only far
+// and main per eye: the right eye's two shadow viewports draw the left eye's
+// maps again, from the same camera, into the same maps -- ~1.5 ms of the render
+// thread each and ~2.9 ms of the GPU a frame on the virtual headset
+// (VIEWPORTGPU). Leaving the viewports out does not work: processVisibility
+// issues cmd0/cmd1, which others wait on (1.1.1-dev7 froze), and leaving them
+// out of the loop stopped that loop's far and main (2026-10-01). So they still
+// run; only their depth clear (cmd0, 11E2215 -> 113D390 with DEPTH|STENCIL)
+// and their object batches (cmd4) are left out, and the maps keep the left
+// eye's picture for the right eye's lighting.
+using ViewportClear=void(__fastcall*)(void*,unsigned,const void*,float,unsigned,unsigned);
+ViewportClear g_viewportClear=nullptr;
+void __fastcall HookViewportClear(void* context,unsigned colourIndex,const void* colour,float depth,unsigned stencil,unsigned flags) {
+    if(g_shadowRepeat) { g_shadowSkippedClears.fetch_add(1,std::memory_order_relaxed); return; }
+    g_viewportClear(context,colourIndex,colour,depth,stencil,flags);
+}
+bool InstallShadowShare() noexcept {
+    g_viewportClear=reinterpret_cast<ViewportClear>(g_image.base+0x113D390);
+    bool changed=false;
+    return edf6vr::RedirectCall(g_image.base+0x11E2215,reinterpret_cast<void*>(g_viewportClear),reinterpret_cast<void*>(&HookViewportClear),changed);
+}
+bool InstallQueryResultProbe() noexcept {
+    auto* site=g_image.base+0x11E4244;
+    if(site[0]!=0xE8) return false;
+    std::int32_t relative=0; std::memcpy(&relative,site+1,4);
+    if(site+5+relative!=g_image.base+0x1631790) return false;
+    g_queryResult=reinterpret_cast<QueryResult>(g_image.base+0x1631790);
+    bool changed=false;
+    return edf6vr::RedirectCall(site,reinterpret_cast<void*>(g_queryResult),reinterpret_cast<void*>(&HookQueryResult),changed);
 }
 void __fastcall ProbeUmbraMatrix(void* camera,const void* source) {
     edf6vr::Matrix original{};

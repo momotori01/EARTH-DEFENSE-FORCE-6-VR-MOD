@@ -1,5 +1,10 @@
-﻿EDF6VR 3.1.11
+﻿EDF6VR 3.1.12
 =============================
+
+CHANGES IN 3.1.12
+Changes:
+- FPS improved by about 10%.
+- Still bundles EDF6MultiSlot 1.6.9.
 
 CHANGES IN 3.1.11
 Fixes:
