@@ -1,0 +1,7 @@
+// The in-game "VR setting" menu's layouts, carried inside the DLL (vr_menu.h):
+// the Start menu with its extra button and the window it opens, in English and
+// in Japanese. Built by tools/make_vr_menu.py from the installed game.
+301 RCDATA "../assets/ui/LYT_PAUSEMENU.SGO"
+302 RCDATA "../assets/ui/LYT_PAUSEMENU.JA.SGO"
+303 RCDATA "../assets/ui/LYT_EDF6VR_SETTING.SGO"
+304 RCDATA "../assets/ui/LYT_EDF6VR_SETTING.JA.SGO"

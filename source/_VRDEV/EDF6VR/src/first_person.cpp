@@ -216,6 +216,11 @@ bool CheckAimProfile(const ImageProfile& image) noexcept {
         const unsigned char inputRead[]={0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10,
                                          0x48,0x89,0x74,0x24,0x18,0x57};
         const unsigned char callSite[]={0xE8,0x50,0xD6,0xFF,0xFF};
+        // 573059: the look input's squared length; 57307B: or [rsi+1588h],2 ("turned").
+        const unsigned char turnRead[]={0x0F,0x10,0x8E,0x60,0x0D,0x00,0x00},turnMark[]={0x83,0x8E,0x88,0x15,0x00,0x00,0x02};
+        float turnEdge=0;std::memcpy(&turnEdge,image.base+0x1C36988,sizeof(turnEdge));
+        if(std::memcmp(image.base+0x573059,turnRead,sizeof(turnRead)) || std::memcmp(image.base+0x57307B,turnMark,sizeof(turnMark))
+           || std::fabs(turnEdge-kEventInputSquared)>1e-7f) return false;
         return !std::memcmp(image.base+0x573BA8,accumulate,sizeof(accumulate))
             && !std::memcmp(image.base+0x5705AC,yawFromForward,sizeof(yawFromForward))
             && !std::memcmp(image.base+0x573C48,pitchClamp,sizeof(pitchClamp))
@@ -273,6 +278,21 @@ bool WriteSoldierInput(void* soldier,float moveX,float moveZ,float lookPitch,flo
         auto look=reinterpret_cast<float*>(static_cast<unsigned char*>(soldier)+kLookInputOffset);
         move[0]=moveX; move[2]=moveZ;
         look[0]=lookPitch; look[1]=lookYaw;
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool VrPlayerTurned(float lookPitch,float lookYaw,float headYawStep,float headPitchStep,float dt) noexcept {
+    if(std::isfinite(lookPitch) && std::isfinite(lookYaw) && lookPitch*lookPitch+lookYaw*lookYaw>kEventInputSquared) return true;
+    if(!std::isfinite(headYawStep) || !std::isfinite(headPitchStep) || !(dt>0)) return false;
+    constexpr float kTwoPi=6.283185307f,kTurnRate=0.349066f;   // 20 degrees a second
+    headYawStep=std::remainder(headYawStep,kTwoPi);            // the yaw wraps at half a turn
+    return std::sqrt(headYawStep*headYawStep+headPitchStep*headPitchStep)>kTurnRate*dt;
+}
+bool MarkSoldierEvent(void* soldier,std::uint32_t flags) noexcept {
+    __try {
+        if(!soldier || !Readable(soldier,kEventFlagsOffset+4,true)) return false;
+        At<std::uint32_t>(soldier,kEventFlagsOffset)|=flags;
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }

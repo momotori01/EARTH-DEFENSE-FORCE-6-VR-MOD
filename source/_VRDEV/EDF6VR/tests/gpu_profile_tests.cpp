@@ -1,6 +1,10 @@
 #include "gpu_profile.h"
 #include "gpu_split.h"
 #include "warp_trial.h"
+#include "scope_draw.h"
+#include <cmath>
+#include <cstdlib>
+#include <vector>
 #include <wrl/client.h>
 #include <cstdio>
 #include <initializer_list>
@@ -78,6 +82,75 @@ int main() {
         CHECK(split.runs[0]==split.frames&&split.runs[1]==split.frames&&split.runs[2]==0);   // one run an eye a frame
         CHECK(split.draws[0]==3.0*split.frames&&split.draws[1]==3.0*split.frames);
         EnableGpuSplit(false);
+    }
+    // The scope picture drawn for real (scope_draw.cpp's shader on WARP): three
+    // panels side by side show ONE picture between them -- the left panel its
+    // left part, the right its right -- and a panel alone shows its own middle.
+    // The source's red runs 0..255 left to right, its green top to bottom.
+    {
+        const unsigned sw=300,sh=100,tw=400,th=400;
+        std::vector<unsigned char> pixels(sw*sh*4);
+        for(unsigned y=0;y<sh;++y) for(unsigned x=0;x<sw;++x) {
+            auto* p=&pixels[(y*sw+x)*4];
+            p[0]=static_cast<unsigned char>(255.0*(x+.5)/sw);p[1]=static_cast<unsigned char>(255.0*(y+.5)/sh);p[2]=0;p[3]=255;
+        }
+        D3D11_TEXTURE2D_DESC sd{};sd.Width=sw;sd.Height=sh;sd.MipLevels=sd.ArraySize=sd.SampleDesc.Count=1;
+        sd.Format=DXGI_FORMAT_R8G8B8A8_UNORM;sd.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init{pixels.data(),sw*4,0};
+        ComPtr<ID3D11Texture2D> source,target,staging;
+        CHECK(SUCCEEDED(device->CreateTexture2D(&sd,&init,&source)));
+        D3D11_TEXTURE2D_DESC td=sd;td.Width=tw;td.Height=th;td.BindFlags=D3D11_BIND_RENDER_TARGET;
+        CHECK(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&target)));
+        D3D11_TEXTURE2D_DESC rd=td;rd.BindFlags=0;rd.Usage=D3D11_USAGE_STAGING;rd.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        CHECK(SUCCEEDED(device->CreateTexture2D(&rd,nullptr,&staging)));
+        if(source && target && staging) {
+            Matrix identity{};for(int i=0;i<4;++i) identity.m[i][i]=1;
+            // Facing the camera (normal -z), standing on +y: screen right is -x in
+            // the world, and with this camera a world x lands at clip -x.
+            ScopeLensFrame panels[3]{};
+            for(auto& f:panels) {f.valid=true;f.shape=1;f.normal[2]=-1;f.up[1]=1;f.radius=.4f;f.halfWidth=.2f;}
+            panels[1].centre[0]=.4f;     // on the left of the picture
+            panels[2].centre[0]=-.4f;    // on the right
+            ScopeArrangeSurfaces(panels,3);
+            auto draw=[&](const ScopeLensFrame& lens) {
+                ScopeDrawInput in{};
+                in.lens=lens;in.view=identity;in.projection=identity;in.source=source.Get();in.mode=1;in.style=ScopeStyleLens;
+                in.tanHalf=.5f;in.aspect=lens.halfWidth/lens.radius;
+                in.forward[2]=1;in.right[0]=1;in.up[1]=1;
+                in.cameraForward[2]=1;in.cameraRight[0]=1;in.cameraUp[1]=1;
+                in.tanLeft=-.75f;in.tanRight=.75f;in.tanTop=.5f;in.tanBottom=-.5f;
+                return DrawScopeLens(context.Get(),target.Get(),in);
+            };
+            auto read=[&](unsigned x,unsigned y,int& r,int& g) {
+                context->CopyResource(staging.Get(),target.Get());
+                D3D11_MAPPED_SUBRESOURCE map{};
+                if(FAILED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&map))) {r=g=-1;return;}
+                const auto* p=static_cast<const unsigned char*>(map.pData)+y*map.RowPitch+x*4;
+                r=p[0];g=p[1];context->Unmap(staging.Get(),0);
+            };
+            auto clear=[&]() {
+                ComPtr<ID3D11RenderTargetView> view;device->CreateRenderTargetView(target.Get(),nullptr,&view);
+                const float black[4]{};context->ClearRenderTargetView(view.Get(),black);
+            };
+            clear();
+            for(const auto& f:panels) CHECK(draw(f));
+            CHECK(ReadScopeDrawStats().failed==0);
+            int r=0,g=0;
+            // Half way out to the right and up on each panel (clear of the reticle and the rim).
+            read(220,160,r,g);CHECK(std::abs(r-149)<=3 && std::abs(g-64)<=3);   // middle: picture x +0.25 -> u .583
+            read(140,160,r,g);CHECK(std::abs(r-64)<=3 && std::abs(g-64)<=3);    // left:   picture x -0.75 -> u .25
+            read(300,160,r,g);CHECK(std::abs(r-234)<=3 && std::abs(g-64)<=3);   // right:  picture x +1.25 -> u .917
+            // Across a seam the picture runs on: just left and just right of the middle panel's left edge.
+            int r1=0,r2=0,g1=0;
+            read(152,160,r1,g1);read(166,160,r2,g1);CHECK(r2>r1 && r2-r1<20);
+            read(60,160,r,g);CHECK(r==0 && g==0);                               // outside the panels: untouched
+            // The middle panel alone, as a single screen is drawn: the same middle part.
+            clear();
+            ScopeLensFrame alone=panels[0];ScopeArrangeSurfaces(&alone,1);
+            CHECK(draw(alone));
+            read(220,160,r,g);CHECK(std::abs(r-149)<=3 && std::abs(g-64)<=3);
+            read(140,160,r,g);CHECK(r==0 && g==0);
+        }
     }
     printf("GPU timestamp/trial: %d failures, copy samples A=%llu B=%llu\n",failures,counts[0],counts[1]);
     return failures?1:0;

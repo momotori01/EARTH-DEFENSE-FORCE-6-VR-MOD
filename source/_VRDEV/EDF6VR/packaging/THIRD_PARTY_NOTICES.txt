@@ -71,6 +71,11 @@ game's player models, so the mod's hands line up with the game's own skeleton.
 EDF6MultiSlot's menu layout (LYT_MAINFRAME.SGO) is the game's own layout with one
 added text field. Its build generates it from the builder's installed Root.cpk
 (tools/make_menu_label.py); the source repository does not contain it.
+EDF6VR's "VR setting" menu in the game uses two layouts: the game's own pause
+layout (LYT_PAUSEMENU.SGO) with one added button, and a window
+(LYT_EDF6VR_SETTING.SGO) put together from parts of the game's two-button chooser
+layout. The build generates both from the builder's installed Root.cpk
+(tools/make_vr_menu.py); the source repository does not contain them.
 
 EDF6VR.dll embeds four cockpit material atlases: authored colours and finish
 levels, with the grain and relief (normal maps) of ambientCG's PaintedMetal002 and

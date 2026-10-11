@@ -81,7 +81,9 @@ Everything outside the game is set in **EDF6 VR setting.exe**, next to `EDF6.exe
 | **Scope zoom** | **Native**: sharp, but costs frame rate while zoomed. **Digital**: no frame-rate cost, but blurrier. **Off**: the old whole-view zoom. |
 | **HD textures** | **Make** or **Delete** the 2x textures, with progress. Untick **Use HD textures** to turn them off without deleting them. |
 | **Crew figures** | **Make** or **Delete** the Proteus two-seater's other rider (about 2 minutes). Making HD textures makes them too. |
+| **Air-strike camera** | **2D** or **VR**: how the Air Raider's view from above is shown while aiming a strike. 2D is a flat screen and light; VR puts the view around you and the frame rate drops. |
 | **Gun hand** | **Right** or **Left** (Ranger, Wing Diver, Air Raider). |
+| **Stick up / down buttons** | **On** or **Off**. On foot, the turning stick pushed up is the Y button and pushed down is L3. Off: up and down do nothing. |
 | **Problem report** | **Make zip** puts the logs and settings into one zip, saved in the game folder next to EDF6 VR setting.exe (`EDF6VR-logs-<date>-<time>.zip`). Attach it to a bug report. |
 
 | Extra VR settings tab | |
@@ -97,6 +99,9 @@ Everything outside the game is set in **EDF6 VR setting.exe**, next to `EDF6.exe
 | **Reset settings** | Every VR setting back to how it came. Your picture size and gun hand stay; the old file is kept as a backup. |
 
 Everything it changes can also be set by hand in `Mods/Plugins/EDF6VR.ini`.
+
+### In the game
+The Start (pause) menu has **VR setting**. It changes, without leaving the game, the settings that can change while you play: scope zoom, air-strike camera, stick up / down buttons, recoil, shot vibration, aim mark size, compact HUD, desktop mirror, sight line thickness and vehicle hand aim. Press a row to step to its next value; it applies at once and is saved. The menu is in Japanese when the game is in Japanese, and in English otherwise.
 
 ### HD textures
 **Make** reads your own game files and writes sharper copies into the `Mods` folder; the game files themselves are not changed.

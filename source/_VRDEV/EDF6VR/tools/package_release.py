@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.1.12'
+VERSION = '3.2.0'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
@@ -131,9 +131,25 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # [Render] ShareEyeShadows=1 -- the right eye's shadow viewports keep the left eye's maps (cmd0 clear and cmd4
 # batches dropped, native_renderer_probe.h); virtual headset 29.4 -> 26.7 ms, hardware shadow 3.2 -> 1.2 ms a
 # frame, tested 2026-10-09. EDF6MultiSlot 1.6.9 as in 3.1.10.
-# VERIFIED_* below: the 3.1.12 build (the tested 71556BF2 code with version strings changed).
-VERIFIED_VR_SHA = '6C8C899D94CA52415E46F5D29F43E3B94339319CE192D480BF12E20BA356B178'
-VERIFIED_SETTINGS_SHA = '1FF589C85FCFC89156D6F25A3056DB634C7C638610BCC5AD9E80EF32993278CC'
+# 3.1.13 (the user, after testing: "確認しました。下の判定範囲はもう少し狭くていいので、37度にしてください。他はOKです。
+# アップ用にまとめて"): "Stick up / down buttons" in the settings exe ([VR] RightStickButtons), the up/down cone
+# (40 up, 37 down; stick_buttons.h), the Laser Guide Kit's three panels as one picture (scope.cpp
+# ScopeArrangeSurfaces), the "turned" event for missions 1 and 116 (first_person VrPlayerTurned), the Fencer guide
+# line past 30 degrees (guide_probe.h). Then (the user after a heavy-stage sortie: "重さは感じるね exeで１か０を選べる
+# ようにしておいて。規定は０ これも含めてまとめて"): the Air Raider's air-strike camera in the headset, [VR]
+# AirStrikeCamera, 0 by default, "Air-strike camera" 2D / VR in the settings exe (plugin.cpp ApplyTacticalCamera).
+# And (the user: "exe内でゲーム中でも変更できる項目は、スタートメニューにVRsettingの項目を追加してゲーム中に切り替えられる
+# ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
+# "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
+# from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# Named 3.2.0, not 3.1.13 (the user: "v3.2で。"), with three Japanese row names of the menu reworded, the line under
+# its rows on a row's own background, and [VR] ShotBuzz 1 as the default ("射撃振動１を規定にして"); "修正したらこちらへの
+# 確認無しでアップして".
+# EDF6MultiSlot 1.6.9 as in 3.1.10.
+# VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
+# strings).
+VERIFIED_VR_SHA = 'FBA614F0440F0C7A5323682161897318545AA9A6BCA154A636B5146A5ACD3957'
+VERIFIED_SETTINGS_SHA = '47EEBD39853578215ECF16474F94B109E224E6AD9BFC1E350504465F2C933047'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

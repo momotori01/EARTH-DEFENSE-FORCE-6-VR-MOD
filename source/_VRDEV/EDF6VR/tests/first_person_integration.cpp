@@ -616,6 +616,27 @@ int wmain(int argc,wchar_t** argv) {
         VERIFY(ninth && ninth->camera==cameras[8] && !ninth->saved.pending && ninth->seen>=now);
         for(auto& entry:g_states) entry={};
     }
+    // "The player turned" for the guided missions' WaitPlayerEvent (missions 1 and
+    // 116): the game's own test of the look input, the head looking around, and
+    // the mark on the soldier's event flags. The installed EDF.dll has the turn
+    // test where the profile says.
+    {
+        VERIFY(edf6vr::CheckAimProfile(g_image));
+        VERIFY(edf6vr::VrPlayerTurned(0,.02f,0,0,.0133f));           // the turn stick: 0.02^2 > 0.0001
+        VERIFY(edf6vr::VrPlayerTurned(.011f,0,0,0,.0133f));
+        VERIFY(!edf6vr::VrPlayerTurned(0,.005f,0,0,.0133f));         // under the game's edge
+        VERIFY(edf6vr::VrPlayerTurned(0,0,.01f,0,.0133f));           // head: 43 degrees a second
+        VERIFY(edf6vr::VrPlayerTurned(0,0,0,-.01f,.0133f));
+        VERIFY(!edf6vr::VrPlayerTurned(0,0,.002f,.001f,.0133f));     // a still head's sway: 10 degrees a second
+        VERIFY(!edf6vr::VrPlayerTurned(0,0,6.2831853f,0,.0133f));    // the yaw wrapping round is not a turn
+        VERIFY(!edf6vr::VrPlayerTurned(0,0,std::nanf(""),0,.0133f) && !edf6vr::VrPlayerTurned(0,0,.01f,0,0));
+        alignas(16) unsigned char body[0x1600]{};
+        At<std::uint32_t>(body,edf6vr::kEventFlagsOffset)=5;         // moved and jumped this update
+        VERIFY(edf6vr::MarkSoldierEvent(body,edf6vr::kEventTurned));
+        VERIFY(At<std::uint32_t>(body,edf6vr::kEventFlagsOffset)==7);
+        VERIFY(At<std::uint32_t>(body,edf6vr::kEventFlagsOffset-4)==0 && At<std::uint32_t>(body,edf6vr::kEventFlagsOffset+4)==0);
+        VERIFY(!edf6vr::MarkSoldierEvent(nullptr,edf6vr::kEventTurned));
+    }
     *global=prior;
     FreeLibrary(mapped);
     printf("FPS production hooks: %d failures. 1000 cycles, owner isolation, bone position, restoration; NO EDF CODE EXECUTED.\n",failures);

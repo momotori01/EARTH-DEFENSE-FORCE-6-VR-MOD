@@ -37,9 +37,15 @@ struct ScopeLensSpec {
 int ScopeLensCount() noexcept;
 const ScopeLensSpec* ScopeLensAt(int index) noexcept;
 // A weapon may show the picture on several surfaces (the Laser Guide Kit's three
-// panels): its rows follow one another in the table, the first one leading.
+// panels): its rows follow one another in the table, the first one leading. They
+// show one picture between them, each its own part of it (ScopeArrangeSurfaces):
+// the others stand beside the leading one, to its left and right.
 constexpr int kScopeMaxSurfaces=3;
 int ScopeLensSurfaces(int first) noexcept;   // rows from `first` for the same weapon, 1..kScopeMaxSurfaces
+// The whole picture's width / height for the weapon whose rows start at `first`:
+// the leading surface's, plus on either side the widest of the others (one a
+// side, as the three panels are). What the scope's view has to cover.
+float ScopePictureAspect(int first) noexcept;
 // A zoom weapon with no scope of its own (Ranger, Wing Diver, Air Raider): a
 // round holographic monitor popped up over the sights, in the weapon root's frame.
 const ScopeLensSpec& ScopeHoloSpec() noexcept;
@@ -88,7 +94,16 @@ struct ScopeLensFrame {
     float eye[3]{};
     float eyeHalf=0;
     std::uint64_t at=0;
+    // This surface's part of the picture (ScopeArrangeSurfaces), in the picture's
+    // half heights: where its centre is, its size against the leading surface's,
+    // and how far the whole picture reaches sideways (0: this surface alone).
+    float pictureX=0,pictureY=0,pictureScale=1,pictureReach=0;
 };
+// One picture over the surfaces of one weapon: the first is its middle, the
+// others are placed edge to edge beside it, on the side each stands on (by its
+// centre along the leading surface's right, up x normal), as if the panels
+// were unfolded flat. One surface is left as it is.
+void ScopeArrangeSurfaces(ScopeLensFrame* frames,int count) noexcept;
 void PublishScopeLens(const ScopeLensFrame&) noexcept;            // one surface
 ScopeLensFrame ReadScopeLens() noexcept;                            // the first (leading) surface
 void PublishScopeLenses(const ScopeLensFrame* frames,int count) noexcept;

@@ -405,6 +405,31 @@ static void TestScope() {
             if(sniper<0 && !std::wcscmp(row->node,L"s_sniper_mmf01")) sniper=i;
         }
         CHECK(guide>=0 && ScopeLensSurfaces(guide)==3 && sniper>=0 && ScopeLensSurfaces(sniper)==1);
+        // ...as one picture: the middle panel its middle, the side panels the parts
+        // beside it, edge to edge, each on the side it stands on.
+        CHECK(approx(ScopePictureAspect(guide),(.0220f+2*.0227f)/.0665f,1e-5f) && approx(ScopePictureAspect(sniper),1.f,1e-6f));
+        {
+            // Facing the shooter (-z), standing on +y: screen right is -x (forward x up).
+            ScopeLensFrame p[3]{};
+            for(auto& f:p) {f.valid=true;f.shape=1;f.normal[2]=-1;f.up[1]=1;}
+            p[0].radius=.0665f;p[0].halfWidth=.0220f;
+            p[1].radius=.0650f;p[1].halfWidth=.0227f;p[1].centre[0]=.038f;p[1].centre[2]=-.016f;                    // the shooter's left
+            p[2].radius=.0650f;p[2].halfWidth=.0227f;p[2].centre[0]=-.038f;p[2].centre[2]=-.016f;p[2].centre[1]=.00665f;   // right, a little higher
+            ScopeArrangeSurfaces(p,3);
+            CHECK(p[0].pictureX==0 && p[0].pictureY==0 && p[0].pictureScale==1);
+            CHECK(approx(p[1].pictureX,-(.0220f+.0227f)/.0665f,1e-5f) && approx(p[1].pictureY,0,1e-6f));
+            CHECK(approx(p[2].pictureX,(.0220f+.0227f)/.0665f,1e-5f) && approx(p[2].pictureY,.1f,1e-5f));
+            CHECK(approx(p[1].pictureScale,.0650f/.0665f,1e-6f));
+            // Edge to edge: the left panel's right edge is the middle panel's left edge.
+            CHECK(approx(p[1].pictureX+p[1].halfWidth/p[0].radius,-p[0].halfWidth/p[0].radius,1e-5f));
+            for(const auto& f:p) CHECK(approx(f.pictureReach,(.0220f+2*.0227f)/.0665f,1e-5f));
+            // One surface, or a round lens: left alone.
+            ScopeLensFrame one{};one.valid=true;one.shape=1;one.radius=.02f;one.halfWidth=.04f;one.pictureX=5;one.pictureReach=3;
+            ScopeArrangeSurfaces(&one,1);
+            CHECK(one.pictureX==0 && one.pictureY==0 && one.pictureScale==1 && one.pictureReach==0);
+            p[0].shape=0;ScopeArrangeSurfaces(p,3);
+            CHECK(p[0].pictureReach==0);
+        }
         CHECK(guide>=0 && !std::wcscmp(ScopeLensAt(guide)->frame,L"screen") && !std::wcscmp(ScopeLensAt(guide+1)->frame,L"screen_l")
               && !std::wcscmp(ScopeLensAt(guide+2)->frame,L"screen_r"));
         ScopeLensFrame frames[2]{};frames[0].radius=1;frames[1].radius=2;

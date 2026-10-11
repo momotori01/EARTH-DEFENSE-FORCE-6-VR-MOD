@@ -81,6 +81,20 @@ inline constexpr std::size_t kAimLimitOffset=0x1250;    // symmetric limits, neg
 inline constexpr std::size_t kSoldierWorldOffset=0x60;  // row0..row3, row3 is the position
 inline constexpr std::uint32_t kInputReadRva=0x570650;
 inline constexpr std::uint32_t kInputCallSiteRva=0x572FFB;
+// The soldier's event flags for this update (the scripts' HBEF_*: 1 moved,
+// 2 turned, 4 jumped ...). Mission scripts wait on them: WaitPlayerEvent
+// (1D4E00 -> 1CBCF0) reads +0x1588 every tick, counts the ticks that had the
+// flag, and clears it. Right after the input read the game sets "moved" from
+// the move input and "turned" from the look input, each when its squared
+// length is past 0.0001 (573028..57307B, the constant at EDF.dll+1C36988).
+inline constexpr std::size_t kEventFlagsOffset=0x1588;
+inline constexpr std::uint32_t kEventTurned=2;
+inline constexpr float kEventInputSquared=1e-4f;
+// Whether the VR player turned the view this update: the turn stick's look
+// input as the game itself tests it, or the head turning faster than 20 degrees
+// a second (the steps are this update's change of the head's yaw and pitch).
+bool VrPlayerTurned(float lookPitch,float lookYaw,float headYawStep,float headPitchStep,float dt) noexcept;
+bool MarkSoldierEvent(void* soldier,std::uint32_t flags) noexcept;
 
 struct SoldierAim {
     float pitch=0, yaw=0, third=0;

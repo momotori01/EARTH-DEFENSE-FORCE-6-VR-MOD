@@ -10,8 +10,8 @@ This folder holds the source of every compiled file in the EDF6VR package:
 | `_VRDEV/EDFModLoader-src` | nothing: `PluginAPI.h` from EDFModLoader (BlueAmulet, MIT), used by the three plugins | - |
 
 The folders keep the layout they have next to the game, because the builds read two files of the
-installed game: `Root.cpk` (to generate EDF6MultiSlot's menu layout, which is the game's own work, so it
-is not in this repository) and `EDF.dll` (for the tests).
+installed game: `Root.cpk` (to generate the menu layouts of EDF6VR and EDF6MultiSlot, which are the game's
+own work, so they are not in this repository) and `EDF.dll` (for the tests).
 
 ## Requirements
 
@@ -33,11 +33,15 @@ is not in this repository) and `EDF.dll` (for the tests).
 ```
 cd _VRDEV\EDF6VR
 python tools\prepare_native_cockpit_materials.py
+python -B tools\make_vr_menu.py
 build.cmd
 ```
 
 The first command writes the cockpit material atlases (`assets/cockpit/textures/native_v1`) from the
-CC0 textures in `assets/cockpit/textures/cc0` (ambientCG). `build.cmd` configures with
+CC0 textures in `assets/cockpit/textures/cc0` (ambientCG). The second writes the four layouts of the
+in-game "VR setting" menu into `assets\ui` (English and Japanese): the game's pause menu layout from your
+`Root.cpk` plus one button, and the window that button opens, made of parts of the game's two-button
+chooser; it uses `crilayla.py` from `_MultislotDEV\tools`. `build.cmd` configures with
 CMake, builds `dist\EDF6VR.dll` and `dist\EDF6 VR setting.exe` (the settings program; its icon is
 `assets/settings/vr.ico`, made by `tools/make_settings_icon.py`) and runs the tests. Some tests read the game's `EDF.dll`; the ones that
 need the developer's research captures are skipped when those are absent.

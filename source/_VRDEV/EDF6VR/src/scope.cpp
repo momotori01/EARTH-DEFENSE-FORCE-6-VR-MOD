@@ -152,6 +152,39 @@ int ScopeLensSurfaces(int first) noexcept {
     }
     return count;
 }
+float ScopePictureAspect(int first) noexcept {
+    const auto* lead=ScopeLensAt(first);
+    if(!lead || !lead->shape || !(lead->halfHeight>0)) return 1.f;
+    float side=0;
+    const int count=ScopeLensSurfaces(first);
+    for(int i=1;i<count;++i) side=(std::max)(side,ScopeLensAt(first+i)->halfWidth);
+    return (lead->halfWidth+2*side)/lead->halfHeight;
+}
+void ScopeArrangeSurfaces(ScopeLensFrame* frames,int count) noexcept {
+    if(!frames || count<=0) return;
+    auto& lead=frames[0];
+    lead.pictureX=lead.pictureY=0;lead.pictureScale=1;lead.pictureReach=0;
+    if(count<2 || !lead.valid || !lead.shape || !(lead.radius>0)) return;
+    // right = up x normal, as the surface is drawn (scope_draw.cpp)
+    const float right[3]={lead.up[1]*lead.normal[2]-lead.up[2]*lead.normal[1],
+                          lead.up[2]*lead.normal[0]-lead.up[0]*lead.normal[2],
+                          lead.up[0]*lead.normal[1]-lead.up[1]*lead.normal[0]};
+    float edge[2]={lead.halfWidth,lead.halfWidth};   // how far the picture reaches so far: left, right
+    for(int i=1;i<count && i<kScopeMaxSurfaces;++i) {
+        auto& f=frames[i];
+        f.pictureX=f.pictureY=0;f.pictureScale=1;f.pictureReach=0;
+        if(!f.valid || !f.shape || !(f.radius>0)) continue;
+        float across=0,above=0;
+        for(int j=0;j<3;++j) {across+=(f.centre[j]-lead.centre[j])*right[j];above+=(f.centre[j]-lead.centre[j])*lead.up[j];}
+        const int side=across<0?0:1;
+        f.pictureX=(side?1.f:-1.f)*(edge[side]+f.halfWidth)/lead.radius;
+        f.pictureY=above/lead.radius;   // the hinges stand upright: a panel's height against the middle one is as it is
+        f.pictureScale=f.radius/lead.radius;
+        edge[side]+=2*f.halfWidth;
+    }
+    const float reach=(std::max)(edge[0],edge[1])/lead.radius;
+    for(int i=0;i<count && i<kScopeMaxSurfaces;++i) if(frames[i].valid && frames[i].shape) frames[i].pictureReach=reach;
+}
 
 float ScopeTanHalf(float lensTan,float zoom) noexcept {
     if(!std::isfinite(lensTan) || !std::isfinite(zoom)) return 0;

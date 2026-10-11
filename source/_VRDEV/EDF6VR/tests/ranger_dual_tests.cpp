@@ -624,11 +624,21 @@ static void CheckShoulderStraight() {
     CHECK(g_seenRay[0][0]==5 && g_seenRay[0][1]==1 && g_seenRay[0][2]==-3);
     CHECK(std::fabs(g_seenRay[1][0]-5.3f)<1e-5f && std::fabs(g_seenRay[1][1]-1)<1e-5f && std::fabs(g_seenRay[1][2]+1)<1e-5f);
     GuideRayEnd();
-    // A javelin, or matrices 31 degrees off the aim (a weapon change): nothing.
+    // A javelin: nothing.
     std::memcpy(weapon+0x350,javelin,16);
     CHECK(!GuideComputeDeltas(weapon,d) && !d.valid);
     std::memcpy(weapon+0x350,straight,16);
-    const float wide=31*0.01745329f;
+    // A heavy mortar's dip, 45 degrees (2026-10-12): turned onto the aim all the same.
+    const float heavy=45*0.01745329f;
+    const float h1[4]={0,std::cos(heavy),std::sin(heavy),0},h2[4]={0,-std::sin(heavy),std::cos(heavy),0};
+    std::memcpy(entries+0x60,h1,16);std::memcpy(entries+0x70,h2,16);
+    CHECK(GuideComputeDeltas(weapon,d) && d.valid && d.shiftOnly);
+    {
+        const float low[3]={0,-std::sin(heavy),std::cos(heavy)};
+        for(int j=0;j<3;++j) CHECK(std::fabs(d.shift[j]-2*(aim[j]-low[j]))<1e-5f);
+    }
+    // Matrices past a right angle from the aim are not a firing pose: nothing.
+    const float wide=91*0.01745329f;
     const float f1[4]={0,std::cos(wide),std::sin(wide),0},f2[4]={0,-std::sin(wide),std::cos(wide),0};
     std::memcpy(entries+0x60,f1,16);std::memcpy(entries+0x70,f2,16);
     CHECK(!GuideComputeDeltas(weapon,d));

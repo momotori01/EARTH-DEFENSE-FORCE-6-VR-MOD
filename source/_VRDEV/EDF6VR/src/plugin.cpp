@@ -35,6 +35,8 @@
 #include "scope_draw.h"
 #include "body_tumble.h"
 #include "gesture_input.h"
+#include "stick_buttons.h"
+#include "vr_menu_items.h"
 #include "ranger_holster.h"
 #include "ranger_recoil.h"
 #include "desktop_mirror.h"
@@ -337,7 +339,7 @@ edf6vr::HandTrim g_handTrim{};
 // Visual recoil (weapon_kick.h): one level per hand, fed from the bullet
 // constructor on the game thread, read on the render thread.
 bool g_recoilKickOn=true;
-float g_shotBuzz=0.5f;   // a shot the game did not rumble for (the left gun)
+float g_shotBuzz=1.0f;   // a shot the game did not rumble for (the left gun); 1 the default since 3.2.0
 float g_recoilDecaySeconds=0.08f;
 edf6vr::RecoilKickShape g_recoilShape{4.0f*3.14159265f/180.0f,0.05f};
 // Which hand fired, for the controller buzz. Written from the bullet
@@ -705,6 +707,17 @@ float g_vehicleBobSeconds=0.35f;   // [VR] VehicleBobSmoothSeconds
 bool g_cockpitRequested=true,g_cockpitHooksReady=false;
 edf6vr::CockpitRig g_cockpitRig{};
 edf6vr::Quat g_vehicleHeadReference{};
+// The Air Raider's aerial targeting view (class_support.h IsNativeTacticalView)
+// in the headset instead of on the flat panel: [VR] AirStrikeCamera, 0 the
+// panel (the default: one picture, light), 1 from the game's camera as it aims
+// with the head free to look about, 2 the same with a level horizon (look down
+// to see the ground; by hand in the INI). The settings program's "Air-strike
+// camera" row writes 0 or 1. On hardware the VR view is felt as heavier (the
+// user, 2026-10-12: "重さは感じるね ... 規定は０"). Live-reloaded.
+int g_airStrikeCamera=0;
+edf6vr::Quat g_tacticalHeadReference{}; bool g_tacticalReference=false;
+edf6vr::Vec3 g_tacticalPosition{}; bool g_tacticalPositionReference=false;
+unsigned long long g_tacticalHeadsetFrames=0;
 edf6vr::VehicleEntryLevel g_vehicleEntryLevel{};
 edf6vr::Vec3 g_vehiclePosition{};
 bool VehiclePadActive() noexcept {
@@ -739,6 +752,13 @@ bool RangerDualWeapon(void*) noexcept;
 SRWLOCK g_inputContinuityLock=SRWLOCK_INIT;
 edf6vr::InputContinuity g_inputContinuity{};
 #endif
+// [Test] PadScript's buttons of the moment (DriveTheGame), over whatever the
+// controllers hold, so a scripted press is not lost to the next frame's pad;
+// -1 while no script runs. The pad stays a connected one from the script's
+// first step to its last: the game looks for a pad that has gone only now and
+// then, and pauses when one goes, so a pad that came and went with each press
+// had most of its presses missed (the first run of this, 2026-10-12).
+std::atomic<int> g_testPadButtons{-1};
 void PublishControllerPad(const edf6vr::PadState& pad,bool present) noexcept {
 #ifdef EDF6VR_AUDIO_RESEARCH
     AcquireSRWLockExclusive(&g_inputContinuityLock);
@@ -747,6 +767,12 @@ void PublishControllerPad(const edf6vr::PadState& pad,bool present) noexcept {
 #else
     (void)present;
 #endif
+    if(const int test=g_testPadButtons.load(std::memory_order_relaxed); test>=0) {
+        edf6vr::PadState with=pad;
+        with.buttons|=static_cast<unsigned short>(test); with.valid=true;
+        edf6vr::SetPadState(with);
+        return;
+    }
     edf6vr::SetPadState(pad);
 }
 float g_gestureAway=9;           // how close the right hand got, for the log
@@ -757,6 +783,8 @@ float g_zoneReach=9;             // distance from the zone's centre
 bool g_padHands[2]{};            // whether each controller reported itself
 float g_lastTrigger=0;           // the firing trigger, as the pad thread last saw it
 float g_stickButtonEdge=0.6f;
+float g_stickButtonAngle=40.0f,g_stickButtonDownAngle=37.0f;   // either side of straight up, of straight down (stick_buttons.h)
+edf6vr::StickButtons g_stickButtonState;
 bool g_padReady=false;
 unsigned long long g_padFrames=0;
 char g_padSeen[256]="nothing yet";
@@ -1305,15 +1333,21 @@ void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
         if(x>g_stickButtonEdge) pad.buttons|=kPadRight;
         if(controls.stickClick[0]) pad.buttons|=kPadBack;
         if(controls.stickClick[1]) pad.buttons|=kPadStart;
+        g_stickButtonState={};
     } else {
         // Sideways is turning, which the game does with the right stick. Up and
         // down are not used on foot, so they carry the two controls that are
         // awkward to reach on an Index: a dash and the button under the thumb.
         pad.rightX=ToAxis(controls.stick[1][0]);
-        if(g_stickButtons && !VehiclePadActive()) {
-            if(controls.stick[1][1]>g_stickButtonEdge) pad.buttons|=kPadY;
-            if(controls.stick[1][1]<-g_stickButtonEdge) pad.buttons|=kPadLeftThumb;
+        if(!VehiclePadActive()) {
+            // Off ([VR] RightStickButtons=0, the settings program's "Stick up /
+            // down buttons"): up and down do nothing on foot.
+            if(g_stickButtons) edf6vr::UpdateStickButtons(g_stickButtonState,controls.stick[1][0],controls.stick[1][1],g_stickButtonEdge,g_stickButtonAngle,g_stickButtonDownAngle);
+            else g_stickButtonState={};
+            if(g_stickButtonState.up) pad.buttons|=kPadY;
+            if(g_stickButtonState.down) pad.buttons|=kPadLeftThumb;
         } else {
+            g_stickButtonState={};
             // In a vehicle the gun hand's pointing is added to the stick
             // (HandAimStick, handAim: only while seated with the hand tracked).
             float x=controls.stick[1][0],y=controls.stick[1][1];
@@ -1528,6 +1562,7 @@ void ReportWatch() noexcept;
 void WatchTheBone(void* soldier) noexcept;
 void ArmWatchFromWatchdog() noexcept;
 void DriveTheGame() noexcept;
+void VrMenuSyncFiles() noexcept;   // vr_menu.h
 void KeepAimCentre(void* soldier) noexcept;
 bool ArmFireSites() noexcept;
 void ReportFireSites() noexcept;
@@ -1701,7 +1736,7 @@ void UiClusterWristPose(const float hand[3],const edf6vr::Vec3& head,float pos[3
 }
 std::uint32_t g_vrSoldierId=0;
 ULONGLONG g_vrSoldierSeen=0;
-ULONGLONG g_vrInputCalls=0, g_vrAimWrites=0, g_vrMoveWrites=0;
+ULONGLONG g_vrInputCalls=0, g_vrAimWrites=0, g_vrMoveWrites=0, g_vrTurnEvents=0;
 bool g_recenterRequested=true;
 unsigned g_runtimeRecentersSeen=0;   // edf6vr::RuntimeRecenterCount, handled
 std::atomic<bool> g_vrStartRequested{false}, g_vrStopRequested{false};
@@ -1913,6 +1948,7 @@ void GamepadWatch() noexcept {
         edf6vr::FlushMotionTrace();
         WatchForHang();
         DriveTheGame();
+        VrMenuSyncFiles();
         ArmWatchFromWatchdog();
         ArmFireSites();
         ReportWatch();
@@ -2348,6 +2384,8 @@ void Settings() noexcept {
     g_testRequestPoints=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Diagnostics",L"MissionRequestPoints",0,path)),0,1000000);
     g_stickButtons=GetPrivateProfileIntW(L"VR",L"RightStickButtons",1,path)!=0;
     g_stickButtonEdge=ReadFloat(path,L"RightStickButtonEdge",0.6f,0.2f,0.95f,L"VR");
+    g_stickButtonAngle=ReadFloat(path,L"RightStickButtonAngle",40.0f,10.0f,60.0f,L"VR");
+    g_stickButtonDownAngle=ReadFloat(path,L"RightStickButtonDownAngle",37.0f,10.0f,60.0f,L"VR");
     if(RetireVehicleHandAimDefaults(path))
         Log("VEHICLEHANDAIM on at first in the Nix only: the other seats were turned off once (tick them again in EDF6 VR setting.exe)");
     ReadVehicleHandAim(path);
@@ -2473,7 +2511,9 @@ void UpdateScopeView() noexcept {
         } else {
             const auto lens=edf6vr::ReadScopeLens();
             if(lens.valid && now-lens.at<500) lensTan=lens.lensTan;
-            view.aspect=spec->shape && spec->halfHeight>0?spec->halfWidth/spec->halfHeight:1.f;
+            // The whole picture's shape: one surface's, or all of a monitor gun's panels side by side.
+            view.aspect=g_scopeLensIndex>=0 && spec==edf6vr::ScopeLensAt(g_scopeLensIndex)?edf6vr::ScopePictureAspect(g_scopeLensIndex)
+                :spec->shape && spec->halfHeight>0?spec->halfWidth/spec->halfHeight:1.f;
             view.style=kind==edf6vr::ScopeHoloOnWeapon?edf6vr::ScopeStyleHoloBlue:edf6vr::ScopeStyleLens;
             // On the muzzle as the hold command placed it; ScopeResolve adds the
             // laser's carry (ScopeLaserCarry) when it draws.
@@ -2495,6 +2535,7 @@ void UpdateScopeView() noexcept {
 #include "guide_probe.h"
 #include "chat_probe.h"
 #include "menu_board.h"
+#include "vr_menu.h"
 #include "action_weapon_visibility.h"
 #include "tracked_weapon_bounds.h"
 #include "audio_health.h"
@@ -3057,6 +3098,7 @@ void ApplyVrInput(void* soldier) noexcept {
         } else if(g_vrMouseYaw && std::isfinite(aim.lookInput[1])) g_yawOffset+=aim.lookInput[1];
 
         g_appliedHeadSample=sample;
+        const float headYawStep=head.yaw-g_lastHeadYaw,headPitchStep=head.pitchUp-g_lastHeadPitch;   // for the "turned" event below
         g_lastHeadYaw=head.yaw; g_lastHeadPitch=head.pitchUp;
         g_hmdUpWorld=edf6vr::RotateY(head.up,g_yawOffset);
         // Where the head looks, in world axes, for the camera to be built along.
@@ -3381,6 +3423,17 @@ void ApplyVrInput(void* soldier) noexcept {
         const float keepPitchLook=g_vrRotation && !fencer?0.0f:aim.lookInput[0];
         const float keepYawLook=g_vrRotation && !fencer?0.0f:aim.lookInput[1];
         if(edf6vr::WriteSoldierInput(soldier,moveX,moveZ,keepPitchLook,keepYawLook)) ++g_vrMoveWrites;
+        // The game marks "the player turned" from the look input straight after
+        // this hook returns (first_person.h kEventFlagsOffset), and the guided
+        // missions wait on it: M000B (mission 1) and RM000 (mission 116) hold at
+        // WaitPlayerEvent(0, HBEF_COMMON_TURN, n) until it has shown for n ticks.
+        // Here the look input has gone into the yaw offset and is written back as
+        // zero, so outside the Fencer -- whose look input is kept -- it never
+        // showed and those missions stood still until VR was switched off (the
+        // user 2026-10-12, the host's log of M116). Turning the view with the
+        // stick, or looking around, marks it as the game would have.
+        if(g_vrRotation && !fencer && edf6vr::VrPlayerTurned(aim.lookInput[0],aim.lookInput[1],headYawStep,headPitchStep,dt)
+           && edf6vr::MarkSoldierEvent(soldier,edf6vr::kEventTurned)) ++g_vrTurnEvents;
         edf6vr::SoldierAim after{};
         if(edf6vr::ReadSoldierAim(soldier,after)) {
             g_previousMove.have=true;
@@ -3677,6 +3730,20 @@ bool g_autoDeploy=false;
 int g_autoFireAfter=6;
 ULONGLONG g_missionAt=0;
 bool g_autoFired=false;
+// [Test] PadScript: pad buttons and keys pressed one after another,
+// PadScriptAfterSeconds into the mission, to walk a menu on the virtual headset
+// (virtualvr): "start", "up", "down", "left", "right", "a", "b", "x", "y" on
+// the pad; "esc", "enter", "kup", "kdown", "kleft", "kright", "back" on the
+// keyboard; or a number, a wait of that many tenths of a second; separated by
+// commas. It runs in one go on the watchdog's thread, so the auto-deploy does
+// not press Enter into a paused game in the middle of it. Empty: nothing.
+// The auto-deploy goes through the title with Enter, so the game takes the
+// keyboard as the player's device: in the mission only the keyboard pauses
+// ("start" on the pad did nothing there, runs of 2026-10-12), while the menus
+// answer either.
+char g_padScript[512]{};
+int g_padScriptAfter=10;
+bool g_padScriptRan=false;
 
 // A whole press, down and up, through both channels.
 //
@@ -3685,30 +3752,83 @@ bool g_autoFired=false;
 // A press is a short thing, so this sends one -- and sends it twice over, once
 // as injected input and once as a message to the window, because which of the
 // two a menu is listening to is not worth a run to find out.
-void PressEnter() noexcept {
+void PressKey(WORD virtualKey,DWORD heldMs=20) noexcept {
     INPUT key[2]{};
     key[0].type=INPUT_KEYBOARD;
-    key[0].ki.wVk=VK_RETURN;
-    key[0].ki.wScan=static_cast<WORD>(MapVirtualKeyW(VK_RETURN,MAPVK_VK_TO_VSC));
+    key[0].ki.wVk=virtualKey;
+    key[0].ki.wScan=static_cast<WORD>(MapVirtualKeyW(virtualKey,MAPVK_VK_TO_VSC));
     key[1]=key[0];
     key[1].ki.dwFlags=KEYEVENTF_KEYUP;
     SendInput(1,&key[0],sizeof(INPUT));
-    Sleep(20);
+    Sleep(heldMs);
     SendInput(1,&key[1],sizeof(INPUT));
     if(HWND window=GetForegroundWindow()) {
         const LPARAM scan=static_cast<LPARAM>(key[0].ki.wScan)<<16;
-        PostMessageW(window,WM_KEYDOWN,VK_RETURN,1|scan);
-        PostMessageW(window,WM_CHAR,VK_RETURN,1|scan);
-        PostMessageW(window,WM_KEYUP,VK_RETURN,1|scan|(1<<30)|(1u<<31));
+        PostMessageW(window,WM_KEYDOWN,virtualKey,1|scan);
+        if(virtualKey==VK_RETURN) PostMessageW(window,WM_CHAR,VK_RETURN,1|scan);
+        PostMessageW(window,WM_KEYUP,virtualKey,1|scan|(1<<30)|(1u<<31));
     }
+}
+void PressEnter() noexcept { PressKey(VK_RETURN); }
+
+void RunPadScript() noexcept {
+    Log("PADSCRIPT start: %s",g_padScript);
+    edf6vr::PadState pad{};
+    pad.valid=true;
+    g_testPadButtons.store(0);
+    edf6vr::SetPadState(pad);
+    Sleep(3000);             // for the game to find the pad
+    char token[16]{}; int length=0;
+    for(const char* at=g_padScript;;++at) {
+        if(*at && *at!=',' && *at!=' ') { if(length<15) token[length++]=static_cast<char>(std::tolower(static_cast<unsigned char>(*at))); continue; }
+        token[length]=0;
+        if(length) {
+            struct Name { const char* name; unsigned short button; };
+            static constexpr Name names[]={{"start",kPadStart},{"up",kPadUp},{"down",kPadDown},{"left",kPadLeft},{"right",kPadRight},
+                {"a",kPadA},{"b",kPadB},{"x",kPadX},{"y",kPadY}};
+            struct Key { const char* name; WORD key; };
+            static constexpr Key keys[]={{"esc",VK_ESCAPE},{"enter",VK_RETURN},{"kup",VK_UP},{"kdown",VK_DOWN},{"kleft",VK_LEFT},
+                {"kright",VK_RIGHT},{"back",VK_BACK}};
+            unsigned short button=0; WORD key=0;
+            for(const auto& n:names) if(!std::strcmp(n.name,token)) button=n.button;
+            for(const auto& k:keys) if(!std::strcmp(k.name,token)) key=k.key;
+            if(key) {
+                PressKey(key,120);
+                Log("PADSCRIPT key %s",token);
+                Sleep(450);
+            } else if(button) {
+                pad.buttons=button;
+                g_testPadButtons.store(button);
+                edf6vr::SetPadState(pad);
+                Sleep(150);
+                pad.buttons=0;
+                g_testPadButtons.store(0);
+                edf6vr::SetPadState(pad);
+                Log("PADSCRIPT pressed %s",token);
+                Sleep(450);
+            } else if(const int tenths=std::atoi(token); tenths>0) {
+                Sleep(static_cast<DWORD>(std::min(tenths,600))*100);
+            } else Log("PADSCRIPT unknown step \"%s\"",token);
+        }
+        length=0;
+        if(!*at) break;
+    }
+    g_testPadButtons.store(-1);
+    edf6vr::SetPadState(edf6vr::PadState{});
+    Log("PADSCRIPT end");
 }
 
 void DriveTheGame() noexcept {
     static bool said=false;
-    if(!said) { said=true; Log("AUTO deploy=%d fireAfter=%ds",g_autoDeploy?1:0,g_autoFireAfter); }
+    if(!said) { said=true; Log("AUTO deploy=%d fireAfter=%ds padScript=%s after=%ds",g_autoDeploy?1:0,g_autoFireAfter,g_padScript[0]?"yes":"no",g_padScriptAfter); }
     if(!g_autoDeploy) return;
     const auto now=GetTickCount64();
     const bool inMission=g_soldierAt && now-g_soldierAt<2000;
+    if(inMission && g_missionAt && g_padScript[0] && !g_padScriptRan && now-g_missionAt>=static_cast<ULONGLONG>(g_padScriptAfter)*1000) {
+        g_padScriptRan=true;
+        RunPadScript();
+        return;
+    }
     if(!inMission) {
         // Said once every few seconds while it is still pressing, because
         // "nothing in the log" and "not running" look identical otherwise.
@@ -4197,6 +4317,11 @@ void ReloadTunables() noexcept {
     if(!g_iniPath[0]) return;
     ReadHandSettings();
     g_vehicleLevelView=GetPrivateProfileIntW(L"VR",L"VehicleLevelView",1,g_iniPath)!=0;
+    g_airStrikeCamera=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"VR",L"AirStrikeCamera",0,g_iniPath)),0,2);
+    // The Start menu's "VR setting" changes these two in play (vr_menu.h): a
+    // flag each, with nothing built on it at start-up.
+    g_stickButtons=GetPrivateProfileIntW(L"VR",L"RightStickButtons",1,g_iniPath)!=0;
+    edf6vr::g_openxr.SetDesktopMirror(GetPrivateProfileIntW(L"Render",L"DesktopMirror",1,g_iniPath)!=0);
     g_vehicleBobSeconds=ReadFloat(g_iniPath,L"VehicleBobSmoothSeconds",0.35f,0.0f,2.0f,L"VR");
     ReadVehicleHandAim(g_iniPath);
     ReadCrewFigureTest(g_iniPath);
@@ -4903,6 +5028,69 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
     }
     return true;
 }
+// The aerial targeting view in the headset ([VR] AirStrikeCamera): the game's
+// own camera -- where it is and, in mode 1, how it is pitched -- with the head
+// turned on it, as a vehicle's seat camera is (ComposeVehicleCamera: level and
+// straight ahead is the game's own view). The game goes on reading the sticks
+// untouched (ApplyVrInput leaves a tactical view alone), draws the soldier as
+// it draws him from above, and nothing of the first-person presentation is on.
+// The two native eyes follow from the camera written here, as on foot. Until
+// now the view went to the flat panel (XrDisplayMode::Quad), one picture.
+bool TacticalInHeadset() noexcept {
+    return g_airStrikeCamera>0 && g_vrEnabled && g_fpsEnabled && !g_faulted && g_stereoMode>=4 && !g_swapEyes
+        && edf6vr::NativeWorldEnabled() && edf6vr::g_openxr.Mode()==edf6vr::XrMode::HeadsetDisplay;
+}
+bool ApplyTacticalCamera(void* camera,const edf6vr::Matrix& nativeCamera) noexcept {
+    if(!TacticalInHeadset() || !edf6vr::ValidCamera(nativeCamera)) return false;
+    edf6vr::HmdSample sample{};
+    if(!edf6vr::g_openxr.Sample(sample) || !sample.orientationValid || !edf6vr::NormalizedQuat(sample.orientation)) return false;
+    if(!g_tacticalReference || g_recenterRequested) {
+        // Heading only: wherever the player faces when the view opens is the
+        // game camera's own heading; pitch and roll are the head's own.
+        if(!edf6vr::VehicleHeadingReference(sample.orientation,g_tacticalHeadReference)) return false;
+        g_tacticalReference=true;
+        g_tacticalPosition=sample.position;g_tacticalPositionReference=sample.positionValid;
+        g_recenterRequested=false;
+    }
+    edf6vr::Vec3 delta{};
+    if(sample.positionValid) {
+        if(!g_tacticalPositionReference) {g_tacticalPosition=sample.position;g_tacticalPositionReference=true;}
+        delta={sample.position.x-g_tacticalPosition.x,sample.position.y-g_tacticalPosition.y,sample.position.z-g_tacticalPosition.z};
+    }
+    edf6vr::Matrix base=nativeCamera;float nativePitch=0;
+    if(g_airStrikeCamera==2) {
+        edf6vr::Matrix level{};
+        if(edf6vr::LevelCameraPitch(nativeCamera,level,nativePitch)) base=level;
+    }
+    edf6vr::Matrix result{};float yaw=0;
+    if(!edf6vr::ComposeVehicleCamera(base,g_tacticalHeadReference,sample.orientation,delta,result,yaw)) return false;
+    auto state=State(camera);if(!state) return false;
+    g_nativeZoom=g_renderZoom=1;edf6vr::g_openxr.SetBinocularZoom(1);
+    float fov=0,ipd=0;
+    if(edf6vr::g_openxr.StereoAdvice(fov,ipd)) {
+        WriteCameraFov(camera,fov);g_lastRenderFov=fov;g_lastIpd=ipd;
+        g_lastEyeOffset=edf6vr::NativeWorldCameraOffset(((g_frameEye==1)!=g_swapEyes)?1u:0u,ipd*g_ipdScale);
+        for(int j=0;j<3;++j) result.m[3][j]+=result.m[0][j]*g_lastEyeOffset;
+    }
+    for(int k=0;k<3;++k) for(int j=0;j<3;++j)
+        g_headBasis[k][j].store(result.m[k][j],std::memory_order_relaxed);
+    g_headBasisAt.store(GetTickCount64(),std::memory_order_release);
+    state->saved.original=nativeCamera;state->saved.applied=result;state->saved.pending=true;
+    // The matrix and its head record together, as the vehicle camera does: the
+    // native producer must not take a camera whose HMD record is not there yet.
+    edf6vr::PublishRenderedCamera(*reinterpret_cast<edf6vr::Matrix*>(static_cast<unsigned char*>(camera)+edf6vr::kCameraMatrixOffset),result,sample);
+    edf6vr::TraceCamera(result,sample,yaw,1);
+    g_cameraWrite=GetTickCount64();edf6vr::g_openxr.MarkCameraPose();edf6vr::g_openxr.MarkSceneLive();
+    ++g_tacticalHeadsetFrames;
+    static ULONGLONG report=0;
+    if(GetTickCount64()-report>5000) {
+        report=GetTickCount64();
+        Log("TACTICALVIEW headset mode=%d frames=%llu native=(%.2f,%.2f,%.2f) nativePitchDown=%.1fdeg levelled=%.1fdeg headYaw=%.2f hmdDelta=(%.3f,%.3f,%.3f) fov=%.3f ipd=%.4f",
+            g_airStrikeCamera,g_tacticalHeadsetFrames,nativeCamera.m[3][0],nativeCamera.m[3][1],nativeCamera.m[3][2],
+            -std::asin(std::clamp(nativeCamera.m[2][1],-1.0f,1.0f))*57.2957795f,nativePitch*57.2957795f,yaw,delta.x,delta.y,delta.z,fov,ipd);
+    }
+    return true;
+}
 // [FirstPerson] ViewFollowsBody: the body's turn since it was last upright
 // (body_tumble.h), put onto the camera about the eye.
 void ApplyBodyTumble(void* soldier,edf6vr::Matrix& camera) noexcept {
@@ -5048,7 +5236,7 @@ void AfterUpdate(void* camera) noexcept {
         auto bytes=static_cast<unsigned char*>(camera);
         bool supportedSoldier=false, valid=false;
         edf6vr::PlayerPose pose{};
-        bool fpsApplied=false,vehicleApplied=false;
+        bool fpsApplied=false,vehicleApplied=false,tacticalApplied=false;
         float roll=0;
         edf6vr::Matrix before{},after{};
         if(edf6vr::Readable(camera,edf6vr::kSoldierOffset+8)
@@ -5105,12 +5293,21 @@ void AfterUpdate(void* camera) noexcept {
                 if(tacticalDistance>g_tacticalPeak) { g_tacticalPeak=tacticalDistance; g_tacticalPeakHeight=tacticalHeight; }
                 if(tactical!=g_nativeTactical.exchange(tactical)) {
                     g_haveReference=false; g_previousMove={}; g_hmdHeightOffset=0;
+                    g_tacticalReference=false; g_tacticalPositionReference=false;
                     ClearClassPresentation();
-                    edf6vr::g_openxr.SetDisplayMode(tactical?edf6vr::XrDisplayMode::Quad:
+                    edf6vr::g_openxr.SetDisplayMode(tactical && !TacticalInHeadset()?edf6vr::XrDisplayMode::Quad:
                         g_stereoMode>=2?edf6vr::XrDisplayMode::ProjectionStereo:
                         g_stereoMode==1?edf6vr::XrDisplayMode::ProjectionMono:edf6vr::XrDisplayMode::Quad);
-                    Log("TACTICAL native=%d camera=(%.2f,%.2f,%.2f) fromSoldier=%.1fm above=%.1fm; native view/input on headset panel",
-                        tactical,before.m[3][0],before.m[3][1],before.m[3][2],tacticalDistance,tacticalHeight);
+                    Log("TACTICAL native=%d camera=(%.2f,%.2f,%.2f) fromSoldier=%.1fm above=%.1fm; native input, view %s",
+                        tactical,before.m[3][0],before.m[3][1],before.m[3][2],tacticalDistance,tacticalHeight,
+                        tactical?(TacticalInHeadset()?"in the headset (AirStrikeCamera)":"on the headset panel"):"back on foot");
+                }
+                // The aerial view in both eyes ([VR] AirStrikeCamera), or on the
+                // panel as before when that is off or cannot be had this update
+                // (the setting is read again while the game runs).
+                if(tactical) {
+                    tacticalApplied=ApplyTacticalCamera(camera,before);
+                    edf6vr::g_openxr.SetDisplayMode(tacticalApplied?edf6vr::XrDisplayMode::ProjectionStereo:edf6vr::XrDisplayMode::Quad);
                 }
                 edf6vr::SoldierAim aim{};
                 const bool aimValid=valid && edf6vr::ReadSoldierAim(soldier,aim);
@@ -5715,7 +5912,7 @@ void AfterUpdate(void* camera) noexcept {
         // if the hook stops being called at all, F5 in a mission is the way back.
         g_nativeStereoProbeActive.store(g_nativeStereoProbe && g_vrEnabled && supportedSoldier && valid,std::memory_order_relaxed);
         const bool nativeLive=edf6vr::NativeWorldEnabled() && g_vrEnabled && !g_faulted &&
-            (fpsApplied || vehicleApplied) && g_stereoMode>=4 && !g_swapEyes &&
+            (fpsApplied || vehicleApplied || tacticalApplied) && g_stereoMode>=4 && !g_swapEyes &&
             edf6vr::g_openxr.Mode()==edf6vr::XrMode::HeadsetDisplay;
         edf6vr::RefreshNativeWorld(nativeLive,g_lastIpd*g_ipdScale,g_lastIpd);
         PublishRangerDualHands();
@@ -5848,6 +6045,8 @@ void AfterUpdate(void* camera) noexcept {
                 Log("MENUBOARD showing=%d updates pause=%llu bg=%llu failed=%llu dialog=%llu client=%llu result=%llu box=%llu",
                     edf6vr::g_openxr.MenuOpen()?1:0,menuUpdates[0],menuUpdates[1],menuUpdates[2],menuUpdates[3],menuUpdates[4],
                     menuUpdates[5],menuUpdates[6]);
+                Log("VRMENU ready=%d files=%d callbacksAdded=%llu opened=%llu presses=%llu updates=%llu",g_vrMenuReady?1:0,
+                    g_vrMenuFilesLanguage.load(),g_vrMenuRegistered.load(),g_vrMenuOpened.load(),g_vrMenuPresses.load(),g_vrMenuUpdates.load());
             }
             const auto crosshair=edf6vr::ReadNativeCrosshairStats();
             Log("CROSSHAIR ready=%d calls=%llu hidden=%llu",edf6vr::NativeCrosshairReady(),
@@ -5890,11 +6089,11 @@ void AfterUpdate(void* camera) noexcept {
             edf6vr::HmdSample sample{};
             const bool haveSample=edf6vr::g_openxr.Sample(sample);
             Log("VR ready=%d on=%d xrRunning=%d xrFrames=%llu stage=%d sample=%d posValid=%d "
-                "headYaw=%.4f headPitch=%.4f yawOffset=%.4f pitchSign=%+d locked=%d wroteAim=%llu wroteMove=%llu inputCalls=%llu",
+                "headYaw=%.4f headPitch=%.4f yawOffset=%.4f pitchSign=%+d locked=%d wroteAim=%llu wroteMove=%llu inputCalls=%llu turnEvents=%llu",
                 g_vrReady,g_vrEnabled,edf6vr::g_openxr.Running(),edf6vr::g_openxr.Frames(),
                 edf6vr::g_openxr.StageSpace(),haveSample,sample.positionValid,
                 g_lastHeadYaw,g_lastHeadPitch,g_yawOffset,g_pitchSign,g_pitchLocked,
-                g_vrAimWrites,g_vrMoveWrites,g_vrInputCalls);
+                g_vrAimWrites,g_vrMoveWrites,g_vrInputCalls,g_vrTurnEvents);
             Log("AIMFIELDS soldierYaw=%.4f soldierPitch=%.4f cameraYaw=%.4f cameraPitchUp=%.4f "
                 "yawDelta=%.4f wroteYaw=%.4f wrotePitch=%.4f move=(%.3f,%.3f) look=(%.4f,%.4f) limits=(%.3f,%.3f) pos=(%.2f,%.2f,%.2f)",
                 g_lastAim.yaw,g_lastAim.pitch,g_lastCameraYaw,g_lastCameraPitchUp,
@@ -7024,6 +7223,8 @@ bool DrawHeldWeapon(void* model,void* renderContext,int pass,void* view) {
                                 ++published;
                             }
                         }
+                        // Several surfaces show one picture between them (the Laser Guide Kit's panels).
+                        edf6vr::ScopeArrangeSurfaces(lenses,published);
                         if(published) edf6vr::PublishScopeLenses(lenses,published);
                     }
                 }
@@ -7292,6 +7493,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     edf6vr::ConfigureCrewFigures(g_crewFolder.c_str());
     ReadHandSettings();
     g_vehicleLevelView=GetPrivateProfileIntW(L"VR",L"VehicleLevelView",1,g_iniPath)!=0;
+    g_airStrikeCamera=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"VR",L"AirStrikeCamera",0,g_iniPath)),0,2);
     g_devKeys=GetPrivateProfileIntW(L"Diagnostics",L"DevKeys",0,g_iniPath)!=0;
     // Before the first line of this run is written.
     TrimLog(GetPrivateProfileIntW(L"Diagnostics",L"LogSessions",10,g_iniPath));
@@ -7307,7 +7509,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.1.12 cockpit loading, with EDF6MultiSlot 1.6.9. The right eye reuses the left eye's shadows.");
+    Log("EDF6VR 3.2.0 cockpit loading, with EDF6MultiSlot 1.6.9. VR setting in the Start menu; air-strike camera 2D/VR; stick up/down switch and cone; turn event for the guided missions.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7422,6 +7624,12 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     g_shotFromMuzzle=GetPrivateProfileIntW(L"VR",L"ShotFromMuzzle",1,g_iniPath)!=0;
     g_autoFireAfter=std::clamp(
         static_cast<int>(GetPrivateProfileIntW(L"Test",L"AutoFireAfterSeconds",6,g_iniPath)),1,120);
+    {
+        wchar_t script[512]{};
+        GetPrivateProfileStringW(L"Test",L"PadScript",L"",script,512,g_iniPath);
+        WideCharToMultiByte(CP_UTF8,0,script,-1,g_padScript,sizeof(g_padScript)-1,nullptr,nullptr);
+    }
+    g_padScriptAfter=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Test",L"PadScriptAfterSeconds",10,g_iniPath)),1,600);
     GetPrivateProfileStringW(L"VR",L"WatchBone",L"aim_center",g_watchBone,16,g_iniPath);
     {
         wchar_t sites[128]{};
@@ -7620,6 +7828,11 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("MENUBOARD hooks ready=%d changed=%d (OnUpdate, slot 1, of HUiPause/PauseBG/MissionFailed/FailedDialog/FailedClient/FailedResult/DialogBox: "
             "the board while one shows, online too)",menuOK,changed);
         if(changed && !menuOK) g_faulted=true;
+        changed=false;
+        const bool vrMenuOK=InstallVrMenu(changed);
+        Log("VRMENU wanted=%d ready=%d changed=%d (Start menu item \"VR setting\": callback cbVrSet added after 83EB20->847990, "
+            "OnUpdate slot 1 of HUiLayout 17F3E10, layouts in Mods\\UI; [VR] PauseMenuVrSetting)",g_vrMenuWanted?1:0,g_vrMenuReady?1:0,changed);
+        if(changed && !vrMenuOK) g_faulted=true;
         changed=false;
         const bool aimLineOK=InstallAimLineWidth(changed);
         Log("SIGHTLINE vehicle aim line width hook ready=%d changed=%d call=6B34C7->687CE0",aimLineOK,changed);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EDF6VR VERSION 3.1.12 LANGUAGES CXX)
+project(EDF6VR VERSION 3.2.0 LANGUAGES CXX)
 if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Requires MSVC and Windows x64")
 endif()
@@ -27,7 +27,9 @@ target_sources(edf6vr_xr PRIVATE src/aim_hud_draw.cpp)
 target_sources(edf6vr_core PRIVATE src/scope.cpp)
 target_sources(edf6vr_xr PRIVATE src/scope_draw.cpp)
 target_link_libraries(edf6vr_xr PUBLIC edf6vr_core advapi32 d3d11 dxgi)
-add_library(EDF6VR SHARED src/plugin.cpp src/defaults.rc src/cockpit_assets.rc)
+add_library(EDF6VR SHARED src/plugin.cpp src/defaults.rc src/cockpit_assets.rc src/menu_assets.rc)
+# The in-game "VR setting" menu's layouts (tools/make_vr_menu.py makes them from the installed game).
+set_source_files_properties(src/menu_assets.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/assets/ui/LYT_PAUSEMENU.SGO;${CMAKE_SOURCE_DIR}/assets/ui/LYT_PAUSEMENU.JA.SGO;${CMAKE_SOURCE_DIR}/assets/ui/LYT_EDF6VR_SETTING.SGO;${CMAKE_SOURCE_DIR}/assets/ui/LYT_EDF6VR_SETTING.JA.SGO")
 set_source_files_properties(src/cockpit_assets.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/assets/cockpit/textures/native_v1/NixInterior_BaseColor.png;${CMAKE_SOURCE_DIR}/assets/cockpit/textures/native_v1/NixInterior_Emissive.png;${CMAKE_SOURCE_DIR}/assets/cockpit/textures/native_v1/NixInterior_Roughness.png;${CMAKE_SOURCE_DIR}/assets/cockpit/textures/native_v1/NixInterior_Normal.png")
 # The shipped INI is compiled into the DLL; rebuild the resource when it changes.
 set_source_files_properties(src/defaults.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/packaging/EDF6VR.ini")

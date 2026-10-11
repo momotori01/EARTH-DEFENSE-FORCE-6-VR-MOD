@@ -358,10 +358,15 @@ bool GuideAttachmentWeapon(void* attachment,void*& weapon) noexcept {
 // its line keeps the game's start and the game's step, and only its throw is
 // turned from the direction the weapon's matrices give (GuideProbeArc, the same
 // read 688680 makes) onto the hand's aim, where its shells are turned too. After
-// a shot the barrel joint's animation drops those matrices 10 to 17 degrees for a
-// moment (FENCERGUIDESPIKE, 2026-10-09) while the barrel as drawn stays up, and
-// the line and the landing marker went down with them. Past 30 degrees the
-// matrices are not this weapon's aim at all (a weapon change) and nothing is done.
+// a shot the barrel joint's animation drops those matrices for a moment while
+// the barrel as drawn stays up, and the line and the landing marker went down
+// with them: 10 to 17 degrees on the light mortars (FENCERGUIDESPIKE,
+// 2026-10-09), about 45 on the heavy ones (h_attach_shoulder02; FENCERGUIDE off
+// its usual angle 43-45, the user 2026-10-12 -- the first bound of 30 degrees
+// left those lines down). The weapon is one of the two in the hands
+// (FencerWeaponActive) and every straight back weapon in the game data is a
+// Weapon_HeavyShoot without a FireVector, so the bound is only against matrices
+// that point backwards: past a right angle nothing is done.
 bool FencerStraightGuide(void* weapon,GuideDeltas& out) noexcept {
     const unsigned hand=weapon==g_fencerWeapons[0].load(std::memory_order_relaxed)?0u:1u;
     if(!FencerStraightShoulder(hand,weapon)) return false;
@@ -374,7 +379,7 @@ bool FencerStraightGuide(void* weapon,GuideDeltas& out) noexcept {
     if(!std::isfinite(speed) || speed<=0) return false;
     if(!FencerHandAimForward(hand,GuideWeaponOwner(weapon),aim)) return false;
     const float c=std::clamp(aim[0]*direction[0]+aim[1]*direction[1]+aim[2]*direction[2],-1.0f,1.0f);
-    if(!std::isfinite(c) || c<0.866f) return false;   // 30 degrees
+    if(!std::isfinite(c) || c<0.0f) return false;      // a right angle
     for(int j=0;j<3;++j) {
         out.start[j]=start[j]; out.shift[j]=speed*(aim[j]-direction[j]);
         if(!std::isfinite(out.shift[j])) { out={}; return false; }

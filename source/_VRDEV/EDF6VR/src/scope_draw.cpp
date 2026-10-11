@@ -1,6 +1,7 @@
 #include "scope_draw.h"
 #include <d3dcompiler.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -22,7 +23,8 @@ std::atomic<float> fieldTan{0},wantTan{0};
 struct Constants {
     float corner[4][4]{};   // clip positions of the surface's corners, uv (-1,-1) (-1,1) (1,-1) (1,1)
     float mode[4]{};        // mode, source sRGB, target sRGB, style
-    float frame0[4]{};      // tanHalf, aspect, shape
+    float frame0[4]{};      // tanHalf, aspect, shape, how far the reticle's level hairline reaches
+    float tile[4]{};        // the surface's part of the picture: centre x, y, scale (in the picture's half heights)
     float frame1[4]{};      // mode 1: tan left, right, top, bottom
     float reticle[4]{};     // the reticle's turn in the surface: cos, sin (the weapon's roll)
     float origin[4]{},right[4]{},up[4]{},forward[4]{};
@@ -31,7 +33,7 @@ struct Constants {
 };
 constexpr char shader[]=R"(
 cbuffer Data:register(b0) {
- float4 corner[4];float4 mode;float4 frame0;float4 frame1;float4 reticle;
+ float4 corner[4];float4 mode;float4 frame0;float4 tile;float4 frame1;float4 reticle;
  float4 origin;float4 rightW;float4 upW;float4 forwardW;
  float4 cameraRight;float4 cameraUp;float4 cameraForward;row_major float4x4 sourceClip;
 }
@@ -52,8 +54,11 @@ float4 fragment(V i):SV_Target {
  float aa=max(fwidth(edge),1e-4);
  float alpha=1-smoothstep(1-1.5*aa,1,edge);
  if(alpha<=0) discard;
- // The ray this point of the surface shows, in the world.
- float3 d=forwardW.xyz+(i.uv.x*aspect*rightW.xyz+i.uv.y*upW.xyz)*frame0.x;
+ // Where this point of the surface is in the picture (its half heights): the
+ // surface's own middle, or its part of a picture shared with its neighbours.
+ float2 at=float2(i.uv.x*aspect,i.uv.y)*tile.z+tile.xy;
+ // The ray it shows, in the world.
+ float3 d=forwardW.xyz+(at.x*rightW.xyz+at.y*upW.xyz)*frame0.x;
  float3 c;
  if(mode.x<1.5) {
   // The scope's own view: the ray in its camera, inside its frustum.
@@ -71,11 +76,11 @@ float4 fragment(V i):SV_Target {
  // Duplex reticle: hairlines through the centre, posts outside half the field,
  // turned with the weapon (the picture stays upright, as through a real scope).
  float2 r=float2(dot(i.uv,float2(reticle.x,-reticle.y)),dot(i.uv,reticle.yx));
- float2 a=abs(float2(r.x*aspect,r.y));float px=max(fwidth(a.y),1e-4);
- float reach=round?1:max(aspect,1);
+ float2 a=abs(float2(r.x*aspect,r.y)*tile.z+tile.xy);float px=max(fwidth(a.y),1e-4);
+ float reach=frame0.w;
  float hair=max((1-smoothstep(.004,.004+px,a.y))*step(a.x,reach),(1-smoothstep(.004,.004+px,a.x))*step(a.y,1));
  float post=max((1-smoothstep(.018,.018+px,a.y))*step(.5,a.x),(1-smoothstep(.018,.018+px,a.x))*step(.5,a.y));
- float centre=length(float2(i.uv.x*aspect,i.uv.y));
+ float centre=length(at);
  if(mode.w<.5) {
   c*=1-.92*saturate(max(hair,post));
   c=lerp(c,float3(1,.08,.05),1-smoothstep(.010,.010+px,centre));
@@ -163,6 +168,11 @@ bool DrawScopeLens(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,const ScopeD
     const DXGI_FORMAT targetFormat=Typed(td.Format),sourceFormat=Typed(sd.Format);
     data.mode[0]=float(in.mode);data.mode[1]=Srgb(sourceFormat)?1.f:0.f;data.mode[2]=Srgb(targetFormat)?1.f:0.f;data.mode[3]=float(in.style);
     data.frame0[0]=in.tanHalf;data.frame0[1]=in.aspect;data.frame0[2]=float(L.shape);
+    // One picture over several surfaces: this one's part, and hairlines that run
+    // the picture's whole width. Alone: its own middle, as before.
+    const bool shared=L.shape && L.pictureReach>0 && L.pictureScale>0 && std::isfinite(L.pictureX) && std::isfinite(L.pictureY);
+    data.tile[0]=shared?L.pictureX:0.f;data.tile[1]=shared?L.pictureY:0.f;data.tile[2]=shared?L.pictureScale:1.f;
+    data.frame0[3]=shared?L.pictureReach:(L.shape?(std::max)(in.aspect,1.f):1.f);
     data.frame1[0]=in.tanLeft;data.frame1[1]=in.tanRight;data.frame1[2]=in.tanTop;data.frame1[3]=in.tanBottom;
     // A round surface is laid out by the picture's up, which follows the head; its
     // reticle is turned onto the weapon's own up (lens.up) in that plane. A

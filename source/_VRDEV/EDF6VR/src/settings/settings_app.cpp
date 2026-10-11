@@ -51,7 +51,7 @@ enum : int {
     ID_RETICLE_APPLY, ID_RECOIL_ON, ID_RECOIL_APPLY, ID_BUZZ_APPLY, ID_MIRROR_ON, ID_MIRROR_APPLY, ID_RESET,
     ID_HANDAIM_APPLY, ID_HANDAIM_ON,   // ID_HANDAIM_ON..+7: one box a kind of seat (kHandAimKinds)
     ID_HANDAIM_ON_END=ID_HANDAIM_ON+8,
-    ID_CREW_MAKE, ID_CREW_DELETE,
+    ID_CREW_MAKE, ID_CREW_DELETE, ID_STICK_ON, ID_STICK_APPLY, ID_STRIKE_2D, ID_STRIKE_VR, ID_STRIKE_APPLY,
     ID_SCOPE_VIEW, ID_SCOPE_DIGITAL, ID_SCOPE_OFF, ID_SCOPE_APPLY,
     ID_LIGHT_ON, ID_LIGHT_APPLY,
     ID_SIGHT_APPLY,
@@ -301,10 +301,11 @@ constexpr int kLeft=24,kRight=332,kApplyX=656,kRowHeight=78,kTop=46,kWidth=760;
 constexpr int kRows=10;  // the longer tab's rows: Extra VR settings
 
 HWND g_stUpdate,g_btUpdate,g_stMode,g_rbVr,g_rbFlat,g_stSize,g_rbLow,g_rbNormal,g_rbHigh,g_rbCustom,g_edSize,
-     g_stHd,g_pbHd,g_btHdMake,g_btHdDelete,g_cbHdUse,g_stCrew,g_pbCrew,g_btCrewMake,g_btCrewDelete,g_stHand,g_cbRight,g_cbLeft,g_stLogs,g_btLogs,
+     g_stHd,g_pbHd,g_btHdMake,g_btHdDelete,g_cbHdUse,g_stCrew,g_pbCrew,g_btCrewMake,g_btCrewDelete,g_stHand,g_cbRight,g_cbLeft,g_stStick,g_cbStick,g_stStrike,g_rbStrike2D,g_rbStrikeVr,g_stLogs,g_btLogs,
      g_stCockpit,g_cbCockpit,g_stHandAim,g_cbHandAim[8],g_stHud,g_cbHud,g_rbCorner,g_rbRWrist,g_rbLWrist,g_stReticle,g_edReticle,g_stScope,g_rbScopeView,g_rbScopeDigital,g_rbScopeOff,
      g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stLight,g_cbLight,g_btLight,g_stSight,g_edSight[3],g_stReset;
 
+int g_strikeMode=0;   // [VR] AirStrikeCamera as last read
 void Colour(HWND h,COLORREF c) {
     for(auto& entry:g_colours) if(entry.first==h) { entry.second=c; InvalidateRect(h,nullptr,TRUE); return; }
     g_colours.push_back({h,c}); InvalidateRect(h,nullptr,TRUE);
@@ -592,6 +593,8 @@ void LoadAll() {
     ShowCrew();
     const bool left=IniOn(ini,"LeftHanded","LeftHanded",false);
     Say(g_stHand,left?L"Now: Left hand":L"Now: Right hand");
+    const bool stick=IniOn(ini,"VR","RightStickButtons",true);
+    Say(g_stStick,stick?L"Now: On":L"Now: Off"); SetCheck(g_cbStick,stick);
     Pick({g_cbRight,g_cbLeft},left?g_cbLeft:g_cbRight);
 
     const bool cockpit=IniOn(ini,"VR","VehicleCockpit",true);
@@ -627,10 +630,14 @@ void LoadAll() {
     }
     const bool recoil=IniOn(ini,"VR","RecoilKick",true);
     Say(g_stRecoil,recoil?L"Now: On":L"Now: Off"); SetCheck(g_cbRecoil,recoil);
-    const auto buzz=IniValue(ini,"VR","ShotBuzz","0.5");
+    const auto buzz=IniValue(ini,"VR","ShotBuzz","1");
     Say(g_stBuzz,L"Now: "+Wide(buzz)); SetWindowTextW(g_edBuzz,Wide(buzz).c_str());
     const bool mirror=IniOn(ini,"Render","DesktopMirror",true);
     Say(g_stMirror,mirror?L"Now: On":L"Now: Off"); SetCheck(g_cbMirror,mirror);
+    // 0 the flat screen; 1 in VR; 2 (by hand in the INI) in VR with a level horizon.
+    g_strikeMode=std::atoi(IniValue(ini,"VR","AirStrikeCamera","0").c_str());
+    Say(g_stStrike,g_strikeMode>0?L"Now: VR (lower FPS)":L"Now: 2D (light)");
+    Pick({g_rbStrike2D,g_rbStrikeVr},g_strikeMode>0?g_rbStrikeVr:g_rbStrike2D);
     int scope=std::atoi(IniValue(ini,"VR","ScopeMode","1").c_str());
     if(scope<0 || scope>2) scope=1;
     Say(g_stScope,scope==1?L"Now: Native (sharp)":scope==2?L"Now: Digital (no FPS cost)":L"Now: Off (the whole view zooms)");
@@ -646,6 +653,19 @@ bool Save(HWND status,const std::vector<Setting>& settings) {
     LoadAll();
     return true;
 }
+// The in-game "VR setting" menu's two layouts (the VR DLL writes them into
+// Mods\UI while it runs, each beside a .edf6vr marker; src/vr_menu.h). Without
+// the DLL the game would still show the item, with nothing behind it, so
+// Normal mode takes them out; the DLL writes them again when it next runs.
+// A file without the marker is another mod's and stays.
+void RemoveVrMenuFiles() {
+    for(const wchar_t* name:{L"LYT_PAUSEMENU.SGO",L"LYT_EDF6VR_SETTING.SGO"}) {
+        const std::wstring path=g_root+L"\\Mods\\UI\\"+name,marker=path+L".edf6vr";
+        if(!Exists(marker)) continue;
+        DeleteFileW(path.c_str());
+        DeleteFileW(marker.c_str());
+    }
+}
 void ApplyMode() {
     if(GameRunning()) { Say(g_stMode,L"Close the game first.",true); return; }
     const std::wstring enabled=g_plugins+L"\\EDF6VR.dll",disabled=enabled+L".disabled";
@@ -658,6 +678,7 @@ void ApplyMode() {
         ok=ok && MoveFileW(enabled.c_str(),disabled.c_str())!=0;
     }
     if(!ok) { Say(g_stMode,L"Could not switch. Is the game still running?",true); return; }
+    if(!Exists(enabled)) RemoveVrMenuFiles();
     LoadAll();
 }
 void ApplySize() {
@@ -890,6 +911,10 @@ void Build() {
     g_rbScopeOff=Radio(L"Off",ID_SCOPE_OFF,kRight+160,60);
     Button(L"Apply",ID_SCOPE_APPLY); EndRow();
 
+    g_stStrike=BeginRow(L"Air-strike camera",L"The Air Raider's view from above for a strike.\n2D: a flat screen, light. VR: around you, lower FPS.\n空爆カメラ（2D表示は軽い／VR表示はFPS低下）");
+    g_rbStrike2D=Radio(L"2D",ID_STRIKE_2D,kRight,60); g_rbStrikeVr=Radio(L"VR",ID_STRIKE_VR,kRight+64,60);
+    Button(L"Apply",ID_STRIKE_APPLY); EndRow();
+
     g_stHd=BeginRow(L"HD textures",L"Makes walls, weapons and enemies 2x sharper.\nTakes about 1 hour and 40 GB of disk.\n高画質化（約1時間・空き容量40GB）",2,226);
     g_pbHd=Part(PROGRESS_CLASSW,L"",0,kRight,g_y+44,226,14);
     g_btHdMake=Button(L"Make",ID_HD_MAKE,kApplyX-88,80); g_btHdDelete=Button(L"Delete",ID_HD_DELETE);
@@ -903,6 +928,9 @@ void Build() {
     g_stHand=BeginRow(L"Gun hand",L"The hand that holds and fires the gun.\nRanger, Wing Diver, Air Raider. Not Fencer.\n銃を持つ手（フェンサー・乗り物は除く）");
     g_cbRight=Check(L"Right",ID_HAND_RIGHT,kRight,70,false); g_cbLeft=Check(L"Left",ID_HAND_LEFT,kRight+74,70,false);
     Button(L"Apply",ID_HAND_APPLY); EndRow();
+
+    g_stStick=BeginRow(L"Stick up / down buttons",L"On foot, the turning stick pushed up is Y" L"\nand pushed down is L3 (the stick click)." L"\n旋回スティックの上=Y、下=L3（徒歩時）");
+    g_cbStick=Check(L"On",ID_STICK_ON,kRight,60,true); Button(L"Apply",ID_STICK_APPLY); EndRow();
 
     g_stLogs=BeginRow(L"Problem report",L"Puts the logs into one zip for a bug report.\nSaved in the game folder, next to this program.\n報告用zip。このexeと同じフォルダに出ます",2,300);
     g_btLogs=Button(L"Make zip",ID_LOGS); EndRow();
@@ -937,7 +965,7 @@ void Build() {
     g_stRecoil=BeginRow(L"Recoil",L"The gun kicks back in your hand\nwhen you shoot.\n撃つと銃が反動で動きます");
     g_cbRecoil=Check(L"On",ID_RECOIL_ON,kRight,60,true); Button(L"Apply",ID_RECOIL_APPLY); EndRow();
 
-    g_stBuzz=BeginRow(L"Shot vibration",L"How much the controller shakes when you shoot.\n0 = off, 0.5 = normal, 1 = strong\n射撃時の振動の強さ（0でオフ）");
+    g_stBuzz=BeginRow(L"Shot vibration",L"How much the controller shakes when you shoot.\n0 = off, 0.5 = weak, 1 = normal\n射撃時の振動の強さ（0でオフ）");
     g_edBuzz=Edit(kRight,60); Button(L"Apply",ID_BUZZ_APPLY); EndRow();
 
     g_stMirror=BeginRow(L"Desktop mirror",L"Also shows the game on your monitor in VR.\nGood for recording and streaming.\nVR中もモニターに映します（配信向け）");
@@ -969,6 +997,7 @@ void OnCommand(int id) {
     case ID_CREW_DELETE: DeleteCrew(); break;
     case ID_HAND_RIGHT: case ID_HAND_LEFT: Pick({g_cbRight,g_cbLeft},GetDlgItem(g_window,id)); break;
     case ID_HAND_APPLY: Save(g_stHand,{{"LeftHanded","LeftHanded",Checked(g_cbLeft)?"1":"0"}}); break;
+    case ID_STICK_APPLY: Save(g_stStick,{{"VR","RightStickButtons",Checked(g_cbStick)?"1":"0"}}); break;
     case ID_LOGS: StartZip(); break;
     case ID_COCKPIT_APPLY: Save(g_stCockpit,{{"VR","VehicleCockpit",Checked(g_cbCockpit)?"1":"0"}}); break;
     case ID_HANDAIM_APPLY: {
@@ -999,6 +1028,10 @@ void OnCommand(int id) {
     case ID_MIRROR_APPLY: Save(g_stMirror,{{"Render","DesktopMirror",Checked(g_cbMirror)?"1":"0"}}); break;
     case ID_SCOPE_VIEW: case ID_SCOPE_DIGITAL: case ID_SCOPE_OFF:
         Pick({g_rbScopeView,g_rbScopeDigital,g_rbScopeOff},GetDlgItem(g_window,id)); break;
+    case ID_STRIKE_2D: case ID_STRIKE_VR:
+        Pick({g_rbStrike2D,g_rbStrikeVr},GetDlgItem(g_window,id)); break;
+    case ID_STRIKE_APPLY:   // a level-horizon 2 set by hand stays 2 while VR stays chosen
+        Save(g_stStrike,{{"VR","AirStrikeCamera",Checked(g_rbStrikeVr)?(g_strikeMode==2?"2":"1"):"0"}}); break;
     case ID_SCOPE_APPLY:
         Save(g_stScope,{{"VR","ScopeMode",Checked(g_rbScopeView)?"1":Checked(g_rbScopeDigital)?"2":"0"}}); break;
     case ID_LIGHT_APPLY: Save(g_stLight,{{"VR","LightEnemyEffects",Checked(g_cbLight)?"1":"0"}}); break;   // made or undone by LoadAll

@@ -1,5 +1,29 @@
-﻿EDF6VR 3.1.12
+﻿EDF6VR 3.2.0
 =============================
+
+CHANGES IN 3.2.0
+New:
+- The Start (pause) menu has "VR setting": change VR settings without leaving
+  the game. They apply at once. It covers scope zoom, air-strike camera, stick
+  up / down buttons, recoil, shot vibration, aim mark size, compact HUD,
+  desktop mirror, sight line thickness and vehicle hand aim. The menu is in
+  Japanese when the game is in Japanese, and in English otherwise.
+- Air Raider: the air-strike camera can be shown in VR. Choose it under
+  "Air-strike camera" in EDF6 VR setting.exe: 2D (a flat screen, light; the
+  default) or VR (the frame rate drops).
+- EDF6 VR setting.exe has "Stick up / down buttons": it turns the right
+  stick's up (Y) and down (L3) on foot on or off.
+Changes:
+- The right stick's up (Y) and down (L3) now only answer a push close to
+  straight up or straight down, so turning no longer presses them by mistake.
+- Air Raider: the three-panel screen of the laser guide weapons now shows one
+  large zoom picture, not the same picture three times.
+Fixes:
+- Missions 1 and 116: the tutorial could not go on in VR unless VR was turned
+  off with F11. This is fixed.
+- Fencer: the aim line of the heavy and scatter mortars pointed down after a
+  shot. This is fixed.
+- Still bundles EDF6MultiSlot 1.6.9.
 
 CHANGES IN 3.1.12
 Changes:
@@ -665,10 +689,17 @@ Main tab:
                   to 2.0. See RAISING THE RESOLUTION.
   Scope zoom      Native (sharp, costs frame rate while zoomed), Digital (no
                   cost, blurrier) or Off (the old whole-view zoom).
+  Air-strike camera
+                  2D or VR: how the Air Raider's view from above is shown
+                  while aiming a strike. 2D is a flat screen and light. VR
+                  puts the view around you; the frame rate drops.
   HD textures     Make or Delete the 2x textures. See HD TEXTURES.
   Crew figures    Make or Delete the other rider of the Proteus two-seater
                   (about 2 minutes). Making HD textures makes them too.
   Gun hand        Right or Left. See LEFT-HANDED MODE.
+  Stick up / down buttons
+                  On or Off. On foot, the turning stick pushed up is the Y
+                  button and pushed down is L3. Off: up and down do nothing.
   Problem report  Puts the logs and settings into one zip, saved in the game
                   folder next to EDF6 VR setting.exe as
                   EDF6VR-logs-<date>-<time>.zip. Send it with a bug report.
@@ -682,6 +713,18 @@ Extra VR settings tab:
   picture size and gun hand, and keeps the old file as
   Mods/Plugins/EDF6VR.ini.reset-<date>-<time>.bak.
   The window scrolls when it is taller than your screen.
+In the game:
+  The Start (pause) menu has "VR setting". It changes, without leaving the
+  game, the settings that can change while you play: scope zoom, air-strike
+  camera, stick up / down buttons, recoil, shot vibration, aim mark size,
+  compact HUD, desktop mirror, sight line thickness and vehicle hand aim.
+  Press a row to step to its next value; it applies at once and is saved.
+  The menu is in Japanese when the game is in Japanese, and in English
+  otherwise. Everything else stays in EDF6 VR setting.exe.
+  The mod keeps two files for this menu in Mods\UI (LYT_PAUSEMENU.SGO and
+  LYT_EDF6VR_SETTING.SGO, each with a .edf6vr file beside it). Normal mode
+  removes them. To go without the menu: PauseMenuVrSetting=0 under [VR] in
+  Mods/Plugins/EDF6VR.ini.
 The first time you open it after downloading the ZIP with a web browser,
 Windows may say "Windows protected your PC": choose More info, then Run
 anyway. The program is not signed. Everything it changes can also be set by
@@ -761,6 +804,8 @@ Left stick                               Move (HMD horizontal heading basis)
 Right stick left/right                   Turn
 Right stick UP, on foot                  Y button
 Right stick DOWN, on foot                L3 / left-stick click
+                                         (both can be switched off: "Stick up /
+                                         down buttons" in EDF6 VR setting.exe)
 Left / right trigger                     LT / RT
 Left / right grip                        LB / RB (Index squeeze or Touch grip)
 Right A                                  A (normally confirm)
@@ -920,8 +965,6 @@ KNOWN LIMITATIONS / TROUBLESHOOTING
 - Ranger dual wield: holstering during Volcano-style automatic volleys has not
   been fully verified. Special-weapon compatibility is not guaranteed for every
   weapon. The native burst-cancellation policy is retained.
-- For the tutorial at the start of a new game, use a normal game controller.
-  Press F11 to temporarily turn VR off; press it again to return to VR.
 - Prominence: its special upward firing animation can hide the weapon; rare
   temporary panel view transitions also occur. This is an accepted known issue.
 - Wing Diver: the shot origin may lag slightly during fast flight.
@@ -953,7 +996,8 @@ leaves thirty gigabytes in Mods that nothing reads any more. Harmless, but it is
 a lot of disk to lose track of.
 
 Then remove EDF6VR.dll / EDF6VR.dll.disabled, EDF6VR.ini, EDF6 VR setting.exe,
-Update_EDF6VR.bat, Mods\HDTexture,
+Update_EDF6VR.bat, Mods\HDTexture, the VR setting menu's files in Mods\UI
+(LYT_PAUSEMENU.SGO, LYT_EDF6VR_SETTING.SGO and the two .edf6vr files),
 README_EDF6VR.txt and the EDF6VR support folder installed by this archive.
 EDF6MultiSlot: remove Mods\Plugins\EDF6MultiSlot.dll, EDF6MultiSlot.ini and
 README_EDF6MultiSlot.txt; it removes its own Mods\UI file when disabled first
