@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.1'
+VERSION = '3.2.6'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
@@ -142,6 +142,12 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.6 (the user, after the hardware runs: "確認しました。v005上げて簡潔なアプデ内容を書いて 文章確認するからアップはまだ
+# しないで"; +0.0.5): Fencer fixes only -- blades and the katana strike along the hand's aim (the muzzle carried onto
+# the swing as it is at the weapon's tick, src/fencer_mount.h FencerSwingRows; the wave and the thrust turned onto
+# the aim, src/shot_origin.h), a left weapon's lunge goes the left hand's way (the root motion taken at 5758C0,
+# FencerTurnLunge), the Arm Hound on the forearm and the armsFlip / armsLowerFlip weapons turned over in the left
+# hand (FencerMountLay). No setting, no INI key.
 # 3.2.1 (the user, after an A/B on hardware: "見た目は問題なかったので規定オンにして まとめてv001上げてアップして ・修正 FPSを
 # １０～２０％向上。試験機能。見た目に問題が出た場合、VR設定でオフにできます。"): [Render] OcclusionLeafOnly on by default
 # (src/umbra_properties.h), its row in the in-game menu and in the settings exe; the THREADCPU report (src/thread_cpu.h).
@@ -151,8 +157,8 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = 'B2E10C69ECEEA48E3418C1699A1307FA89BC268A5C7958AA84A8C84451E7412E'
-VERIFIED_SETTINGS_SHA = '735AA31C67250DE2EE5B0ED6F9DD9F47D3E90F388B12C8C29AA9E68D5DEA7A2D'
+VERIFIED_VR_SHA = '6C2366DCFE840FA84641A4474A0A0EEA32E54FC8C30CBA44B66B1620DB13EDE4'
+VERIFIED_SETTINGS_SHA = '30D85505A1E6ADE7708308328C10B8B0A4974B15E3D6DB7FA98A5434B331BC52'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

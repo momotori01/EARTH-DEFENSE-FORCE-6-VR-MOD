@@ -1,7 +1,7 @@
 // Included by plugin.cpp inside its private namespace. Execution-breakpoint
 // dispatch is by RVA, never by DR slot: FireSites can safely be reordered.
 struct FreshShot {
-    DWORD64 bullet=0,weapon=0;
+    DWORD64 bullet=0,weapon=0,ctorCaller=0;
     ULONGLONG born=0;
     DWORD thread=0;
     bool initialized=false,wrote=false,nativePose=false;
@@ -27,6 +27,36 @@ ShotInitReport g_shotReport{};
 // misses by the same at both; a turned shot misses by more at 50 m.
 struct FencerShotAim { unsigned shots=0,shoulder=0,builtAlong[3]{},byCarry=0; double origin[3]{},miss15[2]{},miss50[2]{},turn[2]{},residual=0,residualMax=0; };
 FencerShotAim g_fencerShotAim[2]{};
+
+// A Fencer blade's or katana's attack that flies: the slash wave
+// (SlashWaveBullet01 and its Exp, whose constructors call the bullet's at
+// 27A01D) and the katana's thrust (EfsBullet, at 23926A), told by where the
+// bullet's constructor returns to. A hammer's shock (ShockWaveBullet01/02) is
+// not one: it is struck where the head lands.
+constexpr DWORD64 kSlashWaveBorn=0x27A022,kEfsBulletBorn=0x23926F;
+bool ShotFliesFromSwing(DWORD64 ctorCaller) noexcept {
+    const auto base=reinterpret_cast<DWORD64>(g_image.base);
+    return ctorCaller==base+kSlashWaveBorn || ctorCaller==base+kEfsBulletBorn;
+}
+// The way the weapon's first muzzle fires now: its rows (weapon+0x1D0 -> +0x50)
+// by the weapon's fire vector (+0x350), which is what 691560 spreads a shot
+// about. One direction for every bullet of a fan.
+bool ShotMuzzleDirection(void* weapon,float out[3]) noexcept {
+    __try {
+        auto* bytes=static_cast<unsigned char*>(weapon);
+        if(!edf6vr::Readable(bytes,0x360)) return false;
+        auto* entries=*reinterpret_cast<unsigned char**>(bytes+0x1D0);
+        if(!entries || !edf6vr::Readable(entries,0x90)) return false;
+        const auto* m=reinterpret_cast<const float(*)[4]>(entries+0x50);
+        const auto* local=reinterpret_cast<const float*>(bytes+0x350);
+        float length=0;
+        for(int j=0;j<3;++j) { out[j]=local[0]*m[0][j]+local[1]*m[1][j]+local[2]*m[2][j]; length+=out[j]*out[j]; }
+        length=std::sqrt(length);
+        if(!std::isfinite(length) || length<1e-4f) return false;
+        for(int j=0;j<3;++j) out[j]/=length;
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 
 DWORD64 OwnedShotWeapon(DWORD64 value,bool parameter) noexcept {
     __try {
@@ -77,6 +107,7 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                    || weapon==reinterpret_cast<DWORD64>(g_fencerWeapons[1].load(std::memory_order_relaxed)))) shot.nativePose=false;
             if(g_dualTick.active && weapon==reinterpret_cast<DWORD64>(g_dualTick.weapon) && !g_dualTick.command.fencer) shot.nativePose=true;
             const auto caller=context->Rsp?*reinterpret_cast<DWORD64*>(context->Rsp):0;
+            shot.ctorCaller=caller;
             AcquireSRWLockExclusive(&g_shotReportLock);
             ++g_shotReport.constructed;
             g_shotReport.ctorCaller=caller;
@@ -159,8 +190,9 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                         // hand had moved (FENCERSHOTAIM, aligned R=0, 2026-09-27).
                         const bool swing=edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_Swing@@");
                         const bool spear=swing && FencerKnownSpear(reinterpret_cast<void*>(shot->weapon));
-                        const bool sweeps=(swing && !spear)
-                            || edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_ImpactHammer@@")
+                        const bool swung=(swing && !spear)
+                            || edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_ImpactHammer@@");
+                        const bool sweeps=swung
                             || edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_Shield@@");
                         // 45 degrees was the angle the two aims were opened to,
                         // not a broken matrix: a hand weapon is posed on the
@@ -272,6 +304,33 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                             const float c=std::clamp(shoulderFrom[0]*want[0]+shoulderFrom[1]*want[1]+shoulderFrom[2]*want[2],-1.0f,1.0f);
                             if(c>kAlignFloor && (c>=0.99999f || FencerTurnRows(rows,shoulderFrom,want)))
                                 g_fencerShoulderFromCone[hand].fetch_add(1,std::memory_order_relaxed);
+                        } else if(swung && g_fencerHandWeapons && !g_fencerShoulder[hand]) {
+                            // A blade, a hammer or the katana in a hand: its muzzle was
+                            // carried onto the hand's frame as the game swings it
+                            // (fencer_dual.h FencerCarryTransforms, on the swing as it
+                            // was then), so the slash is already the game's own, on this
+                            // hand's aim. The left's was turned from the nearest of the
+                            // three aims below as well, a second time (2026-10-12: the
+                            // katana's thrust left 4 to 38 degrees off its reticle).
+                            g_fencerSwingShots[hand].fetch_add(1,std::memory_order_relaxed);
+                            // What flies -- a blade's wave, the katana's thrust -- goes
+                            // where this hand aims, as a spear's thrust does ("ブレードや刀系
+                            // がおかしいです"): turned from the way the muzzle fires, so the
+                            // eight thrusts of a fan stay a fan about the aim. The muzzle
+                            // is the swing's, and where a swing has got to when the game
+                            // fires is the animation's business, not the player's aim. A
+                            // hammer's shock is left where the head lands.
+                            if(ShotFliesFromSwing(shot->ctorCaller)) {
+                                float muzzle[3]{};
+                                const float* along=from;
+                                if(ShotMuzzleDirection(reinterpret_cast<void*>(shot->weapon),muzzle)
+                                   && muzzle[0]*from[0]+muzzle[1]*from[1]+muzzle[2]*from[2]>0.7f) along=muzzle;
+                                const float c=std::clamp(along[0]*want[0]+along[1]*want[1]+along[2]*want[2],-1.0f,1.0f);
+                                if(c>kAlignFloor && (c>=0.99999f || FencerTurnRows(rows,along,want))) {
+                                    g_fencerSlashTurns[hand].fetch_add(1,std::memory_order_relaxed);
+                                    g_fencerSlashTurnDeg[hand].store(std::acos(c)*57.29578f,std::memory_order_relaxed);
+                                }
+                            }
                         } else if(isLeft && shadow.valid) {
                             // Shoulder weapons keep their lob: the arc from the
                             // direction it was built along to the shadow's, and

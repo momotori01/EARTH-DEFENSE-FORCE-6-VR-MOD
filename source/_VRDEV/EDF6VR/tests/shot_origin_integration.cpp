@@ -136,6 +136,77 @@ int wmain(int argc,wchar_t** argv) {
         c.Rsi=reinterpret_cast<DWORD64>(bullet); CHECK(HandleShotSite(0x22EA4A,&c));
     }
     CHECK(g_shotReport.fencer[0].count==2);
+    // A blade's wave and the katana's thrust, told by where the bullet's
+    // constructor returns to: in the real image each is the instruction after
+    // a call of that constructor (22E9C0).
+    {
+        const auto base=reinterpret_cast<DWORD64>(g_image.base);
+        for(const DWORD64 born:{kSlashWaveBorn,kEfsBulletBorn}) {
+            const auto* at=g_image.base+born-5;
+            CHECK(at[0]==0xE8 && g_image.base+born+*reinterpret_cast<const std::int32_t*>(at+1)==g_image.base+0x22E9C0);
+            CHECK(ShotFliesFromSwing(base+born));
+        }
+        CHECK(!ShotFliesFromSwing(base+0x28A9CA) && !ShotFliesFromSwing(0));
+        // The way a muzzle fires: its rows by the weapon's fire vector.
+        float along[3]{};
+        const edf6vr::Matrix turned={{{0,0,-1,0},{0,1,0,0},{1,0,0,0},{10,20,30,1}}};   // its Z along +X
+        Field<edf6vr::Matrix>(transform,0x50)=turned;
+        Field<float>(weapon,0x350)=0; Field<float>(weapon,0x354)=0; Field<float>(weapon,0x358)=1;
+        CHECK(ShotMuzzleDirection(weapon,along) && std::fabs(along[0]-1)<1e-6f && std::fabs(along[1])<1e-6f && std::fabs(along[2])<1e-6f);
+        Field<float>(weapon,0x358)=0; CHECK(!ShotMuzzleDirection(weapon,along));   // no fire vector, no direction
+        Field<float>(weapon,0x358)=1;
+        Field<void*>(weapon,0x1D0)=nullptr; CHECK(!ShotMuzzleDirection(weapon,along));
+        Field<void*>(weapon,0x1D0)=transform; Field<edf6vr::Matrix>(transform,0x50)=matrix;
+    }
+    // The soldier's root motion (fencer_dual.h, FencerTurnLunge): the call the
+    // hook takes, the routine it calls, and the body's rows the step is laid
+    // along, as they are in the real image.
+    {
+        const auto* base=g_image.base;
+        CHECK(base[0x5758C0]==0xE8 && base+0x5758C5+*reinterpret_cast<const std::int32_t*>(base+0x5758C1)==base+0x1166ED0);
+        static const unsigned char take[]={0x8B,0xC2,0x48,0x69,0xD0,0x60,0x01,0x00,0x00,0x48,0x8B,0x41,0x60};   // layer * 0x160 of [controller+0x60]
+        CHECK(!std::memcmp(base+0x1166ED0,take,sizeof(take)));
+        static const unsigned char controller[]={0x48,0x8D,0x8E,0x90,0x0B,0x00,0x00};      // lea rcx,[rsi+0xB90]
+        CHECK(!std::memcmp(base+0x5758A9,controller,sizeof(controller)));
+        static const unsigned char rowX[]={0x0F,0x59,0x96,0xE0,0x05,0x00,0x00};            // mulps xmm2,[rsi+0x5E0]
+        static const unsigned char rowY[]={0x0F,0x10,0x9E,0xF0,0x05,0x00,0x00};            // movups xmm3,[rsi+0x5F0]
+        static const unsigned char rowZ[]={0x0F,0x10,0x8E,0x00,0x06,0x00,0x00};            // movups xmm1,[rsi+0x600]
+        CHECK(!std::memcmp(base+0x5758CF,rowX,sizeof(rowX)) && !std::memcmp(base+0x5758E0,rowY,sizeof(rowY)) && !std::memcmp(base+0x5758F4,rowZ,sizeof(rowZ)));
+        // The hook on a made-up soldier: only the player's Fencer, only while the
+        // left weapon's arm animation plays, and then the step leaves along the left aim.
+        alignas(16) unsigned char body[0x1500]{},leftWeapon[0x1000]{},rightWeapon[0x1000]{};
+        const float rows[3][4]={{1,0,0,0},{0,1,0,0},{0,0,1,0}};      // facing yaw 0
+        std::memcpy(body+0x5E0,rows,sizeof(rows));
+        struct Taken { float step[4]; };
+        static Taken given{};
+        g_soldierMoveOriginal=[](void*,unsigned,float* step,float*) { std::memcpy(step,given.step,16); };
+        const bool vrWas=g_vrEnabled; g_vrEnabled=true;
+        g_fencerActive.store(true); g_fencerWeapons[0].store(leftWeapon); g_fencerWeapons[1].store(rightWeapon);
+        g_fencerShadow=FencerShadow{}; g_fencerShadow.smooth[1]=1.5707963f; g_fencerShadow.valid=true;   // the left hand aims 90 degrees to the left
+        g_fencerMoveOwner=edf6vr::FencerMoveOwner{}; g_fencerLungeYawValid=false;
+        float step[4]{},turn[4]{};
+        given={{0,0,0.5f,1}};
+        // Not the player's soldier: untouched.
+        g_fencerMoveSoldier.store(nullptr); leftWeapon[0xEC4]=1;
+        HookSoldierMove(body+0xB90,0,step,turn); CHECK(step[2]==0.5f && step[0]==0);
+        // The player's, the left weapon swinging: along the left aim (+X is the world's yaw 90).
+        g_fencerMoveSoldier.store(body);
+        HookSoldierMove(body+0xB90,0,step,turn);
+        CHECK(std::fabs(step[0]-0.5f)<1e-5f && std::fabs(step[2])<1e-5f && step[3]==1);
+        // The left aim moves on during the lunge: the lunge keeps its line.
+        g_fencerShadow.smooth[1]=0.3f;
+        HookSoldierMove(body+0xB90,0,step,turn); CHECK(std::fabs(step[0]-0.5f)<1e-5f && std::fabs(step[2])<1e-5f);
+        // The charge (layer 1) is no attack; the right weapon's own lunge is the game's.
+        *reinterpret_cast<int*>(leftWeapon+0xEC8)=1;
+        HookSoldierMove(body+0xB90,0,step,turn); CHECK(step[2]==0.5f && step[0]==0);
+        *reinterpret_cast<int*>(leftWeapon+0xEC8)=0; leftWeapon[0xEC4]=0; rightWeapon[0xEC4]=1;
+        HookSoldierMove(body+0xB90,0,step,turn); CHECK(step[2]==0.5f && step[0]==0);
+        // Standing still: nothing to turn.
+        rightWeapon[0xEC4]=0; leftWeapon[0xEC4]=1; given={{0,0,0,1}};
+        HookSoldierMove(body+0xB90,0,step,turn); CHECK(step[0]==0 && step[2]==0);
+        g_fencerActive.store(false); g_fencerWeapons[0].store(nullptr); g_fencerWeapons[1].store(nullptr);
+        g_fencerMoveSoldier.store(nullptr); g_fencerShadow=FencerShadow{}; g_vrEnabled=vrWas;
+    }
     FreeLibrary(mapped);
     printf("Shot initialization: %d failures; owner identity, ABI, lifetime, single application, no late writes\n",failures);
     return failures?1:0;

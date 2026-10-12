@@ -14,7 +14,7 @@
 // weapon and a shot. And it says nothing about how a thing feels to hold, which
 // stays a question only a person can answer.
 //
-// The file is read at most once a second and every key is optional; whatever is
+// The file is read at most ten times a second and every key is optional; whatever is
 // missing is left exactly as the runtime gave it, so a file with one line in it
 // changes one thing. Metres and degrees, in the runtime's own reference space.
 //

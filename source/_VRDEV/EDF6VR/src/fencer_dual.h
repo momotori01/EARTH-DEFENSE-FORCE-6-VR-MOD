@@ -560,6 +560,7 @@ std::atomic<unsigned long long> g_fencerOwnMatrixCarries[2]{}; // weapon+0x150 c
 std::atomic<unsigned long long> g_fencerGuideUpdates{0},g_fencerGuideCarries{0}; // attachment OnUpdate hooks: calls, carries
 std::atomic<bool> g_fencerActive{false};
 std::atomic<void*> g_fencerWeapons[2]{};  // 0 left (hooked), 1 right (native, recorded for the log)
+std::atomic<void*> g_fencerMoveSoldier{nullptr};   // the player's Fencer while his two hands aim apart (FencerTurnLunge)
 std::atomic<void*> g_fencerLeftModel{nullptr};
 // The game's look per tick for the right hand's pad, read off the log as a
 // dead zone of about 0.3 and a straight line to about 0.032 rad/tick at full
@@ -679,6 +680,7 @@ bool FencerHandUp(const edf6vr::Quat& grip,const float want[3],float up[3]) noex
 }
 void ResetFencerDual() noexcept {
     g_fencerActive.store(false);
+    g_fencerMoveSoldier.store(nullptr);
     for(auto& w:g_fencerWeapons) w.store(nullptr);
     g_fencerLeftModel.store(nullptr); g_fencerRightModel.store(nullptr);
     g_fencerRoll[0]=g_fencerRoll[1]=0; g_fencerRollTarget[0]=g_fencerRollTarget[1]=0;
@@ -1091,6 +1093,27 @@ bool FencerIsSpear(void* weapon,void* model,const void* nodes,unsigned count) no
     }
     return spear;
 }
+// How the game hangs this hand weapon on the arm (fencer_mount.h), told by its
+// model's root node and asked each time, like the spear.
+FencerAnswers g_fencerMountAnswers;
+edf6vr::FencerMount FencerHandMount(void* weapon,void* model,const void* nodes,unsigned count) noexcept {
+    int was=0;
+    const bool known=g_fencerMountAnswers.Find(weapon,was);
+    if(!FencerModelTrusted(model,nodes,count)) return known && was>0?static_cast<edf6vr::FencerMount>(was):edf6vr::FencerMount::Arms;
+    auto mount=edf6vr::FencerMount::Arms;
+    for(const auto* name:edf6vr::kFencerForearmModels)
+        if(FencerModelHasNode(model,nodes,count,name)) { mount=edf6vr::FencerMount::Forearm; break; }
+    if(mount==edf6vr::FencerMount::Arms)
+        for(const auto* name:edf6vr::kFencerFlipModels)
+            if(FencerModelHasNode(model,nodes,count,name)) { mount=edf6vr::FencerMount::Flip; break; }
+    if(!known || was!=static_cast<int>(mount)) {
+        g_fencerMountAnswers.Put(weapon,static_cast<int>(mount));
+        if(mount!=edf6vr::FencerMount::Arms)
+            Log("FENCERMOUNT weapon %p rides %s: turned half round in the left hand",weapon,
+                mount==edf6vr::FencerMount::Forearm?"the forearm (armsLowerFlip)":"armsFlip");
+    }
+    return mount;
+}
 // The answer FencerIsSpear last gave for a weapon; false for one it has not
 // seen. For the shot hook, which has no model or node table to hand and runs on
 // the game's thread while the update refreshes the answer.
@@ -1135,9 +1158,16 @@ struct FencerSwing {
     float refAt[3]{},ref[3][3]{};
     float weight=0,shift[3]{};      // the fraction shown; the hand's travel since the start (aim frame)
     float maxTurn=0,maxShift=0;
+    unsigned long long carriesAtStart=0,shotsAtStart=0,turnsAtStart=0;
 };
 FencerSwing g_fencerSwing[2]{};
 std::atomic<unsigned long long> g_fencerSwings[2]{};
+// Weapon ticks whose muzzle was carried onto the swing as it was then
+// (FencerCarryTransforms), and the slashes that left along it (shot_origin.h).
+std::atomic<unsigned long long> g_fencerSwingCarries[2]{},g_fencerSwingShots[2]{};
+// Of those, the waves and thrusts turned onto the hand's aim, and how far the last one was off it.
+std::atomic<unsigned long long> g_fencerSlashTurns[2]{};
+std::atomic<float> g_fencerSlashTurnDeg[2]{};
 // The weapon's arm animation request (weapon+0xEC4) and its layer (+0xEC8: 0 the
 // swing, 1 the hammer's charge).
 bool FencerArmAnimation(void* weapon,int& layer) noexcept {
@@ -1209,8 +1239,12 @@ const char* FencerSwingName(int kind) noexcept {
     return kind==kFencerSwingHammer?"hammer":kind==kFencerSwingKatana?"katana":"none";
 }
 void FencerSwingEnd(unsigned hand,FencerSwing& s,double now) noexcept {
-    Log("FENCERSWING hand=%c kind=%s length=%.2fs turn max=%.0fdeg hand travel max=%.2fm",
-        hand==1?'R':'L',FencerSwingName(s.kind),now-s.since,s.maxTurn,s.maxShift);
+    Log("FENCERSWING hand=%c kind=%s length=%.2fs turn max=%.0fdeg hand travel max=%.2fm muzzle on the live swing=%llu ticks, slashes=%llu, turned onto the aim=%llu (the last from %.1fdeg off)",
+        hand==1?'R':'L',FencerSwingName(s.kind),now-s.since,s.maxTurn,s.maxShift,
+        g_fencerSwingCarries[hand].load(std::memory_order_relaxed)-s.carriesAtStart,
+        g_fencerSwingShots[hand].load(std::memory_order_relaxed)-s.shotsAtStart,
+        g_fencerSlashTurns[hand].load(std::memory_order_relaxed)-s.turnsAtStart,
+        g_fencerSlashTurnDeg[hand].load(std::memory_order_relaxed));
     s.active=false;
 }
 // The watch for one hand (above). c: the weapon's rows in the game's aim frame;
@@ -1231,6 +1265,9 @@ float FencerSwingUpdate(unsigned hand,void* weapon,int kind,const float c[3][3],
     const bool swinging=FencerArmAnimation(weapon,layer) && layer!=1;
     if(swinging && !s.active) {
         s.active=true; s.since=now; s.maxTurn=0; s.maxShift=0;
+        s.carriesAtStart=g_fencerSwingCarries[hand].load(std::memory_order_relaxed);
+        s.shotsAtStart=g_fencerSwingShots[hand].load(std::memory_order_relaxed);
+        s.turnsAtStart=g_fencerSlashTurns[hand].load(std::memory_order_relaxed);
         std::memcpy(s.ref,c,sizeof(s.ref)); s.haveAt=at!=nullptr;
         for(int k=0;k<3;++k) { s.refAt[k]=at?at[k]:0; s.shift[k]=0; }
         g_fencerSwings[hand].fetch_add(1,std::memory_order_relaxed);
@@ -1475,6 +1512,8 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         }
     }
     const bool shoulder=hand<2 && g_fencerShoulder[hand];
+    auto mount=edf6vr::FencerMount::Arms;
+    bool swingFrames=false; float swingFrom[3][3]{},swingTo[3][3]{};
     if(g_fencerHandWeapons && !shoulder) {
         float at[3]{},q[4]{};
         if(!edf6vr::g_openxr.GripPose(static_cast<int>(hand),at,q) || !edf6vr::NormalizedQuat({q[0],q[1],q[2],q[3]})) return false;
@@ -1535,6 +1574,10 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         if(melee && hand<2) {
             float posed[3][3]{};
             FencerAimFrameYaw(nativeDir,nativeYaw,posed);
+            // For the weapon's tick, which carries the muzzle onto the swing as
+            // it is then (FencerCarryTransforms).
+            swingFrames=true;
+            std::memcpy(swingFrom,posed,sizeof(swingFrom)); std::memcpy(swingTo,frame,sizeof(swingTo));
             float c[3][3]{},fromBody[3]{};
             for(int i=0;i<3;++i) for(int k=0;k<3;++k)
                 c[i][k]=turned[i][0]*posed[k][0]+turned[i][1]*posed[k][1]+turned[i][2]*posed[k][2];
@@ -1601,10 +1644,16 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
             else if(swingWeight<=0.0f || !FencerBlendRows(laid,swingRows,swingWeight,length,rows)) std::memcpy(rows,laid,sizeof(rows));
             for(int i=0;i<3;++i) { for(int j=0;j<3;++j) turned[i][j]=rows[i][j]; turned[i][3]=0; }
         } else if(g_fencerDirectAim) {
+            // The way round the game hangs it on this arm (fencer_mount.h): the
+            // Jackhammers, the twin spear and the Arm Hound are turned half
+            // round in the left hand, and the Arm Hound sits on the forearm.
+            mount=hand<2?FencerHandMount(wp.weapon,wp.model,wp.nodes,static_cast<unsigned>(wp.nodeCount)):edf6vr::FencerMount::Arms;
+            float lay[3][3]{};
+            edf6vr::FencerMountLay(mount,hand,lay);
             for(int k=0;k<3;++k) {
                 const float size=std::sqrt(turned[k][0]*turned[k][0]+turned[k][1]*turned[k][1]+turned[k][2]*turned[k][2]);
                 const float scale=std::isfinite(size) && size>1e-3f?size:1.0f;
-                for(int j=0;j<3;++j) turned[k][j]=frame[k][j]*scale;
+                for(int j=0;j<3;++j) turned[k][j]=(lay[k][0]*frame[0][j]+lay[k][1]*frame[1][j]+lay[k][2]*frame[2][j])*scale;
             }
             if(hand<2) g_fencerDirectAimed[hand].fetch_add(1,std::memory_order_relaxed);
         } else if(!FencerRebuildRows(turned,posedFrom,frame,turned,hand<2?&g_fencerAxisMap[hand]:nullptr,wp.weapon,hand)) return false;
@@ -1613,6 +1662,13 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         // goes along -frame[0].
         const float side=hand==1?-g_fencerHandOutward:g_fencerHandOutward;
         for(unsigned j=0;j<3;++j) palm[j]=grip[j]+frame[2][j]*g_fencerHandAhead+upright[0][j]*side+upright[1][j]*g_fencerHandUp+swingShift[j];
+        // The Arm Hound's root is not in the hand: the palm goes into the box's
+        // open end, where the game's arm has it.
+        if(mount==edf6vr::FencerMount::Forearm) {
+            const float rows[3][3]={{turned[0][0],turned[0][1],turned[0][2]},{turned[1][0],turned[1][1],turned[1][2]},{turned[2][0],turned[2][1],turned[2][2]}};
+            float boxRoot[3]{};
+            if(edf6vr::FencerMountRoot(rows,palm,edf6vr::kFencerForearmPalm,boxRoot)) for(int j=0;j<3;++j) palm[j]=boxRoot[j];
+        }
     } else if(shoulder || g_fencerHandWeapons) {
         // The mount's pose relative to the game's aim, put on the wanted frame
         // through the shield's dash smoothing. Laying it straight on the aim
@@ -1654,6 +1710,8 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         out.step[j]=g_soldierStep[j];
     }
     for(unsigned k=0;k<3;++k) for(unsigned j=0;j<3;++j) out.handAxes[k][j]=root.m[k][j];
+    out.swingFrames=swingFrames;
+    std::memcpy(out.swingFrom,swingFrom,sizeof(swingFrom)); std::memcpy(out.swingTo,swingTo,sizeof(swingTo));
     if(FencerBladeSheath(wp.weapon,wp.model,wp.nodes,static_cast<unsigned>(wp.nodeCount))>0) FencerSheathCommand(hand,out);
     out.headRoom[0]=g_lastHeadXr.x; out.headRoom[1]=g_lastHeadXr.y; out.headRoom[2]=g_lastHeadXr.z;
     out.yawOffset=g_yawOffset;
@@ -1846,6 +1904,7 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
     AcquireSRWLockExclusive(&g_fencerHandLock); g_fencerLeft=leftCommand; g_fencerRight=rightCommand; ReleaseSRWLockExclusive(&g_fencerHandLock);
     g_fencerWeapons[0].store(left.weapon); g_fencerWeapons[1].store(right.weapon);
     g_fencerLeftModel.store(left.model); g_fencerRightModel.store(right.model);
+    g_fencerMoveSoldier.store(soldier);
     g_fencerActive.store(true);
     g_fencerBuilt.fetch_add(1,std::memory_order_relaxed);
     const auto tick=GetTickCount64();
@@ -2031,11 +2090,25 @@ void FencerCarryTransforms(void* weapon,const WeaponHoldCommand& command,unsigne
     __try {
         if(!edf6vr::Readable(command.weaponNodes,0xF0) || !edf6vr::Readable(bytes,0x1E0,true)) return;
         const auto root=*reinterpret_cast<const edf6vr::Matrix*>(static_cast<const unsigned char*>(command.weaponNodes)+0xB0);
-        FencerNoteCarryTurn(hand,weapon,root,command);
-        FencerCarryOne(hand,0,bytes+0x150,root,command,g_fencerOwnMatrixCarries[hand]);
+        // A blade, a hammer or the katana in its swing: onto the swing as it is
+        // now, not as it was when the command was made (fencer_mount.h,
+        // FencerSwingRows). Its slash leaves along this muzzle.
+        WeaponHoldCommand swung{};
+        const WeaponHoldCommand* carry=&command;
+        int layer=-1;
+        float now[3][3]{},rows[3][3]{};
+        if(command.swingFrames && FencerArmAnimation(weapon,layer) && layer!=1 && FencerUnitRows(root,now)
+           && edf6vr::FencerSwingRows(now,command.swingFrom,command.swingTo,rows)) {
+            swung=command;
+            std::memcpy(swung.hand.axes,rows,sizeof(rows));
+            carry=&swung;
+            g_fencerSwingCarries[hand].fetch_add(1,std::memory_order_relaxed);
+        }
+        FencerNoteCarryTurn(hand,weapon,root,*carry);
+        FencerCarryOne(hand,0,bytes+0x150,root,*carry,g_fencerOwnMatrixCarries[hand]);
         if(sourceOnly) return;
         auto* t=*reinterpret_cast<unsigned char**>(bytes+0x1D0);
-        if(edf6vr::Readable(t,0xD0,true)) { FencerCarryOne(hand,1,t+0x50,root,command,g_fencerTickWrites[hand]); FencerCarryOne(hand,2,t+0x90,root,command,g_fencerTransformTurns); }
+        if(edf6vr::Readable(t,0xD0,true)) { FencerCarryOne(hand,1,t+0x50,root,*carry,g_fencerTickWrites[hand]); FencerCarryOne(hand,2,t+0x90,root,*carry,g_fencerTransformTurns); }
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
 }
 // The attachments' OnUpdate (WeaponAttachment_GrenadeGuide vtable 17E2498 and
@@ -2307,6 +2380,74 @@ void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept {
         }
         g_dualTick=previous;
     }
+}
+// A left weapon's lunge goes the left hand's way (fencer_mount.h, FencerTurnMove).
+//
+// The soldier's update asks the animation for this tick's root motion at
+// 5758C0 (1166ED0: controller = soldier+0xB90, the move layer soldier+0x1420,
+// the step and a turn out) and lays the step along the body's rows at
+// soldier+0x5E0, a sixtieth of a second's worth of speed. For the player's
+// Fencer, while the left weapon's arm animation (weapon+0xEC4, not the charge)
+// is the one moving him, the step is turned from the way the body faces onto
+// the left aim's yaw as it was when that animation began: a lunge goes
+// straight, as the game's own does once it has locked the turn. The right
+// weapon's is the game's, untouched; with both playing, edf6vr::FencerMoveOwner
+// says whose it is.
+using SoldierMoveFn=void(__fastcall*)(void*,unsigned,float*,float*);
+SoldierMoveFn g_soldierMoveOriginal=nullptr;
+edf6vr::FencerMoveOwner g_fencerMoveOwner{};       // the game's update thread only, as the two below
+float g_fencerLungeYaw=0; bool g_fencerLungeYawValid=false;
+double g_fencerLungeRun=0;                         // metres turned since the left's animation began
+std::atomic<unsigned long long> g_fencerLunges{0},g_fencerLungeSteps{0};
+std::atomic<float> g_fencerLungeTurnDeg{0},g_fencerLungeMetres{0};
+void FencerTurnLunge(void* controller,float* step) noexcept {
+    auto* soldier=static_cast<unsigned char*>(controller)-0xB90;
+    if(soldier!=g_fencerMoveSoldier.load(std::memory_order_relaxed)) return;
+    if(!g_fencerActive.load(std::memory_order_relaxed) || !g_fencerHandWeapons || !g_vrEnabled || !step) return;
+    bool playing[2]{},melee[2]{};
+    for(int h=0;h<2;++h) {
+        void* weapon=g_fencerWeapons[h].load(std::memory_order_relaxed);
+        int layer=-1;
+        playing[h]=FencerArmAnimation(weapon,layer) && layer!=1;
+        // The classes whose every attack clip moves the body (fencer_mount.h).
+        melee[h]=playing[h] && (edf6vr::HasType(g_image,weapon,".?AVWeapon_Swing@@") || edf6vr::HasType(g_image,weapon,".?AVWeapon_ImpactHammer@@")
+                                || edf6vr::HasType(g_image,weapon,".?AVWeapon_PileBanker@@") || edf6vr::HasType(g_image,weapon,".?AVWeapon_Shield@@"));
+    }
+    bool leftBegan=false;
+    const int owner=g_fencerMoveOwner.Update(playing,melee,leftBegan);
+    if(leftBegan) {
+        FencerShadow shadow{};
+        AcquireSRWLockShared(&g_fencerShadowLock); shadow=g_fencerShadow; ReleaseSRWLockShared(&g_fencerShadowLock);
+        g_fencerLungeYawValid=shadow.valid && std::isfinite(shadow.smooth[1]);
+        g_fencerLungeYaw=shadow.smooth[1];
+        g_fencerLungeRun=0;
+    }
+    if(owner!=0 || !g_fencerLungeYawValid) return;
+    __try {
+        const float size=std::sqrt(step[0]*step[0]+step[1]*step[1]+step[2]*step[2]);
+        if(!std::isfinite(size) || size<1e-6f || size>5.0f || !edf6vr::Readable(soldier+0x5E0,0x30)) return;
+        float body[3][3]{};
+        for(int k=0;k<3;++k) std::memcpy(body[k],soldier+0x5E0+k*0x10,12);
+        float turned[3]={step[0],step[1],step[2]};
+        const float facing=std::atan2(body[2][0],body[2][2]);
+        if(!edf6vr::FencerTurnMove(body,g_fencerLungeYaw,turned)) return;
+        for(int k=0;k<3;++k) step[k]=turned[k];
+        if(g_fencerLungeRun==0) g_fencerLunges.fetch_add(1,std::memory_order_relaxed);
+        g_fencerLungeRun+=size;
+        g_fencerLungeMetres.store(static_cast<float>(g_fencerLungeRun),std::memory_order_relaxed);
+        g_fencerLungeSteps.fetch_add(1,std::memory_order_relaxed);
+        g_fencerLungeTurnDeg.store(std::remainder(g_fencerLungeYaw-facing,6.28318530718f)*57.29578f,std::memory_order_relaxed);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+}
+void __fastcall HookSoldierMove(void* controller,unsigned layer,float* step,float* turn) {
+    g_soldierMoveOriginal(controller,layer,step,turn);
+    FencerTurnLunge(controller,step);
+}
+bool InstallFencerLunge() noexcept {
+    if(!g_image.base) return false;
+    g_soldierMoveOriginal=reinterpret_cast<SoldierMoveFn>(g_image.base+0x1166ED0);
+    bool changed=false;
+    return edf6vr::RedirectCall(g_image.base+0x5758C0,g_image.base+0x1166ED0,reinterpret_cast<void*>(&HookSoldierMove),changed);
 }
 // The second reticle: the Fencer's left aim (its target, as the right reticle
 // shows the soldier's) or the Ranger's left gun.

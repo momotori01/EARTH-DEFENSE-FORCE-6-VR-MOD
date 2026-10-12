@@ -23,6 +23,7 @@
 #include "hand_draw.h"
 #include "weapon_kick.h"
 #include "fencer_aim.h"
+#include "fencer_mount.h"
 #include "ini_defaults.h"
 #include "hand_rest_data.inc"
 #include "aim_hud.h"
@@ -493,6 +494,12 @@ struct WeaponHoldCommand {
     // carries it with the weapon.
     bool sheathValid=false;
     float sheathAxes[3][3]{},sheathPos[3]{};
+    // A Fencer blade, hammer or katana (fencer_dual.h, the melee branch): the
+    // game's aim frame its swing is posed in and the hand's frame it is drawn
+    // on, so the weapon's tick can work the swing's rows out again from the
+    // root as it is then (edf6vr::FencerSwingRows, FencerCarryTransforms).
+    bool swingFrames=false;
+    float swingFrom[3][3]{},swingTo[3][3]{};
 };
 WeaponHoldCommand g_holdCommand{}; // g_lock protects the command, never a borrow.
 // Identity-only rejection for the millions of unrelated native model draws.
@@ -3739,7 +3746,8 @@ bool g_autoFired=false;
 // PadScriptAfterSeconds into the mission, to walk a menu on the virtual headset
 // (virtualvr): "start", "up", "down", "left", "right", "a", "b", "x", "y" on
 // the pad; "esc", "enter", "kup", "kdown", "kleft", "kright", "back" on the
-// keyboard; or a number, a wait of that many tenths of a second; separated by
+// keyboard; "vroff" (as F11: the window then shows the game's own third-person
+// picture); or a number, a wait of that many tenths of a second; separated by
 // commas. It runs in one go on the watchdog's thread, so the auto-deploy does
 // not press Enter into a paused game in the middle of it. Empty: nothing.
 // The auto-deploy goes through the title with Enter, so the game takes the
@@ -3797,7 +3805,13 @@ void RunPadScript() noexcept {
             unsigned short button=0; WORD key=0;
             for(const auto& n:names) if(!std::strcmp(n.name,token)) button=n.button;
             for(const auto& k:keys) if(!std::strcmp(k.name,token)) key=k.key;
-            if(key) {
+            if(!std::strcmp(token,"vroff")) {
+                // What F11 asks for, without the key: F11 is only read while
+                // the game's window is in front, and in a virtual run it is not.
+                if(g_vrEnabled) g_vrStopRequested.store(true);
+                Log("PADSCRIPT VR off asked");
+                Sleep(450);
+            } else if(key) {
                 PressKey(key,120);
                 Log("PADSCRIPT key %s",token);
                 Sleep(450);
@@ -7519,7 +7533,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.1 cockpit loading, with EDF6MultiSlot 1.6.9. Occlusion queries for Umbra's leaves only (OcclusionLeafOnly, on by default); per-thread CPU report.");
+    Log("EDF6VR 3.2.6 cockpit loading, with EDF6MultiSlot 1.6.9. Fencer: blades and the katana strike along the hand's aim; a left weapon's lunge goes the left hand's way; the Arm Hound on the forearm, the left hand's Arm Hound, Jackhammer and twin spear turned over.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7824,6 +7838,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("CLASSEFFECT hooks ready=%d booster=2CBDF0 marker=6A3D0E/6A3DFB/684271",InstallClassEffects());
         Log("FENCERGUIDE hooks ready=%d guide=17E2498/688C30 laser=17E2458/6890A0",InstallFencerAttachmentHooks());
         Log("FENCERGUARD block test 5957C0 on the shield's own aim: %u/4 sites",InstallFencerGuardHooks());
+        Log("FENCERLUNGE root motion taken at 5758C0 (1166ED0): %s",InstallFencerLunge()?"installed":"REFUSED (call differs)");
         changed=false;
         const bool probeOK=InstallGuideProbe(changed);
         Log("GUIDEPROBE hooks ready=%d changed=%d prepare guide=17E2498+18/688680 laser=17E2458+18/688970 (sight widths: laser x%.2f guide x%.2f)",probeOK,changed,g_laserWidthScale,g_guideWidthScale);

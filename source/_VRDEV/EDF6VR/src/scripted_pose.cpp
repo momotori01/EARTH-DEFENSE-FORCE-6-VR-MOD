@@ -117,12 +117,14 @@ void Take(const char* key,const char* value,Script& into) noexcept {
     }
 }
 
-// Re-read at most once a second, and only when the file has actually changed,
-// so a script can be rewritten mid-session without restarting anything.
+// Re-read at most ten times a second, and only when the file has actually
+// changed, so a script can be rewritten mid-session without restarting
+// anything. It was once a second, which made the shortest press of a trigger a
+// second long -- and a held trigger charges a Fencer's blade (2026-10-12).
 void Refresh() noexcept {
     if(!g_armed) return;
     const auto now=GetTickCount64();
-    if(now-g_read<1000) return;
+    if(now-g_read<100) return;
     g_read=now;
     WIN32_FILE_ATTRIBUTE_DATA about{};
     if(!GetFileAttributesExW(g_path,GetFileExInfoStandard,&about)) return;
