@@ -133,6 +133,7 @@ void __fastcall ProbeUmbraResolve(void* camera) {
 }
 void __fastcall ProbeUmbraProcess(void* camera,void* commander) {
     NoteRenderThread();
+    thread_cpu::Ran(1);
     const bool enabled=g_nativeStereoProbeActive.load(std::memory_order_relaxed);
     const int nativeEye=edf6vr::NativeWorldRenderEye();
     if(ClaimUmbraSample(camera,2)) {
@@ -152,6 +153,7 @@ void __fastcall ProbeUmbraProcess(void* camera,void* commander) {
         const auto step=sequence.fetch_add(1,std::memory_order_relaxed);
         if(step<8) Log("UMBRAORDER step=%u eye=%d mode=%u",step,nativeEye,mode);
     }
+    if(mode==0 && nativeEye>=0 && nativeEye<2) NoteUmbraMainCamera(camera);
     if(mode==0 && g_earlyXrFrame) edf6vr::g_openxr.PrepareSceneFrame();
     if(mode==0 && nativeEye<=0) edf6vr::BeginNativeRenderPose();
     // Match the baseline once; the right eye uses this exact HMD sample.

@@ -1,5 +1,12 @@
-﻿EDF6VR 3.2.0
+﻿EDF6VR 3.2.1
 =============================
+
+CHANGES IN 3.2.1
+Fixes:
+- FPS improved by 10-20%. This is a trial feature: if a visual problem
+  appears, turn off "Faster visibility checks" in VR setting (the Start menu
+  in the game, or EDF6 VR setting.exe).
+- Still bundles EDF6MultiSlot 1.6.9.
 
 CHANGES IN 3.2.0
 New:
@@ -709,15 +716,17 @@ Extra VR settings tab:
   HUD (on or off, and where: the corner of your view or the right or left
   wrist), aim mark size, sight line thickness (laser sights, throw guides and
   vehicle aim lines, each on its own), recoil, shot vibration, desktop mirror,
-  lighter Kurul shots, and Reset: every VR setting back to how it came. Reset keeps your
+  lighter Kurul shots, faster visibility checks (a trial feature: 10-20% higher
+  FPS; turn it off if things flicker or go missing), and Reset: every VR setting back to how it came. Reset keeps your
   picture size and gun hand, and keeps the old file as
   Mods/Plugins/EDF6VR.ini.reset-<date>-<time>.bak.
   The window scrolls when it is taller than your screen.
 In the game:
   The Start (pause) menu has "VR setting". It changes, without leaving the
   game, the settings that can change while you play: scope zoom, air-strike
-  camera, stick up / down buttons, recoil, shot vibration, aim mark size,
-  compact HUD, desktop mirror, sight line thickness and vehicle hand aim.
+  camera, faster visibility checks, stick up / down buttons, recoil, shot
+  vibration, aim mark size, compact HUD, desktop mirror, sight line thickness
+  and vehicle hand aim.
   Press a row to step to its next value; it applies at once and is saved.
   The menu is in Japanese when the game is in Japanese, and in English
   otherwise. Everything else stays in EDF6 VR setting.exe.

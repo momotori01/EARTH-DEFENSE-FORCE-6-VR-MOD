@@ -96,12 +96,13 @@ Everything outside the game is set in **EDF6 VR setting.exe**, next to `EDF6.exe
 | **Recoil** / **Shot vibration** | The gun kicking back when you shoot; how strongly the controller shakes (0 = off, 1 = strong). |
 | **Desktop mirror** | Also shows the game on your monitor, for recording and streaming. |
 | **Lighter Kurul shots** | The Kurul's shotgun pellets without their swelling ring. On by default. It is made from your game files when the window opens. |
+| **Faster visibility checks** | A trial feature: 10-20% higher FPS. On by default; turn it off if things flicker or go missing. |
 | **Reset settings** | Every VR setting back to how it came. Your picture size and gun hand stay; the old file is kept as a backup. |
 
 Everything it changes can also be set by hand in `Mods/Plugins/EDF6VR.ini`.
 
 ### In the game
-The Start (pause) menu has **VR setting**. It changes, without leaving the game, the settings that can change while you play: scope zoom, air-strike camera, stick up / down buttons, recoil, shot vibration, aim mark size, compact HUD, desktop mirror, sight line thickness and vehicle hand aim. Press a row to step to its next value; it applies at once and is saved. The menu is in Japanese when the game is in Japanese, and in English otherwise.
+The Start (pause) menu has **VR setting**. It changes, without leaving the game, the settings that can change while you play: scope zoom, air-strike camera, faster visibility checks, stick up / down buttons, recoil, shot vibration, aim mark size, compact HUD, desktop mirror, sight line thickness and vehicle hand aim. Press a row to step to its next value; it applies at once and is saved. The menu is in Japanese when the game is in Japanese, and in English otherwise.
 
 ### HD textures
 **Make** reads your own game files and writes sharper copies into the `Mods` folder; the game files themselves are not changed.

@@ -44,6 +44,7 @@ NOTE = ('For other settings, use EDF6 VR setting.exe.',
 ROWS = [
     ('Scope zoom', 'スコープのズーム'),
     ('Air-strike camera', '空爆カメラ'),
+    ('Faster visibility checks (trial)', '描画判定の高速化（試験）'),
     ('Stick up / down buttons', '右スティック上下をYとL3に置き換え'),
     ('Recoil', '射撃の反動（見た目のみ影響）'),
     ('Shot vibration', '射撃時の振動'),

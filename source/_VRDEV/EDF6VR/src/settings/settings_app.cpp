@@ -48,7 +48,7 @@ enum : int {
     ID_SIZE_LOW, ID_SIZE_NORMAL, ID_SIZE_HIGH, ID_SIZE_CUSTOM, ID_SIZE_VALUE, ID_SIZE_APPLY,
     ID_HD_MAKE, ID_HD_DELETE, ID_HAND_RIGHT, ID_HAND_LEFT, ID_HAND_APPLY, ID_LOGS,
     ID_COCKPIT_ON, ID_COCKPIT_APPLY, ID_HUD_ON, ID_HUD_CORNER, ID_HUD_RWRIST, ID_HUD_LWRIST, ID_HUD_APPLY,
-    ID_RETICLE_APPLY, ID_RECOIL_ON, ID_RECOIL_APPLY, ID_BUZZ_APPLY, ID_MIRROR_ON, ID_MIRROR_APPLY, ID_RESET,
+    ID_RETICLE_APPLY, ID_RECOIL_ON, ID_RECOIL_APPLY, ID_BUZZ_APPLY, ID_MIRROR_ON, ID_MIRROR_APPLY, ID_RESET, ID_FAST_ON, ID_FAST_APPLY,
     ID_HANDAIM_APPLY, ID_HANDAIM_ON,   // ID_HANDAIM_ON..+7: one box a kind of seat (kHandAimKinds)
     ID_HANDAIM_ON_END=ID_HANDAIM_ON+8,
     ID_CREW_MAKE, ID_CREW_DELETE, ID_STICK_ON, ID_STICK_APPLY, ID_STRIKE_2D, ID_STRIKE_VR, ID_STRIKE_APPLY,
@@ -298,12 +298,12 @@ std::vector<std::pair<HWND,COLORREF>> g_colours;
 std::vector<HWND> g_actions;               // disabled while the game runs or a task works
 int g_y=0,g_tab=0,g_shownTab=0;
 constexpr int kLeft=24,kRight=332,kApplyX=656,kRowHeight=78,kTop=46,kWidth=760;
-constexpr int kRows=10;  // the longer tab's rows: Extra VR settings
+constexpr int kRows=11;  // the longer tab's rows: Extra VR settings
 
 HWND g_stUpdate,g_btUpdate,g_stMode,g_rbVr,g_rbFlat,g_stSize,g_rbLow,g_rbNormal,g_rbHigh,g_rbCustom,g_edSize,
      g_stHd,g_pbHd,g_btHdMake,g_btHdDelete,g_cbHdUse,g_stCrew,g_pbCrew,g_btCrewMake,g_btCrewDelete,g_stHand,g_cbRight,g_cbLeft,g_stStick,g_cbStick,g_stStrike,g_rbStrike2D,g_rbStrikeVr,g_stLogs,g_btLogs,
      g_stCockpit,g_cbCockpit,g_stHandAim,g_cbHandAim[8],g_stHud,g_cbHud,g_rbCorner,g_rbRWrist,g_rbLWrist,g_stReticle,g_edReticle,g_stScope,g_rbScopeView,g_rbScopeDigital,g_rbScopeOff,
-     g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stLight,g_cbLight,g_btLight,g_stSight,g_edSight[3],g_stReset;
+     g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stLight,g_cbLight,g_btLight,g_stSight,g_edSight[3],g_stReset,g_stFast,g_cbFast;
 
 int g_strikeMode=0;   // [VR] AirStrikeCamera as last read
 void Colour(HWND h,COLORREF c) {
@@ -634,6 +634,8 @@ void LoadAll() {
     Say(g_stBuzz,L"Now: "+Wide(buzz)); SetWindowTextW(g_edBuzz,Wide(buzz).c_str());
     const bool mirror=IniOn(ini,"Render","DesktopMirror",true);
     Say(g_stMirror,mirror?L"Now: On":L"Now: Off"); SetCheck(g_cbMirror,mirror);
+    const bool fast=IniOn(ini,"Render","OcclusionLeafOnly",true);
+    Say(g_stFast,fast?L"Now: On":L"Now: Off (the game's own way)"); SetCheck(g_cbFast,fast);
     // 0 the flat screen; 1 in VR; 2 (by hand in the INI) in VR with a level horizon.
     g_strikeMode=std::atoi(IniValue(ini,"VR","AirStrikeCamera","0").c_str());
     Say(g_stStrike,g_strikeMode>0?L"Now: VR (lower FPS)":L"Now: 2D (light)");
@@ -974,6 +976,9 @@ void Build() {
     g_stLight=BeginRow(L"Lighter Kurul shots",L"Kurul shotgun pellets without the ring\nthat swells around each one: smoother fights.\nクルールの散弾を軽く（弾のリングを省略）");
     g_cbLight=Check(L"On",ID_LIGHT_ON,kRight,60,true); g_btLight=Button(L"Apply",ID_LIGHT_APPLY); EndRow();
 
+    g_stFast=BeginRow(L"Faster visibility checks",L"A trial feature: 10-20% higher FPS.\nTurn it off if things flicker or go missing.\n試験機能：FPS向上（見た目に問題が出たらオフ）");
+    g_cbFast=Check(L"On",ID_FAST_ON,kRight,60,true); Button(L"Apply",ID_FAST_APPLY); EndRow();
+
     g_stReset=BeginRow(L"Reset settings",L"Puts all VR settings back to how they came.\nYour picture size and gun hand stay.\n設定を初期値に戻す（解像度と利き手は維持）",2,300);
     Button(L"Reset",ID_RESET); EndRow();
 
@@ -1026,6 +1031,7 @@ void OnCommand(int id) {
     case ID_RECOIL_APPLY: Save(g_stRecoil,{{"VR","RecoilKick",Checked(g_cbRecoil)?"1":"0"}}); break;
     case ID_BUZZ_APPLY: ApplyNumber(g_stBuzz,g_edBuzz,"VR","ShotBuzz",0.0,1.0); break;
     case ID_MIRROR_APPLY: Save(g_stMirror,{{"Render","DesktopMirror",Checked(g_cbMirror)?"1":"0"}}); break;
+    case ID_FAST_APPLY: Save(g_stFast,{{"Render","OcclusionLeafOnly",Checked(g_cbFast)?"1":"0"}}); break;
     case ID_SCOPE_VIEW: case ID_SCOPE_DIGITAL: case ID_SCOPE_OFF:
         Pick({g_rbScopeView,g_rbScopeDigital,g_rbScopeOff},GetDlgItem(g_window,id)); break;
     case ID_STRIKE_2D: case ID_STRIKE_VR:

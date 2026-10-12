@@ -135,7 +135,7 @@ int main() {
         // The Start menu's "VR setting" rows (vr_menu_items.h): the state the INI
         // is in, the state a press goes to, and what the row shows.
         using namespace edf6vr;
-        static_assert(kVrMenuItemCount==19,"the rows of the VR setting menu");
+        static_assert(kVrMenuItemCount==20,"the rows of the VR setting menu");
         const auto& scope=kVrMenuItems[0];
         CHECK(VrMenuStateOf(scope,L"1",nullptr)==0 && VrMenuNext(scope,0,L"1")==1);                          // Native -> Digital
         CHECK(!wcscmp(scope.states[VrMenuNext(scope,VrMenuStateOf(scope,L"2",nullptr),L"2")].value,L"0"));   // Digital -> Off
@@ -145,16 +145,18 @@ int main() {
         CHECK(VrMenuStateOf(strike,L"0",nullptr)==0 && VrMenuNext(strike,0,L"0")==1 && VrMenuNext(strike,1,L"1")==0);
         CHECK(VrMenuStateOf(strike,L"2",nullptr)==2 && VrMenuNext(strike,2,L"2")==0);   // the hand-set level horizon: shown, a press leaves it
         CHECK(!wcscmp(VrMenuLabel(strike,0,true,L"0"),L"2D表示（軽い）") && !wcscmp(VrMenuLabel(strike,1,false,L"1"),L"VR (lower FPS)"));
-        const auto& stick=kVrMenuItems[2];
+        const auto& leaf=kVrMenuItems[2];
+        CHECK(!wcscmp(leaf.key,L"OcclusionLeafOnly") && VrMenuStateOf(leaf,leaf.fallback,nullptr)==0);   // on unless switched off
+        const auto& stick=kVrMenuItems[3];
         CHECK(VrMenuStateOf(stick,L"1",nullptr)==0 && VrMenuStateOf(stick,L"0",nullptr)==1 && VrMenuStateOf(stick,L"7",nullptr)==0);
         CHECK(!wcscmp(stick.states[VrMenuNext(stick,0,L"1")].value,L"0") && !wcscmp(stick.states[VrMenuNext(stick,1,L"0")].value,L"1"));
-        const auto& buzz=kVrMenuItems[4];
+        const auto& buzz=kVrMenuItems[5];
         CHECK(VrMenuStateOf(buzz,L"0.5",nullptr)==2 && VrMenuStateOf(buzz,L"0.5000",nullptr)==2 && VrMenuStateOf(buzz,L"0.6",nullptr)==-1);
         CHECK(VrMenuNext(buzz,-1,L"0.6")==3);                                   // between two steps: the step above
         CHECK(VrMenuNext(buzz,4,L"1")==0);                                      // and round again
         CHECK(VrMenuNext(buzz,-1,L"3")==0 && VrMenuNext(buzz,-1,L"abc")==0);
         CHECK(!wcscmp(VrMenuLabel(buzz,-1,false,L"0.6"),L"0.6") && !wcscmp(VrMenuLabel(buzz,1,true,L"0.25"),L"0.25"));
-        const auto& hud=kVrMenuItems[6];
+        const auto& hud=kVrMenuItems[7];
         CHECK(hud.key2 && !wcscmp(hud.key2,L"UiClusterPlace"));
         CHECK(VrMenuStateOf(hud,L"1",L"0")==0 && VrMenuStateOf(hud,L"1",L"2")==2 && VrMenuStateOf(hud,L"0",L"2")==3);
         CHECK(VrMenuNext(hud,2,L"1")==3 && hud.states[3].value2==nullptr);      // off leaves the place as it is

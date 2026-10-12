@@ -92,6 +92,7 @@ thread_local unsigned g_umbraViewMode=3;
 // [Render] ShareEyeShadows (default 1): the right eye's shadow viewports keep
 // the left eye's maps (native_renderer_probe.h). Object batches and clears left out.
 bool g_shareShadows=false;
+std::atomic<bool> g_occlusionLeafOnly{true};    // [Render] OcclusionLeafOnly (umbra_properties.h); on by default since 3.2.1
 thread_local bool g_shadowRepeat=false;
 std::atomic<unsigned long long> g_shadowSkippedBatches{0},g_shadowSkippedClears{0};
 bool g_nativeWorldRequested=true;
@@ -1563,6 +1564,7 @@ void WatchTheBone(void* soldier) noexcept;
 void ArmWatchFromWatchdog() noexcept;
 void DriveTheGame() noexcept;
 void VrMenuSyncFiles() noexcept;   // vr_menu.h
+void ReportThreadCpu() noexcept;   // thread_cpu.h
 void KeepAimCentre(void* soldier) noexcept;
 bool ArmFireSites() noexcept;
 void ReportFireSites() noexcept;
@@ -1949,6 +1951,7 @@ void GamepadWatch() noexcept {
         WatchForHang();
         DriveTheGame();
         VrMenuSyncFiles();
+        ReportThreadCpu();
         ArmWatchFromWatchdog();
         ArmFireSites();
         ReportWatch();
@@ -2536,6 +2539,8 @@ void UpdateScopeView() noexcept {
 #include "chat_probe.h"
 #include "menu_board.h"
 #include "vr_menu.h"
+#include "thread_cpu.h"
+void ReportThreadCpu() noexcept { thread_cpu::Report(edf6vr::PresentThread(),g_frameLoopThread); }
 #include "action_weapon_visibility.h"
 #include "tracked_weapon_bounds.h"
 #include "audio_health.h"
@@ -4318,6 +4323,9 @@ void ReloadTunables() noexcept {
     ReadHandSettings();
     g_vehicleLevelView=GetPrivateProfileIntW(L"VR",L"VehicleLevelView",1,g_iniPath)!=0;
     g_airStrikeCamera=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"VR",L"AirStrikeCamera",0,g_iniPath)),0,2);
+    // Umbra's leaf-only occlusion queries for the main views (umbra_properties.h): taken by the next
+    // Camera::setProperties the game makes, so it can be switched in one scene.
+    g_occlusionLeafOnly=GetPrivateProfileIntW(L"Render",L"OcclusionLeafOnly",1,g_iniPath)!=0;
     // The Start menu's "VR setting" changes these two in play (vr_menu.h): a
     // flag each, with nothing built on it at start-up.
     g_stickButtons=GetPrivateProfileIntW(L"VR",L"RightStickButtons",1,g_iniPath)!=0;
@@ -5189,6 +5197,7 @@ void AfterUpdate(void* camera) noexcept {
             }
         }
         g_frameLoopThread=GetCurrentThreadId();
+        thread_cpu::Ran(0);
         PollInput();
         // One eye per presented frame; the other keeps its previous image. Keyed
         // on the present counter so a second camera updating in the same frame
@@ -7321,6 +7330,7 @@ bool DrawHeldWeapon(void* model,void* renderContext,int pass,void* view) {
 // Identify the native renderer's parents before attempting world stereo reentry.
 // No repeated rendering, frame waits, or writes to the model/context/view.
 #include "render_sampler.h"
+#include "umbra_properties.h"
 #include "native_renderer_probe.h"
 #include "world_distance.h"
 bool AllowNativeWorldPair() noexcept {return edf6vr::NativeWorldLive() && edf6vr::NativeWorldCompositeAvailable();}
@@ -7509,7 +7519,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.0 cockpit loading, with EDF6MultiSlot 1.6.9. VR setting in the Start menu; air-strike camera 2D/VR; stick up/down switch and cone; turn event for the guided missions.");
+    Log("EDF6VR 3.2.1 cockpit loading, with EDF6MultiSlot 1.6.9. Occlusion queries for Umbra's leaves only (OcclusionLeafOnly, on by default); per-thread CPU report.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7617,6 +7627,10 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     g_shotProbe=GetPrivateProfileIntW(L"VR",L"ShotOriginProbe",0,g_iniPath)!=0;
     g_autoDeploy=GetPrivateProfileIntW(L"Test",L"AutoDeploy",0,g_iniPath)!=0;
     g_sampleRenderThread=GetPrivateProfileIntW(L"Test",L"SampleRenderThread",0,g_iniPath)!=0;
+    g_sampleLoopThread=GetPrivateProfileIntW(L"Test",L"SampleRenderThread",0,g_iniPath)==2;   // 2: the game loop's thread instead
+    g_umbraExtraProperties=static_cast<int>(GetPrivateProfileIntW(L"Test",L"UmbraCameraProperties",0,g_iniPath))&0xF4;   // the bits the game leaves off
+    g_umbraExtraRight=static_cast<int>(GetPrivateProfileIntW(L"Test",L"UmbraCameraPropertiesRight",0,g_iniPath))&0xF4;
+    g_occlusionLeafOnly=GetPrivateProfileIntW(L"Render",L"OcclusionLeafOnly",1,g_iniPath)!=0;
     viewport_gpu::enabled=GetPrivateProfileIntW(L"Test",L"ViewportGpu",0,g_iniPath)!=0;
     g_shareShadows=GetPrivateProfileIntW(L"Render",L"ShareEyeShadows",1,g_iniPath)!=0;
     g_fireOriginLift=ReadFloat(g_iniPath,L"FireOriginLift",0.0f,-5.0f,5.0f,L"VR");
@@ -7885,6 +7899,12 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             const bool imports=InstallUmbraProbe();
             const bool commands=imports && InstallUmbraCommandProbe();
             const bool queries=commands && InstallQueryResultProbe();
+            {
+                const bool properties=commands && InstallUmbraProperties();
+                Log("UMBRAPROPS [Render] OcclusionLeafOnly=%d ([Test] UmbraCameraProperties=0x%X, UmbraCameraPropertiesRight=0x%X) for the main views' camera: hook on Camera::setProperties %s",
+                    g_occlusionLeafOnly.load()?1:0,static_cast<unsigned>(g_umbraExtraProperties),static_cast<unsigned>(g_umbraExtraRight),properties?"installed":"NOT installed");
+                if(!properties) { g_umbraExtraProperties=g_umbraExtraRight=0; g_occlusionLeafOnly=false; }
+            }
             Log("OCCLUSION result probe=%d (QUERY_RESULTS 11E4244 -> 1631790)",queries?1:0);
             if(g_shareShadows) {
                 const bool shared=commands && InstallShadowShare();

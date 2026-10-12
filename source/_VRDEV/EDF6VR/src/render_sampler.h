@@ -12,6 +12,7 @@
 // (std::unordered_map: included at the top of plugin.cpp)
 std::atomic<DWORD> g_renderThreadId{0};
 bool g_sampleRenderThread=false;
+bool g_sampleLoopThread=false;   // [Test] SampleRenderThread=2: the game loop's thread, into loop_samples.txt
 void NoteRenderThread() noexcept {
     if(g_sampleRenderThread && !g_renderThreadId.load(std::memory_order_relaxed))
         g_renderThreadId.store(GetCurrentThreadId(),std::memory_order_relaxed);
@@ -69,10 +70,12 @@ int SampleStack(HANDLE thread,std::uint64_t (&pcs)[24]) noexcept {
     return depth;
 }
 DWORD WINAPI RenderSampler(void*) noexcept {
-    while(!g_renderThreadId.load(std::memory_order_relaxed)) Sleep(200);
-    HANDLE thread=OpenThread(THREAD_SUSPEND_RESUME|THREAD_GET_CONTEXT|THREAD_QUERY_INFORMATION,FALSE,g_renderThreadId.load());
-    if(!thread) { Log("SAMPLER could not open the render thread (%lu)",GetLastError()); return 0; }
-    Log("SAMPLER render thread %lu, 1 ms",g_renderThreadId.load());
+    const bool loopThread=g_sampleLoopThread;
+    while(!(loopThread?g_frameLoopThread:g_renderThreadId.load(std::memory_order_relaxed))) Sleep(200);
+    const DWORD target=loopThread?g_frameLoopThread:g_renderThreadId.load();
+    HANDLE thread=OpenThread(THREAD_SUSPEND_RESUME|THREAD_GET_CONTEXT|THREAD_QUERY_INFORMATION,FALSE,target);
+    if(!thread) { Log("SAMPLER could not open the %s thread (%lu)",loopThread?"game loop":"render",GetLastError()); return 0; }
+    Log("SAMPLER %s thread %lu, 1 ms",loopThread?"game loop":"render",target);
     const auto image=reinterpret_cast<std::uint64_t>(g_image.base);
     const std::uint64_t imageSize=SampleImageSize();
     std::unordered_map<std::uint64_t,unsigned> leaf,game;
@@ -80,9 +83,10 @@ DWORD WINAPI RenderSampler(void*) noexcept {
     unsigned long long samples=0;
     ULONGLONG nextDump=GetTickCount64()+15000;
     wchar_t path[MAX_PATH]{}; wcscpy_s(path,g_logPath);
-    if(auto slash=wcsrchr(path,L'\\')) { slash[1]=0; wcscat_s(path,L"render_samples.txt"); }
+    if(auto slash=wcsrchr(path,L'\\')) { slash[1]=0; wcscat_s(path,loopThread?L"loop_samples.txt":L"render_samples.txt"); }
     for(;;) {
         Sleep(1);
+        if(loopThread && !(g_soldierAt && GetTickCount64()-g_soldierAt<2000)) continue;   // the mission only
         std::uint64_t pcs[24]{};
         const int depth=SampleStack(thread,pcs);
         if(depth<0) break;
@@ -105,7 +109,7 @@ DWORD WINAPI RenderSampler(void*) noexcept {
             nextDump=GetTickCount64()+15000;
             FILE* f=nullptr;
             if(!_wfopen_s(&f,path,L"w") && f) {
-                fwprintf(f,L"%llu samples of the render thread, 1 ms apart\n\n-- where it was (function start)\n",samples);
+                fwprintf(f,L"%llu samples of this thread (render, or the game loop's with SampleRenderThread=2), 1 ms apart\n\n-- where it was (function start)\n",samples);
                 std::vector<std::pair<unsigned,std::uint64_t>> v;
                 for(auto& kv:leaf) v.push_back({kv.second,kv.first});
                 std::sort(v.rbegin(),v.rend());

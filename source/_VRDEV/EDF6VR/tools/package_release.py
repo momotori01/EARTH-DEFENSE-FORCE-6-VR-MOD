@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.0'
+VERSION = '3.2.1'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
@@ -142,14 +142,17 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.1 (the user, after an A/B on hardware: "見た目は問題なかったので規定オンにして まとめてv001上げてアップして ・修正 FPSを
+# １０～２０％向上。試験機能。見た目に問題が出た場合、VR設定でオフにできます。"): [Render] OcclusionLeafOnly on by default
+# (src/umbra_properties.h), its row in the in-game menu and in the settings exe; the THREADCPU report (src/thread_cpu.h).
 # Named 3.2.0, not 3.1.13 (the user: "v3.2で。"), with three Japanese row names of the menu reworded, the line under
 # its rows on a row's own background, and [VR] ShotBuzz 1 as the default ("射撃振動１を規定にして"); "修正したらこちらへの
 # 確認無しでアップして".
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = 'FBA614F0440F0C7A5323682161897318545AA9A6BCA154A636B5146A5ACD3957'
-VERIFIED_SETTINGS_SHA = '47EEBD39853578215ECF16474F94B109E224E6AD9BFC1E350504465F2C933047'
+VERIFIED_VR_SHA = 'B2E10C69ECEEA48E3418C1699A1307FA89BC268A5C7958AA84A8C84451E7412E'
+VERIFIED_SETTINGS_SHA = '735AA31C67250DE2EE5B0ED6F9DD9F47D3E90F388B12C8C29AA9E68D5DEA7A2D'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

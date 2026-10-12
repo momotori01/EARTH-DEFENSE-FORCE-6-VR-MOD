@@ -53,6 +53,9 @@ constexpr VrMenuItem kVrMenuItems[]={
         {L"0",nullptr,L"2D (light)",L"2D表示（軽い）"},
         {L"1",nullptr,L"VR (lower FPS)",L"VR表示（FPSが低下）"},
         {L"2",nullptr,L"VR, level horizon (lower FPS)",L"VR表示・水平固定（FPSが低下）"}}},
+    // On trial (umbra_properties.h): on unless switched off, here, in the settings program or in the INI.
+    {VrMenuKind::OnOff,L"Render",L"OcclusionLeafOnly",L"1",nullptr,nullptr,2,2,{
+        {L"1",nullptr,L"On (lighter)",L"オン（軽い）"},{L"0",nullptr,L"Off (the game's own)",L"オフ（ゲーム本来）"}}},
     EDF6VR_MENU_ONOFF(L"VR",L"RightStickButtons",L"1"),
     EDF6VR_MENU_ONOFF(L"VR",L"RecoilKick",L"1"),
     {VrMenuKind::Number,L"VR",L"ShotBuzz",L"1",nullptr,nullptr,5,5,{
