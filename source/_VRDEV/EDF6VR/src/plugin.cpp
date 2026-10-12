@@ -500,6 +500,14 @@ struct WeaponHoldCommand {
     // root as it is then (edf6vr::FencerSwingRows, FencerCarryTransforms).
     bool swingFrames=false;
     float swingFrom[3][3]{},swingTo[3][3]{};
+    // The same turn at every tick, not only in a swing: a weapon that does not
+    // lie along the hand's aim (the Arm Hound on the forearm). Its muzzle then
+    // goes along the hand's aim; its lock-on cone is lockRows below.
+    bool aimFrames=false;
+    // The frame this hand's lock-on weapon locks on along (lock_sight.h): the
+    // hand's own aim, upright -- rows right, up, forward, as the game's are.
+    bool lockFrame=false;
+    float lockRows[3][3]{};
 };
 WeaponHoldCommand g_holdCommand{}; // g_lock protects the command, never a borrow.
 // Identity-only rejection for the millions of unrelated native model draws.
@@ -2457,6 +2465,7 @@ void Settings() noexcept {
 #include "class_support.h"
 #include "ranger_dual.h"
 #include "fencer_dual.h"
+#include "lock_sight.h"
 // Which eyepiece (scope.h) a weapon model has, told by a node name; -1 none.
 // Asked of the model each time, not kept per weapon: a weapon and its model can
 // both be made again at a freed one's addresses (see FencerModelTrusted).
@@ -4351,6 +4360,7 @@ void ReloadTunables() noexcept {
     g_laserWidthScale=ReadFloat(g_iniPath,L"LaserSightWidth",.1f,.1f,2.f,L"Render");
     g_guideWidthScale=ReadFloat(g_iniPath,L"ThrowGuideWidth",.2f,.1f,2.f,L"Render");
     g_vehicleLineScale=ReadFloat(g_iniPath,L"VehicleAimLineWidth",.3f,.1f,2.f,L"Render");
+    edf6vr::SetAimHudFrameWidth(ReadFloat(g_iniPath,L"LockSightWidth",.3f,.1f,2.f,L"Render"));   // the user's choice, 2026-10-13
     edf6vr::EnableGpuSplit(GetPrivateProfileIntW(L"Diagnostics",L"GpuSplit",0,g_iniPath)!=0);
     g_devKeys=GetPrivateProfileIntW(L"Diagnostics",L"DevKeys",0,g_iniPath)!=0;
     g_worldNameplates=GetPrivateProfileIntW(L"Render",L"WorldNameplates",1,g_iniPath)!=0;
@@ -5964,10 +5974,10 @@ void AfterUpdate(void* camera) noexcept {
         } else edf6vr::ClearLaserFrame(0);
         // Its reticle too, for the same reason (fencer_dual.h).
         PublishRangerSecondAim(fpsApplied);
-        // The lock-on markers come from the game's own HUD data and are drawn in
-        // world space. Vehicle seats aim with the head, so they need them too,
-        // and the lock-on sight's frame, which goes with the cut-away HUD panel.
-        edf6vr::SetAimHudSource(camera,nativeLive && ((fpsApplied && g_handAiming) || vehicleApplied),g_reticleScale,vehicleApplied);
+        // The lock-on markers and the lock-on sight's frame come from the game's
+        // own HUD data and are drawn in world space. Vehicle seats aim with the
+        // head, so they need them too.
+        edf6vr::SetAimHudSource(camera,nativeLive && ((fpsApplied && g_handAiming) || vehicleApplied),g_reticleScale);
         edf6vr::SetNativeWorldQueueEnabled(nativeLive);
         edf6vr::SetLegacyPreUiCapture(!(edf6vr::NativeWorldEnabled() && g_uiRedirect && g_uiLayer));
         UpdateMissionFpsLimit((supportedSoldier && valid) || vehicleApplied,GetTickCount64());
@@ -6493,6 +6503,9 @@ void __fastcall HookUpdate(void* camera,const void* context) {
     AcquireSRWLockExclusive(&g_lock);
     RestoreBeforeUpdate(camera);
     ReleaseSRWLockExclusive(&g_lock);
+    // The Ranger's left gun into the camera's second sight slot, or out of it,
+    // before the update collects the slots (lock_sight.h).
+    BindLeftSight(camera);
     // Preserve the game's update and its exception behavior. No worker-thread memory writes.
     g_original(camera,context);
     AcquireSRWLockExclusive(&g_lock);
@@ -7533,7 +7546,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.6 cockpit loading, with EDF6MultiSlot 1.6.9. Fencer: blades and the katana strike along the hand's aim; a left weapon's lunge goes the left hand's way; the Arm Hound on the forearm, the left hand's Arm Hound, Jackhammer and twin spear turned over.");
+    Log("EDF6VR 3.2.7 cockpit loading, with EDF6MultiSlot 1.6.9. Lock-on: the sight's frame on foot; each hand's weapon locks along its own aim (a Fencer's shoulder weapons, a Ranger's left gun, whose sight is shown too); [Render] LockSightWidth.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7839,6 +7852,11 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("FENCERGUIDE hooks ready=%d guide=17E2498/688C30 laser=17E2458/6890A0",InstallFencerAttachmentHooks());
         Log("FENCERGUARD block test 5957C0 on the shield's own aim: %u/4 sites",InstallFencerGuardHooks());
         Log("FENCERLUNGE root motion taken at 5758C0 (1166ED0): %s",InstallFencerLunge()?"installed":"REFUSED (call differs)");
+        {
+            const unsigned sight=InstallLockSight();
+            Log("LOCKSIGHT lock-on cone on the hand's aim (696710 at 694139, 696457): %s; the Ranger's left sight in the camera's second slot (FAE90): %s",
+                (sight&1)?"installed":"REFUSED (code differs)",(sight&2)?"ready":"REFUSED (code differs)");
+        }
         changed=false;
         const bool probeOK=InstallGuideProbe(changed);
         Log("GUIDEPROBE hooks ready=%d changed=%d prepare guide=17E2498+18/688680 laser=17E2458+18/688970 (sight widths: laser x%.2f guide x%.2f)",probeOK,changed,g_laserWidthScale,g_guideWidthScale);

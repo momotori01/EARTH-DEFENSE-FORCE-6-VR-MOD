@@ -647,6 +647,132 @@ static void CheckShoulderStraight() {
     g_fencerWeapons[0].store(was0);g_fencerWeapons[1].store(was1);
     AcquireSRWLockExclusive(&g_fencerShadowLock);g_fencerShadow=savedShadow;ReleaseSRWLockExclusive(&g_fencerShadowLock);
 }
+// lock_sight.h. The game's own test of a target against a weapon's lock-on
+// frame (22DF30): rows at +0x00, the place at +0x30, the half angles at +0x40
+// and +0x44, the range at +0x50.
+static bool InLockCone(const unsigned char* frame,const float point[3]) {
+    const auto* f=reinterpret_cast<const float*>(frame);
+    const float d[3]={point[0]-f[12],point[1]-f[13],point[2]-f[14]};
+    float local[3]{};
+    for(int i=0;i<3;++i) local[i]=d[0]*f[i*4]+d[1]*f[i*4+1]+d[2]*f[i*4+2];
+    if(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]>f[20]*f[20] || local[2]<0) return false;
+    return std::fabs(std::atan2(local[0],local[2]))<=f[16] && std::fabs(std::atan2(local[1],local[2]))<=f[17];
+}
+static int sightBinds=0;
+static void CheckLockSight(RangerDualState state) {
+    const bool activeWas=g_dualActive.load(); const auto inputWas=g_dualInputAt.load(); const auto stateWas=g_dualState;
+    static unsigned char gunsWere[2][sizeof(weapons[0])];
+    std::memcpy(gunsWere,weapons,sizeof(gunsWere));
+    // The code the two hooks stand on, as it is in the real image.
+    auto* base=g_image.base;
+    CHECK(base[0x694139]==0xE8 && base+0x69413E+*reinterpret_cast<const std::int32_t*>(base+0x69413A)==base+0x696710);
+    CHECK(base[0x696457]==0xE8 && base+0x69645C+*reinterpret_cast<const std::int32_t*>(base+0x696458)==base+0x696710);
+    static const unsigned char search[]={0x48,0x8D,0x93,0x00,0x0C,0x00,0x00};   // 696626 lea rdx,[rbx+0xC00]: the search's frame
+    static const unsigned char keep[]={0x4C,0x8D,0x83,0x00,0x0C,0x00,0x00};     // 6964B3 lea r8,[rbx+0xC00]: the kept target's test
+    static const unsigned char ahead[]={0x0F,0x10,0x43,0x20};                   // 22E02B movups xmm0,[rbx+0x20]: row 2 is forward
+    static const unsigned char across[]={0x44,0x0F,0x2F,0x43,0x40};             // 22E122 comiss xmm8,[rbx+0x40]
+    static const unsigned char upward[]={0x0F,0x2F,0x73,0x44};                  // 22E155 comiss xmm6,[rbx+0x44]
+    static const unsigned char shown[]={0x80,0xBA,0xF0,0x0B,0x00,0x00,0x00};    // FC957 cmp byte [rdx+0xBF0],0: the slot's weapon
+    static const unsigned char count[]={0x3B,0xB8,0x80,0x19,0x00,0x00};         // FB9C3 cmp edi,[rax+0x1980]: one sight slot per weapon slot
+    CHECK(!std::memcmp(base+0x696626,search,sizeof(search)) && !std::memcmp(base+0x6964B3,keep,sizeof(keep)));
+    CHECK(!std::memcmp(base+0x22E02B,ahead,sizeof(ahead)) && !std::memcmp(base+0x22E122,across,sizeof(across)) && !std::memcmp(base+0x22E155,upward,sizeof(upward)));
+    CHECK(!std::memcmp(base+0xFC957,shown,sizeof(shown)) && !std::memcmp(base+0xFB9C3,count,sizeof(count)));
+    // The real installation on the mapped copy; nothing of the game is run.
+    CHECK(InstallLockSight()==3);
+    CHECK(g_lockFrameOriginal==reinterpret_cast<LockFrame>(base+0x696710) && g_sightBind==reinterpret_cast<SightBind>(base+0xFAE90));
+    CHECK(base[0x694139]==0xE8 && base+0x69413E+*reinterpret_cast<const std::int32_t*>(base+0x69413A)!=base+0x696710);
+    CHECK(base[0x696457]==0xE8 && base+0x69645C+*reinterpret_cast<const std::int32_t*>(base+0x696458)!=base+0x696710);
+    // The cone. 696710 as the game has it: the fire transform's rows and the weapon's place.
+    g_lockFrameOriginal=[](void* w) {
+        auto* b=static_cast<unsigned char*>(w);
+        std::memcpy(b+0xC00,b+0x150,48); std::memcpy(b+0xC30,b+0x90,16);
+    };
+    auto* const leftGun=weapons[0]; auto* const rightGun=weapons[1];
+    const edf6vr::Matrix backMount={{{1,0,0,0},{0,0,-1,0},{0,1,0,0},{0,1,0,1}}};    // on his back: forward is straight up
+    const float place[4]={0,1,0,1};
+    for(auto* gun:{leftGun,rightGun}) {
+        DualAt<edf6vr::Matrix>(gun,0x150)=backMount; std::memcpy(gun+0x90,place,16);
+        DualAt<float>(gun,0xC40)=0.30f; DualAt<float>(gun,0xC44)=0.20f; DualAt<float>(gun,0xC50)=500;
+    }
+    // The hands sixty degrees either side of straight ahead.
+    const float yawLeft=1.0471976f,yawRight=-1.0471976f;
+    const float aimLeft[3]={std::sin(yawLeft),0,std::cos(yawLeft)},aimRight[3]={std::sin(yawRight),0,std::cos(yawRight)};
+    const float atLeft[3]={aimLeft[0]*100,1,aimLeft[2]*100},atRight[3]={aimRight[0]*100,1,aimRight[2]*100},above[3]={0,101,0};
+    auto left=Command(0),right=Command(1);
+    FencerAimFrameYaw(aimLeft,yawLeft,left.lockRows); left.lockFrame=true;
+    FencerAimFrameYaw(aimRight,yawRight,right.lockRows); right.lockFrame=true;
+    const auto laid=g_lockFramesLaid[0].load();
+    // Not in a hand's tick: the game's own frame, the back mount's.
+    g_dualTick={};
+    HookLockFrame(leftGun);
+    CHECK(InLockCone(leftGun+0xC00,above) && !InLockCone(leftGun+0xC00,atLeft));
+    // In the left hand's tick: along the left hand, and only there.
+    g_dualTick={left,leftGun,true};
+    HookLockFrame(leftGun);
+    CHECK(InLockCone(leftGun+0xC00,atLeft) && !InLockCone(leftGun+0xC00,atRight) && !InLockCone(leftGun+0xC00,above));
+    CHECK(!std::memcmp(leftGun+0xC30,place,16) && g_lockFramesLaid[0].load()==laid+1);
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j) CHECK(DualAt<float>(leftGun,0xC00+i*16+j*4)==left.lockRows[i][j]);
+    CHECK(DualAt<float>(leftGun,0xC0C)==0 && DualAt<float>(leftGun,0xC1C)==0 && DualAt<float>(leftGun,0xC2C)==0);
+    // The right hand's weapon locks along the right hand at the same moment.
+    g_dualTick={right,rightGun,true};
+    HookLockFrame(rightGun);
+    CHECK(InLockCone(rightGun+0xC00,atRight) && !InLockCone(rightGun+0xC00,atLeft));
+    CHECK(InLockCone(leftGun+0xC00,atLeft));
+    // Another weapon's tick, a tick without a pose, a command without a frame, a broken frame: the game's.
+    g_dualTick={left,rightGun,true}; HookLockFrame(leftGun); CHECK(InLockCone(leftGun+0xC00,above));
+    g_dualTick={left,leftGun,false}; HookLockFrame(leftGun); CHECK(InLockCone(leftGun+0xC00,above));
+    left.lockFrame=false; g_dualTick={left,leftGun,true}; HookLockFrame(leftGun); CHECK(InLockCone(leftGun+0xC00,above));
+    left.lockFrame=true; left.lockRows[2][0]=std::numeric_limits<float>::quiet_NaN();
+    g_dualTick={left,leftGun,true}; HookLockFrame(leftGun); CHECK(InLockCone(leftGun+0xC00,above));
+    // Pointing almost straight up, the frame is still square: the yaw holds it.
+    {
+        const float pitch=1.5620f,steep[3]={std::sin(0.4f)*std::cos(pitch),std::sin(pitch),std::cos(0.4f)*std::cos(pitch)};
+        float rows[3][3]{};
+        FencerAimFrameYaw(steep,0.4f,rows);
+        for(int i=0;i<3;++i) for(int k=0;k<3;++k) {
+            const float dot=rows[i][0]*rows[k][0]+rows[i][1]*rows[k][1]+rows[i][2]*rows[k][2];
+            CHECK(std::fabs(dot-(i==k?1.0f:0.0f))<1e-4f);
+        }
+        CHECK(std::fabs(rows[2][1]-steep[1])<1e-6f && std::fabs(rows[0][1])<1e-4f);
+    }
+    g_dualTick={};
+    // The left gun's sight in the camera's second slot. FAE90 as the game has it.
+    alignas(16) static unsigned char camera[0xC00]{},alive[0x10]{},stranger[0x10]{};
+    g_sightBind=[](void* slot,void* weapon) {
+        ++sightBinds;
+        if(DualAt<void*>(slot,0x90)==weapon) return;
+        DualAt<unsigned char>(slot,0x110)=0; DualAt<unsigned char>(slot,0xA0)=0; DualAt<void*>(slot,0x90)=weapon;
+    };
+    auto* const second=camera+0x720+0x1F0;
+    DualAt<void*>(camera,0x360)=soldier; DualAt<void*>(camera,0x358)=alive; DualAt<int>(alive,8)=1;
+    g_dualState=state; g_dualActive=true; g_dualInputAt=GetTickCount64();
+    g_leftSightCamera=nullptr; g_leftSightWeapon=nullptr; g_leftSightBound=false; sightBinds=0;
+    CHECK(CurrentRangerPair(state,soldier));
+    BindLeftSight(camera);
+    CHECK(DualAt<void*>(second,0x90)==state.weapons[0] && !DualAt<void*>(camera+0x720,0x90) && g_leftSightBound.load() && sightBinds==1);
+    BindLeftSight(camera); CHECK(sightBinds==1);                                    // once, not every update
+    // His input no longer read (he is gone, or the game is not running him): out.
+    g_dualInputAt=GetTickCount64()-1000; BindLeftSight(camera);
+    CHECK(!DualAt<void*>(second,0x90) && !g_leftSightBound.load() && sightBinds==2);
+    g_dualInputAt=GetTickCount64(); BindLeftSight(camera); CHECK(DualAt<void*>(second,0x90)==state.weapons[0]);
+    // The camera's own reference to him dead: out.
+    DualAt<int>(alive,8)=0; BindLeftSight(camera); CHECK(!DualAt<void*>(second,0x90));
+    DualAt<int>(alive,8)=1; BindLeftSight(camera); CHECK(DualAt<void*>(second,0x90)==state.weapons[0]);
+    // The camera on somebody else: out.
+    DualAt<void*>(camera,0x360)=otherSoldier; BindLeftSight(camera); CHECK(!DualAt<void*>(second,0x90));
+    DualAt<void*>(camera,0x360)=soldier; BindLeftSight(camera); CHECK(DualAt<void*>(second,0x90)==state.weapons[0]);
+    // The pair put away: out.
+    g_dualActive=false; BindLeftSight(camera); CHECK(!DualAt<void*>(second,0x90) && !g_leftSightBound.load());
+    // A slot that holds something we did not put there is left alone, pair out or not.
+    DualAt<void*>(second,0x90)=stranger; const int before=sightBinds;
+    BindLeftSight(camera); CHECK(DualAt<void*>(second,0x90)==stranger);
+    g_dualActive=true; g_dualInputAt=GetTickCount64(); BindLeftSight(camera);
+    CHECK(DualAt<void*>(second,0x90)==stranger && !g_leftSightBound.load() && sightBinds==before);
+    DualAt<void*>(second,0x90)=nullptr;
+    g_leftSightCamera=nullptr; g_leftSightWeapon=nullptr; g_leftSightBound=false;
+    std::memcpy(weapons,gunsWere,sizeof(gunsWere));
+    g_dualState=stateWas; g_dualActive=activeWas; g_dualInputAt=inputWas;
+}
 int wmain(int argc,wchar_t** argv) {
     if(argc!=2)return 2;
     const auto module=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
@@ -866,6 +992,7 @@ int wmain(int argc,wchar_t** argv) {
     DualAt<int>(weapons[0],0xE18)=2;nativeTestHolster(weapons[0]);
     CHECK(DualAt<int>(weapons[0],0xBE8)==0 && DualAt<int>(weapons[0],0xE18)==0);
     DualAt<unsigned char>(weapons[0],0xE1C)=0;burstMode=false;
+    CheckLockSight(state);
     // Recycled owners, changed weapon slot, and non-Ranger must all refuse.
     DualAt<unsigned>(soldier,0x314)=18;CHECK(!CurrentRangerPair(state,soldier));DualAt<unsigned>(soldier,0x314)=17;
     DualAt<void*>(slots,0x40)=owned;CHECK(!CurrentRangerPair(state,soldier));DualAt<void*>(slots,0x40)=owned+1;

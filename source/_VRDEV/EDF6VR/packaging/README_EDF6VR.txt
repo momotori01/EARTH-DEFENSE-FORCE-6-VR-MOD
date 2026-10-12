@@ -1,5 +1,9 @@
-﻿EDF6VR 3.2.6
+﻿EDF6VR 3.2.7
 =============================
+
+CHANGES IN 3.2.7
+- Fixed: the lock-on sight was not shown for missile weapons.
+- Still bundles EDF6MultiSlot 1.6.9.
 
 CHANGES IN 3.2.6
 Fixes (Fencer):

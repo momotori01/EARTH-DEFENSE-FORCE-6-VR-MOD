@@ -21,9 +21,15 @@ struct AimHudSnapshot {
 // Reads the prepared native draw records, never target-selection/gameplay data.
 bool ReadNativeAimHud(const void* camera,AimHudSnapshot&) noexcept;
 bool InstallAimHud(const ImageProfile&,bool& changed) noexcept;
-// frames: also the lock-on sight (vehicle seats, where the HUD's own copy of it
-// is cut away with the rest of the panel).
-void SetAimHudSource(void* camera,bool active,float scale,bool frames=false) noexcept;
+// The markers and the lock-on sight's frame, on foot and in vehicle seats: the
+// HUD's own copy of the frame is in the middle of the panel, which the compact
+// HUD does not show and a vehicle seat cuts away, and it would not stand round
+// the cone in the world anyway.
+void SetAimHudSource(void* camera,bool active,float scale) noexcept;
+// The lock-on sight's frame: its lines' thickness as a share of the width it was
+// first drawn with ([Render] LockSightWidth, 0.1 to 2).
+void SetAimHudFrameWidth(float share) noexcept;
+float AimHudFrameWidth() noexcept;
 AimHudSnapshot ReadAimHud() noexcept;
 float AimHudScale() noexcept;
 // View is Umbra's inverse camera BEFORE EDF's Ry(pi) conversion.

@@ -8,9 +8,8 @@ namespace {
 SRWLOCK lock=SRWLOCK_INIT;
 void* source=nullptr;
 ULONGLONG sourceAt=0;
-bool sourceFrames=false;
 AimHudSnapshot latest{};
-std::atomic<float> sizeScale{.5f};
+std::atomic<float> sizeScale{.5f},frameWidth{.3f};
 using Prepare=void(__fastcall*)(void*,void*);
 Prepare original=nullptr;
 std::uint64_t calls=0,accepted=0,invalid=0;
@@ -94,11 +93,11 @@ bool InstallAimHud(const ImageProfile& image,bool& changed) noexcept {
     return ReplacePointer(reinterpret_cast<void**>(image.base+kVtableRva+0x18),
         reinterpret_cast<void*>(original),reinterpret_cast<void*>(&Prepared),changed);
 }
-void SetAimHudSource(void* camera,bool active,float scale,bool frames) noexcept {
+void SetAimHudSource(void* camera,bool active,float scale) noexcept {
     AcquireSRWLockExclusive(&lock);
     void* next=active?camera:nullptr;
     if(source!=next) latest={};
-    source=next;sourceAt=GetTickCount64();sourceFrames=active&&frames;
+    source=next;sourceAt=GetTickCount64();
     ReleaseSRWLockExclusive(&lock);
     if(std::isfinite(scale) && scale>=.05f && scale<=4) sizeScale=scale;
 }
@@ -107,10 +106,11 @@ AimHudSnapshot ReadAimHud() noexcept {
     AimHudSnapshot out{};
     const auto now=GetTickCount64();
     if(source && now-sourceAt<250 && now-latest.at<250) out=latest;
-    if(!sourceFrames) out.frameCount=0;
     ReleaseSRWLockShared(&lock);return out;
 }
 float AimHudScale() noexcept {return sizeScale.load();}
+void SetAimHudFrameWidth(float share) noexcept {if(std::isfinite(share) && share>=.1f && share<=2) frameWidth=share;}
+float AimHudFrameWidth() noexcept {return frameWidth.load();}
 bool ProjectAimHudAhead(const Matrix& view,const Matrix& projection,const float world[3],float ndc[2]) noexcept {
     float v[4]{},clip[4]{};
     for(unsigned j=0;j<4;++j) {
@@ -140,10 +140,10 @@ bool ProjectAimHud(const Matrix& view,const Matrix& projection,const float world
 const char* AimHudStatus() noexcept {
     thread_local char line[256]{};
     AcquireSRWLockShared(&lock);
-    std::snprintf(line,sizeof(line),"AIMHUD prepare=%llu accepted=%llu invalid=%llu lockWeapon=%d points=%u frames=%u/%d half=(%.1f,%.1f)deg age=%llums scale=%.2f",
-        calls,accepted,invalid,latest.lockWeapon,latest.count,latest.frameCount,sourceFrames?1:0,
+    std::snprintf(line,sizeof(line),"AIMHUD prepare=%llu accepted=%llu invalid=%llu lockWeapon=%d points=%u frames=%u half=(%.1f,%.1f)deg age=%llums scale=%.2f frame x%.2f",
+        calls,accepted,invalid,latest.lockWeapon,latest.count,latest.frameCount,
         latest.frames[0].half[0]*57.29578f,latest.frames[0].half[1]*57.29578f,
-        latest.at?GetTickCount64()-latest.at:0,sizeScale.load());
+        latest.at?GetTickCount64()-latest.at:0,sizeScale.load(),frameWidth.load());
     ReleaseSRWLockShared(&lock);return line;
 }
 }

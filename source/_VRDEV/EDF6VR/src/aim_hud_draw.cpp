@@ -21,19 +21,22 @@ struct Constants {float pixel[4]{};float points[AimHudSnapshot::capacity][4]{};}
 struct FrameConstants {float pixel[4]{};float edges[8][4]{};};
 constexpr char frameShader[]=R"(
 cbuffer Frame:register(b0) {float4 pixelSize;float4 edges[8];}
-struct V {float4 position:SV_Position;};
+struct V {float4 position:SV_Position;float across:TEXCOORD0;nointerpolation float width:TEXCOORD1;};
 V vertex(uint id:SV_VertexID) {
  // A thin band along each edge, a constant number of pixels wide, run on by
- // its half width at both ends so the corners close.
+ // its half width at both ends so the corners close. The band is cut a pixel
+ // wider on each side than the line, and the fragment fades the line's edge
+ // across it: a line thinner than a pixel is drawn fainter, not broken up.
  float4 e=edges[id/6];uint corner=id%6;
  float2 along=(e.zw-e.xy)/pixelSize.xy;float len=max(length(along),1e-4);along/=len;
  float2 across=float2(-along.y,along.x);
  const float2 corners[6]={float2(0,-1),float2(0,1),float2(1,-1),float2(1,-1),float2(0,1),float2(1,1)};
  float2 c=corners[corner];
- float2 p=lerp(e.xy,e.zw,c.x)+(across*c.y+along*(c.x*2-1))*pixelSize.z*pixelSize.xy;
- V o;o.position=float4(p,0,1);return o;
+ float reach=pixelSize.z+1;
+ float2 p=lerp(e.xy,e.zw,c.x)+(across*c.y*reach+along*(c.x*2-1)*pixelSize.z)*pixelSize.xy;
+ V o;o.position=float4(p,0,1);o.across=c.y*reach;o.width=pixelSize.z;return o;
 }
-float4 fragment(V i):SV_Target {return float4(float3(1,.15,.08)*.9,.9);}
+float4 fragment(V i):SV_Target {return float4(float3(1,.15,.08)*.9,.9)*saturate(i.width+.5-abs(i.across));}
 )";
 constexpr char shader[]=R"(
 cbuffer Data:register(b0) {float4 pixelSize;float4 points[128];}
@@ -92,7 +95,8 @@ bool DrawAimHud(ID3D11DeviceContext* ctx,ID3D11Texture2D* target,const Matrix& v
     // frame stands round the cone in the world, in both eyes at infinity. A
     // frame with a corner behind the eye is not drawn.
     FrameConstants frame{};unsigned edges=0;
-    frame.pixel[0]=2.f/desc.Width;frame.pixel[1]=2.f/desc.Height;frame.pixel[2]=std::max(1.f,1.1f*(float(desc.Height)/1080.f));   // half width, pixels
+    // Half the line's width in pixels: 1.1 on a 1080-line picture at a share of 1.
+    frame.pixel[0]=2.f/desc.Width;frame.pixel[1]=2.f/desc.Height;frame.pixel[2]=std::max(.3f,1.1f*AimHudFrameWidth()*(float(desc.Height)/1080.f));
     for(unsigned f=0;f<snapshot.frameCount;++f) {
         float ndc[4][2]{};bool ok=true;
         for(unsigned c=0;c<4&&ok;++c)ok=ProjectAimHudAhead(view,projection,snapshot.frames[f].corners[c],ndc[c]);

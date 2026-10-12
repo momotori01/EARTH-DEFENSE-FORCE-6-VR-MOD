@@ -51,13 +51,17 @@ int wmain(int argc,wchar_t** argv) {
     SetAimHudSource(camera,true,.8f);Prepared(camera,nullptr);
     CHECK(ReadAimHud().count==2 && AimHudScale()==.8f);
     SetAimHudSource(camera,false,.8f);CHECK(!ReadAimHud().lockWeapon && ReadAimHud().count==0);
-    {   // The sight only for a source that asks for it (vehicle seats).
+    {   // The sight for any source that is on, and gone with it.
         alignas(16) unsigned char sight[0xB40]{};auto s=sight+0x720;s[0x140]=1;
         const float rows[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};std::memcpy(s+0x150,rows,sizeof(rows));
         const float half[2]={.2f,.1f};std::memcpy(s+0x190,half,sizeof(half));
-        SetAimHudSource(sight,true,.5f);Prepared(sight,nullptr);CHECK(ReadAimHud().frameCount==0);
-        SetAimHudSource(sight,true,.5f,true);Prepared(sight,nullptr);CHECK(ReadAimHud().frameCount==1);
-        SetAimHudSource(sight,false,.5f,true);CHECK(ReadAimHud().frameCount==0);
+        SetAimHudSource(sight,true,.5f);Prepared(sight,nullptr);CHECK(ReadAimHud().frameCount==1);   // on foot as in a seat
+        SetAimHudSource(sight,false,.5f);CHECK(ReadAimHud().frameCount==0);
+        // The frame's lines: three tenths of their first width unless the INI says otherwise, 0.1 to 2.
+        CHECK(AimHudFrameWidth()==.3f);
+        SetAimHudFrameWidth(1.5f);CHECK(AimHudFrameWidth()==1.5f);
+        SetAimHudFrameWidth(0.f);SetAimHudFrameWidth(3.f);SetAimHudFrameWidth(std::nanf(""));CHECK(AimHudFrameWidth()==1.5f);
+        SetAimHudFrameWidth(.3f);
     }
     Matrix view{},projection{};for(unsigned i=0;i<4;++i)view.m[i][i]=1;
     projection.m[0][0]=1;projection.m[1][1]=1;projection.m[2][3]=-1;
@@ -99,10 +103,22 @@ int wmain(int argc,wchar_t** argv) {
         ctx->CopyResource(staging.Get(),target.Get());
         CHECK(SUCCEEDED(ctx->Map(staging.Get(),0,D3D11_MAP_READ,0,&map)));
         auto at=[&](unsigned x,unsigned y){return static_cast<unsigned char*>(map.pData)+y*map.RowPitch+x*4;};
-        // NDC +-0.5 on a 256 target: the edges at pixels 64 and 192.
-        CHECK(at(64,128)[0]>128 && at(192,128)[0]>128 && at(128,64)[0]>128 && at(128,192)[0]>128);
+        // NDC +-0.5 on a 256 target: the edges between pixels 63 and 64, and 191 and 192.
+        // A line thinner than a pixel is faded, not dropped: both pixels beside it carry it.
+        CHECK(at(64,128)[0]>40 && at(63,128)[0]>40 && at(192,128)[0]>40 && at(128,64)[0]>40 && at(128,192)[0]>40);
+        CHECK(at(61,128)[0]==0 && at(66,128)[0]==0);                              // and nothing two pixels out
         CHECK(at(128,128)[0]==0 && at(128,128)[2]==255 && at(10,10)[2]==255);
+        const unsigned thin=at(64,128)[0];
         ctx->Unmap(staging.Get(),0);
+        // [Render] LockSightWidth: a wider share, a stronger line.
+        SetAimHudFrameWidth(2.f);
+        ctx->ClearRenderTargetView(bound,blue);
+        CHECK(DrawAimHud(ctx.Get(),target.Get(),view,projection,snap,.5f));
+        ctx->CopyResource(staging.Get(),target.Get());
+        CHECK(SUCCEEDED(ctx->Map(staging.Get(),0,D3D11_MAP_READ,0,&map)));
+        CHECK(at(64,128)[0]>thin+30 && at(128,128)[0]==0);
+        ctx->Unmap(staging.Get(),0);
+        SetAimHudFrameWidth(.3f);
         // A corner behind the eye: nothing drawn.
         ctx->ClearRenderTargetView(bound,blue);snap.frames[0].corners[0][2]=-5;
         CHECK(DrawAimHud(ctx.Get(),target.Get(),view,projection,snap,.5f));

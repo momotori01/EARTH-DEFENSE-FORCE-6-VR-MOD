@@ -708,7 +708,8 @@ bool FencerDrawnBarrel(unsigned hand,const void* weapon,float out[3]) noexcept {
     WeaponHoldCommand drawn{};
     AcquireSRWLockShared(&g_fencerHandLock); drawn=hand==0?g_fencerLeft:g_fencerRight; ReleaseSRWLockShared(&g_fencerHandLock);
     if(!drawn.tracked || drawn.weapon!=weapon || GetTickCount64()-drawn.refreshed>250) return false;
-    const float* z=drawn.hand.axes[2];
+    // A weapon that does not lie along the hand's aim fires along the aim all the same.
+    const float* z=drawn.aimFrames?drawn.swingTo[2]:drawn.hand.axes[2];
     const float size=std::sqrt(z[0]*z[0]+z[1]*z[1]+z[2]*z[2]);
     if(!std::isfinite(size) || size<1e-3f) return false;
     for(int j=0;j<3;++j) out[j]=z[j]/size;
@@ -1165,6 +1166,8 @@ std::atomic<unsigned long long> g_fencerSwings[2]{};
 // Weapon ticks whose muzzle was carried onto the swing as it was then
 // (FencerCarryTransforms), and the slashes that left along it (shot_origin.h).
 std::atomic<unsigned long long> g_fencerSwingCarries[2]{},g_fencerSwingShots[2]{};
+// Ticks of a weapon that does not lie along the hand's aim (the Arm Hound) whose muzzle was turned onto it.
+std::atomic<unsigned long long> g_fencerAimCarries[2]{};
 // Of those, the waves and thrusts turned onto the hand's aim, and how far the last one was off it.
 std::atomic<unsigned long long> g_fencerSlashTurns[2]{};
 std::atomic<float> g_fencerSlashTurnDeg[2]{};
@@ -1513,7 +1516,7 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
     }
     const bool shoulder=hand<2 && g_fencerShoulder[hand];
     auto mount=edf6vr::FencerMount::Arms;
-    bool swingFrames=false; float swingFrom[3][3]{},swingTo[3][3]{};
+    bool swingFrames=false,aimFrames=false; float swingFrom[3][3]{},swingTo[3][3]{};
     if(g_fencerHandWeapons && !shoulder) {
         float at[3]{},q[4]{};
         if(!edf6vr::g_openxr.GripPose(static_cast<int>(hand),at,q) || !edf6vr::NormalizedQuat({q[0],q[1],q[2],q[3]})) return false;
@@ -1663,7 +1666,23 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         const float side=hand==1?-g_fencerHandOutward:g_fencerHandOutward;
         for(unsigned j=0;j<3;++j) palm[j]=grip[j]+frame[2][j]*g_fencerHandAhead+upright[0][j]*side+upright[1][j]*g_fencerHandUp+swingShift[j];
         // The Arm Hound's root is not in the hand: the palm goes into the box's
-        // open end, where the game's arm has it.
+        // open end, where the game's arm has it. Nor does it lie along the aim,
+        // in the game (its bone is the forearm's, some 30 degrees under the
+        // aim) or here (its nose 10 degrees in), and the game's fire transform
+        // is the aim's own frame whatever the model does: carried rigidly with
+        // the model it came out a third of a right angle off the hand's aim. So
+        // the weapon's tick turns it from the game's aim frame onto the hand's
+        // (FencerCarryTransforms), and the shot is not turned again
+        // (FencerDrawnBarrel). Its lock-on cone does not hang on this: that is
+        // set outright (lock_sight.h). Nor did it settle the missiles' launch
+        // (hardware 2026-10-13: the left hand's 3 degrees off its aim, the right
+        // hand's still 30 to 35; shot_origin.h).
+        if(mount==edf6vr::FencerMount::Forearm && hand<2) {
+            float posed[3][3]{};
+            FencerAimFrameYaw(nativeDir,nativeYaw,posed);
+            swingFrames=aimFrames=true;
+            std::memcpy(swingFrom,posed,sizeof(swingFrom)); std::memcpy(swingTo,frame,sizeof(swingTo));
+        }
         if(mount==edf6vr::FencerMount::Forearm) {
             const float rows[3][3]={{turned[0][0],turned[0][1],turned[0][2]},{turned[1][0],turned[1][1],turned[1][2]},{turned[2][0],turned[2][1],turned[2][2]}};
             float boxRoot[3]{};
@@ -1710,8 +1729,11 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         out.step[j]=g_soldierStep[j];
     }
     for(unsigned k=0;k<3;++k) for(unsigned j=0;j<3;++j) out.handAxes[k][j]=root.m[k][j];
-    out.swingFrames=swingFrames;
+    out.swingFrames=swingFrames; out.aimFrames=aimFrames;
     std::memcpy(out.swingFrom,swingFrom,sizeof(swingFrom)); std::memcpy(out.swingTo,swingTo,sizeof(swingTo));
+    // Its lock-on cone goes along this hand's aim, in the hand or on the
+    // shoulder, whatever the model does on its mount (lock_sight.h).
+    if(hand<2) { FencerAimFrameYaw(wantDir,wantYaw,out.lockRows); out.lockFrame=true; }
     if(FencerBladeSheath(wp.weapon,wp.model,wp.nodes,static_cast<unsigned>(wp.nodeCount))>0) FencerSheathCommand(hand,out);
     out.headRoom[0]=g_lastHeadXr.x; out.headRoom[1]=g_lastHeadXr.y; out.headRoom[2]=g_lastHeadXr.z;
     out.yawOffset=g_yawOffset;
@@ -2016,7 +2038,11 @@ bool FencerCarryTurnApply(unsigned hand,const void* weapon,const float in[3],flo
     for(int j=0;j<3;++j) out[j]/=n;
     return true;
 }
-void FencerCarryOne(unsigned hand,unsigned slot,unsigned char* at,const edf6vr::Matrix& root,const WeaponHoldCommand& command,std::atomic<unsigned long long>& counter) noexcept {
+// turn: when given, the matrix keeps its place with the model as drawn
+// (`command`) and takes its rows from that command instead -- a weapon that
+// does not lie along the hand's aim, whose muzzle still fires along it.
+void FencerCarryOne(unsigned hand,unsigned slot,unsigned char* at,const edf6vr::Matrix& root,const WeaponHoldCommand& command,std::atomic<unsigned long long>& counter,
+                    const WeaponHoldCommand* turn=nullptr) noexcept {
     AcquireSRWLockExclusive(&g_fencerCarryLock);
     auto& memo=g_fencerCarried[hand][slot];
     const auto native=*reinterpret_cast<const edf6vr::Matrix*>(at);
@@ -2041,6 +2067,11 @@ void FencerCarryOne(unsigned hand,unsigned slot,unsigned char* at,const edf6vr::
         } else g_fencerJointCarryLeft.fetch_add(1,std::memory_order_relaxed);
     }
     bool ok=edf6vr::CarryWeaponBones(root,command.hand,&source,1,&carried,before,after);
+    if(ok && turn) {
+        edf6vr::Matrix turned{};
+        ok=edf6vr::CarryWeaponBones(root,turn->hand,&source,1,&turned,before,after);
+        if(ok) for(int r=0;r<3;++r) for(int j=0;j<3;++j) carried.m[r][j]=turned.m[r][j];
+    }
     if(ok) {
         float away=0;
         for(int j=0;j<3;++j) away+=(carried.m[3][j]-command.eyeWorld[j])*(carried.m[3][j]-command.eyeWorld[j]);
@@ -2092,23 +2123,27 @@ void FencerCarryTransforms(void* weapon,const WeaponHoldCommand& command,unsigne
         const auto root=*reinterpret_cast<const edf6vr::Matrix*>(static_cast<const unsigned char*>(command.weaponNodes)+0xB0);
         // A blade, a hammer or the katana in its swing: onto the swing as it is
         // now, not as it was when the command was made (fencer_mount.h,
-        // FencerSwingRows). Its slash leaves along this muzzle.
+        // FencerSwingRows). Its slash leaves along this muzzle. And the Arm
+        // Hound at every tick (aimFrames): the same rows turn its muzzle from
+        // the game's aim frame onto the hand's, its place staying with the
+        // model as drawn.
         WeaponHoldCommand swung{};
         const WeaponHoldCommand* carry=&command;
+        const WeaponHoldCommand* turn=nullptr;
         int layer=-1;
         float now[3][3]{},rows[3][3]{};
-        if(command.swingFrames && FencerArmAnimation(weapon,layer) && layer!=1 && FencerUnitRows(root,now)
+        if(command.swingFrames && (command.aimFrames || (FencerArmAnimation(weapon,layer) && layer!=1)) && FencerUnitRows(root,now)
            && edf6vr::FencerSwingRows(now,command.swingFrom,command.swingTo,rows)) {
             swung=command;
             std::memcpy(swung.hand.axes,rows,sizeof(rows));
-            carry=&swung;
-            g_fencerSwingCarries[hand].fetch_add(1,std::memory_order_relaxed);
+            if(command.aimFrames) { turn=&swung; g_fencerAimCarries[hand].fetch_add(1,std::memory_order_relaxed); }
+            else { carry=&swung; g_fencerSwingCarries[hand].fetch_add(1,std::memory_order_relaxed); }
         }
-        FencerNoteCarryTurn(hand,weapon,root,*carry);
-        FencerCarryOne(hand,0,bytes+0x150,root,*carry,g_fencerOwnMatrixCarries[hand]);
+        FencerNoteCarryTurn(hand,weapon,root,turn?*turn:*carry);
+        FencerCarryOne(hand,0,bytes+0x150,root,*carry,g_fencerOwnMatrixCarries[hand],turn);
         if(sourceOnly) return;
         auto* t=*reinterpret_cast<unsigned char**>(bytes+0x1D0);
-        if(edf6vr::Readable(t,0xD0,true)) { FencerCarryOne(hand,1,t+0x50,root,*carry,g_fencerTickWrites[hand]); FencerCarryOne(hand,2,t+0x90,root,*carry,g_fencerTransformTurns); }
+        if(edf6vr::Readable(t,0xD0,true)) { FencerCarryOne(hand,1,t+0x50,root,*carry,g_fencerTickWrites[hand],turn); FencerCarryOne(hand,2,t+0x90,root,*carry,g_fencerTransformTurns,turn); }
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
 }
 // The attachments' OnUpdate (WeaponAttachment_GrenadeGuide vtable 17E2498 and

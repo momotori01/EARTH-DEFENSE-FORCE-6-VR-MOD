@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.6'
+VERSION = '3.2.7'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
@@ -142,6 +142,11 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.7 (the user, after the hardware runs: "ハウンドに大きな問題がなければアップ用にまとめて v001アップ 各種ミサイルの
+# ロックオンサイトが出ていなかったバグを修正"; +0.0.1): the lock-on sight. Its frame is drawn on foot (it was drawn in
+# vehicle seats only, src/aim_hud.cpp); every VR hand's weapon locks along that hand's own aim -- a Fencer's shoulder
+# weapons too, and a Ranger's left gun, whose sight goes in the camera's second sight slot (src/lock_sight.h, new);
+# the frame's lines are [Render] LockSightWidth of their first width, 0.3 by default (the user's choice).
 # 3.2.6 (the user, after the hardware runs: "確認しました。v005上げて簡潔なアプデ内容を書いて 文章確認するからアップはまだ
 # しないで"; +0.0.5): Fencer fixes only -- blades and the katana strike along the hand's aim (the muzzle carried onto
 # the swing as it is at the weapon's tick, src/fencer_mount.h FencerSwingRows; the wave and the thrust turned onto
@@ -157,8 +162,8 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = '6C2366DCFE840FA84641A4474A0A0EEA32E54FC8C30CBA44B66B1620DB13EDE4'
-VERIFIED_SETTINGS_SHA = '30D85505A1E6ADE7708308328C10B8B0A4974B15E3D6DB7FA98A5434B331BC52'
+VERIFIED_VR_SHA = '64CE6F3E402A46D9381DF4F4AEAEBE6DA93556A95C701C44FB6803E1343E7582'
+VERIFIED_SETTINGS_SHA = 'B723CCFBEF7734D5AEF506E06369DA13F68737BB6CEF78DE4F8E0D7F75D941BE'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

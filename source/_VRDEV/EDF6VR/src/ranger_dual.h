@@ -61,6 +61,7 @@ void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept;
 void FencerNoteShot(unsigned hand) noexcept;
 void FencerAimForward(float pitchGame,float yaw,float out[3]) noexcept;
 bool FencerTurnRows(float rows[3][4],const float from[3],const float to[3]) noexcept;
+void FencerAimFrameYaw(const float fwd[3],float yaw,float frame[3][3]) noexcept;
 // guide_probe.h: the soldier's own aim as a world direction.
 bool GuideAimForward(void* soldier,float* out) noexcept;
 thread_local DualShotContext g_dualShot{};
@@ -289,6 +290,11 @@ bool MakeLeftHandCommand(const WeaponHoldCommand& right,void* weapon,WeaponHoldC
         for(unsigned i=0;i<3;++i)left.hand.axes[i][j]=(i==0?-1.0f:1.0f)*rows[i][j];
         left.weaponWas[j]=pose.world.m[3][j];
     }
+    // Its lock-on cone goes along the left hand's aim (lock_sight.h): the
+    // gun's own transform is still the back mount's.
+    const float ahead[3]={forward.x,forward.y,forward.z};
+    FencerAimFrameYaw(ahead,std::remainder(aim.yaw+right.yawOffset,6.28318530718f),left.lockRows);
+    left.lockFrame=true;
     // The muzzle offset came in as the right weapon's, because this command
     // starts as a copy of that one. Measure the left weapon's own, from the
     // one snapshot this pose was read in, so that placing it on the left hand

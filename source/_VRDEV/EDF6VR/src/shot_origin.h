@@ -261,9 +261,14 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                         // stays of the game's own aim. An arm-animation shot (the hand
                         // cannons) was built about 10 degrees under the aim, and turned
                         // from the aim it kept those 10 degrees under the barrel.
-                        // Not the missiles: theirs leave 26 to 30 degrees off the aim
-                        // by the game's own launch (no FireVector or AngleAdjust in
-                        // the data), climbing before they home, and are kept so.
+                        // Not the missiles, which are left as they were built and
+                        // home from there. The Arm Hound's leave 26 to 35 degrees off
+                        // the hand's aim (hardware, the right hand's 30 to 35 on
+                        // 2026-10-13). Nothing in the weapon's data says so -- no
+                        // FireVector, AngleAdjust or spread -- and the angle is that
+                        // of the forearm bone the discharge carries the muzzle through
+                        // (ranger_dual.h CarryDualShotPose). Not settled; in play they
+                        // home as they should.
                         const bool homing=edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_HomingShoot@@");
                         const float* beforeCone=handShot&&!homing?SpreadInputFor(from,GetTickCount64()):nullptr;
                         if(beforeCone) g_fencerBulletFromCone[hand].fetch_add(1,std::memory_order_relaxed);
