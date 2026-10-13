@@ -1676,7 +1676,8 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         // (FencerDrawnBarrel). Its lock-on cone does not hang on this: that is
         // set outright (lock_sight.h). Nor did it settle the missiles' launch
         // (hardware 2026-10-13: the left hand's 3 degrees off its aim, the right
-        // hand's still 30 to 35; shot_origin.h).
+        // hand's still 30 to 35, put back by the discharge's own carry); the
+        // missile itself is turned onto the hand's aim (shot_origin.h).
         if(mount==edf6vr::FencerMount::Forearm && hand<2) {
             float posed[3][3]{};
             FencerAimFrameYaw(nativeDir,nativeYaw,posed);

@@ -542,6 +542,19 @@ int wmain(int argc,wchar_t** argv) {
     // Only initial reload debt is reduced; native completion remains responsible
     // for ammo. Originally-ready calls and subsequent reloads receive no gift.
     VERIFY(edf6vr::CheckRequestPointProfile(g_image));
+    {
+        // EDF6MultiSlot 1.6.9 hooks the credit instruction at 693F18 (a jump to
+        // its thunk, NOP-padded to six bytes): still the profile. Anything else
+        // there, or the instruction after it changed, is not.
+        unsigned char site[14]; std::memcpy(site,g_image.base+0x693F18,sizeof site);
+        VERIFY(edf6vr::CreditConsumeSite(site));
+        const unsigned char jump[6]={0xE9,0x12,0x34,0x56,0x78,0x90};
+        std::memcpy(site,jump,sizeof jump); VERIFY(edf6vr::CreditConsumeSite(site));
+        site[5]=0xCC; VERIFY(!edf6vr::CreditConsumeSite(site));
+        site[5]=0x90; site[0]=0xE8; VERIFY(!edf6vr::CreditConsumeSite(site));
+        std::memcpy(site,g_image.base+0x693F18,sizeof site); site[2]=0x70; VERIFY(!edf6vr::CreditConsumeSite(site));
+        std::memcpy(site,jump,sizeof jump); site[9]=0x90; VERIFY(!edf6vr::CreditConsumeSite(site));
+    }
     alignas(16) unsigned char manager[0x40]{},scores[7*0x38]{};
     auto global=reinterpret_cast<void**>(g_image.base+0x20B2978);void* prior=*global;*global=manager;
     At<void*>(manager,0x38)=scores;At<unsigned>(soldier,0x314)=0;

@@ -25,6 +25,14 @@ ShotInitReport g_shotReport{};
 // at the reticle's 15 m and at 50 m, along the aim frame's left (the hardware's
 // +R, so the left weapon's origin reads positive) and up. A parallel offset
 // misses by the same at both; a turned shot misses by more at 50 m.
+// The direction a Fencer hand weapon's bullet is turned from, onto its barrel:
+// the one the game aimed it along before its accuracy cone when that was noted
+// (so the cone comes through the turn); else, for a shot that is built off the
+// game's aim by more than its cone -- a spear's thrust, a forearm launcher's
+// missile -- the direction it was built along; else the game's aim for the hand.
+inline const float* FencerShotTurnFrom(const float* beforeCone,bool builtOffTheAim,const float* built,const float* aimed) noexcept {
+    return beforeCone?beforeCone:builtOffTheAim?built:aimed;
+}
 struct FencerShotAim { unsigned shots=0,shoulder=0,builtAlong[3]{},byCarry=0; double origin[3]{},miss15[2]{},miss50[2]{},turn[2]{},residual=0,residualMax=0; };
 FencerShotAim g_fencerShotAim[2]{};
 
@@ -261,18 +269,20 @@ bool HandleShotSite(unsigned rva,CONTEXT* context) noexcept {
                         // stays of the game's own aim. An arm-animation shot (the hand
                         // cannons) was built about 10 degrees under the aim, and turned
                         // from the aim it kept those 10 degrees under the barrel.
-                        // Not the missiles, which are left as they were built and
-                        // home from there. The Arm Hound's leave 26 to 35 degrees off
-                        // the hand's aim (hardware, the right hand's 30 to 35 on
-                        // 2026-10-13). Nothing in the weapon's data says so -- no
-                        // FireVector, AngleAdjust or spread -- and the angle is that
-                        // of the forearm bone the discharge carries the muzzle through
-                        // (ranger_dual.h CarryDualShotPose). Not settled; in play they
-                        // home as they should.
+                        // The missiles of a hand's launcher too (the Arm Hound). They
+                        // were kept out of this once, on the belief that their 26 to 30
+                        // degrees off the aim were the game's own launch. The weapon's
+                        // data has nothing of the kind (no FireVector, AngleAdjust or
+                        // spread), and the angle is the forearm bone's, which the
+                        // discharge carries the muzzle through (ranger_dual.h
+                        // CarryDualShotPose): 31.7 and 33.6 degrees from the game's
+                        // bones, 30.1 and 35.0 on hardware for the right hand's
+                        // (2026-10-13). So a missile is turned from where it was built,
+                        // as a spear's thrust is, when its cone's input is not known.
                         const bool homing=edf6vr::HasType(g_image,reinterpret_cast<void*>(shot->weapon),".?AVWeapon_HomingShoot@@");
-                        const float* beforeCone=handShot&&!homing?SpreadInputFor(from,GetTickCount64()):nullptr;
+                        const float* beforeCone=handShot?SpreadInputFor(from,GetTickCount64()):nullptr;
                         if(beforeCone) g_fencerBulletFromCone[hand].fetch_add(1,std::memory_order_relaxed);
-                        const float* turnFrom=beforeCone?beforeCone:spear?from:aimed;
+                        const float* turnFrom=FencerShotTurnFrom(beforeCone,spear||homing,from,aimed);
                         // A shoulder weapon that fires straight ahead (fencer_dual.h
                         // FencerStraightShoulder) is turned the same way, onto the
                         // hand's aim rather than a barrel: the barrel joint's

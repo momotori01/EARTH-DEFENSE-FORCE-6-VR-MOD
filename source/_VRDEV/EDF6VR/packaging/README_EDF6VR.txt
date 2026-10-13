@@ -1,5 +1,10 @@
-﻿EDF6VR 3.2.7
+﻿EDF6VR 3.2.8
 =============================
+
+CHANGES IN 3.2.8
+- Fixed: the Barga and the Depth Crawler bob up and down a little less as
+  they walk.
+- Still bundles EDF6MultiSlot 1.6.9.
 
 CHANGES IN 3.2.7
 - Fixed: the lock-on sight was not shown for missile weapons.

@@ -168,6 +168,19 @@ bool LookAlong(const Matrix& like,const float forwardWorld[3],Matrix& out) noexc
     return ValidCamera(out);
 }
 
+float SteadyHeave(HeaveSteady& s,const void* owner,float height,double now,float seconds,float limit) noexcept {
+    if(!std::isfinite(height) || !(seconds>0) || !(limit>0)) { s.primed=false; return 0; }
+    if(!s.primed || s.owner!=owner || now<s.at || now-s.at>0.25 || !std::isfinite(s.height)) {
+        s.height=height; s.at=now; s.owner=owner; s.primed=true;
+        return 0;
+    }
+    s.height+=(height-s.height)*(1.0f-std::exp(-static_cast<float>(now-s.at)/seconds));
+    s.at=now;
+    if(s.height>height+limit) s.height=height+limit;
+    if(s.height<height-limit) s.height=height-limit;
+    return s.height-height;
+}
+
 bool SavedCamera::Restore(Matrix& current) noexcept {
     const bool restore=pending && std::memcmp(&current,&applied,sizeof(Matrix))==0;
     if (restore) current=original;

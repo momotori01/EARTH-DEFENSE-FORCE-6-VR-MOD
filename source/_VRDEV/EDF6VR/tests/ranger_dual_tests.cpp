@@ -597,6 +597,29 @@ static void CheckShoulderStraight() {
         CHECK(std::fabs(angle(shot,aim)-0.006f)<1e-3f);
     }
     CHECK(angle(built,aim)>11*0.01745329f);
+    // A forearm launcher's missile (the Arm Hound): built 33 degrees off the hand's
+    // aim by the discharge's carry through the forearm bone. Turned from where it
+    // was built it leaves along the aim; turned from the game's aim (as a gun's
+    // bullet is without a cone note) it kept the 33. With its cone's input noted,
+    // the cone comes through.
+    {
+        const float off=33*0.01745329f;
+        const float missile[3]={std::sin(off)*0.6f,std::sin(off)*0.8f,std::cos(off)};
+        float rows2[3][4]={{1,0,0,0},{0,1,0,0},{0,0,1,0}};
+        CHECK(FencerTurnRows(rows2,ahead,missile));
+        const float builtAt[3]={rows2[2][0],rows2[2][1],rows2[2][2]};
+        CHECK(std::fabs(angle(builtAt,aim)-off)<1e-4f);
+        CHECK(FencerShotTurnFrom(nullptr,true,builtAt,ahead)==builtAt && FencerShotTurnFrom(nullptr,false,builtAt,ahead)==ahead);
+        CHECK(FencerShotTurnFrom(dipped,true,builtAt,ahead)==dipped && FencerShotTurnFrom(dipped,false,builtAt,ahead)==dipped);
+        float turned[3][4]; std::memcpy(turned,rows2,sizeof(turned));
+        CHECK(FencerTurnRows(turned,FencerShotTurnFrom(nullptr,true,builtAt,ahead),aim));
+        const float leaves[3]={turned[2][0],turned[2][1],turned[2][2]};
+        CHECK(angle(leaves,aim)<1e-4f);
+        float kept[3][4]; std::memcpy(kept,rows2,sizeof(kept));
+        CHECK(FencerTurnRows(kept,FencerShotTurnFrom(nullptr,false,builtAt,ahead),aim));    // from the aim onto the aim: no turn
+        const float stays[3]={kept[2][0],kept[2][1],kept[2][2]};
+        CHECK(std::fabs(angle(stays,aim)-off)<1e-4f);
+    }
     // The guide: the matrices give the dipped direction (row 2 of the entry rows
     // times the +Z launch vector), the throw is 2 units a step.
     DualAt<unsigned char*>(weapon,0x1D0)=entries;

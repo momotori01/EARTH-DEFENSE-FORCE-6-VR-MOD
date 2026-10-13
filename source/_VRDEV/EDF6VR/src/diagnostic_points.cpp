@@ -9,11 +9,16 @@ template<class T> const T& At(const void* p,std::size_t o) noexcept {
     return *reinterpret_cast<const T*>(static_cast<const unsigned char*>(p)+o);
 }
 }
+bool CreditConsumeSite(const unsigned char* at) noexcept {
+    static const unsigned char consume[]={0x29,0x86,0x68,0x0E,0,0},store[]={0xF3,0x0F,0x11,0xB6,0x80,0x0E,0,0};
+    const bool own=!std::memcmp(at,consume,sizeof consume);
+    const bool hooked=at[0]==0xE9 && at[5]==0x90;   // jmp rel32; nop
+    return (own || hooked) && !std::memcmp(at+sizeof consume,store,sizeof store);
+}
 bool CheckRequestPointProfile(const ImageProfile& image) noexcept {
     __try {
         const unsigned char read[]={0x48,0x8B,0x15,0xAD,0xEA,0xA1,0x01,0x48,0x6B,0xC9,0x38,
             0x48,0x8B,0x42,0x38,0xF3,0x0F,0x10,0x74,0x01,0x30};
-        const unsigned char consume[]={0x29,0x86,0x68,0x0E,0,0,0xF3,0x0F,0x11,0xB6,0x80,0x0E,0,0};
         const unsigned char owned[]={0x48,0x8B,0xBB,0x50,0x19,0,0,0x48,0x8B,0x83,0x60,0x19,0,0,0x48,0x8D,0x34,0xC7};
         const unsigned char complete[]={0x83,0xBE,0x68,0x0E,0,0,0,0x7F,0x2F,0x84,0xC9,0x75,0x2B,
             0x38,0x8E,0x40,0x01,0,0,0x75,0x23,0x48,0x8B,0xCE,0xE8,0xC2,0x1D,0,0};
@@ -21,7 +26,7 @@ bool CheckRequestPointProfile(const ImageProfile& image) noexcept {
         return image.base && !std::memcmp(image.base+0x59B428,owned,sizeof owned)
             && !std::memcmp(image.base+0x693F41,complete,sizeof complete)
             && !std::memcmp(image.base+0x695D80,ammo,sizeof ammo) && !std::memcmp(image.base+0x693EC4,read,sizeof read)
-            && !std::memcmp(image.base+0x693F18,consume,sizeof consume);
+            && CreditConsumeSite(image.base+0x693F18);
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 unsigned OwnedWeaponCount(void* soldier) noexcept {

@@ -720,6 +720,9 @@ bool g_vehicleReference=false,g_vehiclePositionReference=false;
 bool g_vehicleLevelView=true;
 // The Nix-type cabins' walking bob smoothed out (SteadyCabin, before ApplyVehicleCamera).
 float g_vehicleBobSeconds=0.35f;   // [VR] VehicleBobSmoothSeconds
+// The Barga's and the Depth Crawler's walking heave eased (SteadyWalkerHeave).
+float g_bargaBobSeconds=4.0f;      // [VR] BargaBobSmoothSeconds
+float g_depthBobSeconds=0.35f;     // [VR] DepthBobSmoothSeconds
 bool g_cockpitRequested=true,g_cockpitHooksReady=false;
 edf6vr::CockpitRig g_cockpitRig{};
 edf6vr::Quat g_vehicleHeadReference{};
@@ -4354,6 +4357,8 @@ void ReloadTunables() noexcept {
     g_stickButtons=GetPrivateProfileIntW(L"VR",L"RightStickButtons",1,g_iniPath)!=0;
     edf6vr::g_openxr.SetDesktopMirror(GetPrivateProfileIntW(L"Render",L"DesktopMirror",1,g_iniPath)!=0);
     g_vehicleBobSeconds=ReadFloat(g_iniPath,L"VehicleBobSmoothSeconds",0.35f,0.0f,2.0f,L"VR");
+    g_bargaBobSeconds=ReadFloat(g_iniPath,L"BargaBobSmoothSeconds",4.0f,0.0f,20.0f,L"VR");
+    g_depthBobSeconds=ReadFloat(g_iniPath,L"DepthBobSmoothSeconds",0.35f,0.0f,5.0f,L"VR");
     ReadVehicleHandAim(g_iniPath);
     ReadCrewFigureTest(g_iniPath);
     ReadScopeSettings();
@@ -4828,6 +4833,59 @@ void SteadyCabin(void* vehicle,edf6vr::Matrix& cabin) noexcept {
         cabin.m[3][kk]=w;
     }
 }
+// The Barga's and the Depth Crawler's walking heave, eased (the user, 2026-10-13:
+// "バルガとデプスにヘッドボブの除去を入れて 完全な除去ではなく、ニクスくらい揺れる軽い除去。バルガの転倒とか
+// デプスの壁歩きとか段差乗り上げとか、そういう角度が変わるものは普通に影響受ける、歩行の上下の揺れを軽減する程度
+// のもの"). Not the Nix's SteadyCabin, which lags the cabin's tilt as well: here
+// only the cabin's height over the machine's own origin, along the machine's
+// own up, follows with a lag (camera_math.h SteadyHeave). Its rows are not
+// touched, so a fall, a wall, a step up and every turn come through as they are.
+//
+// How much, from the game's own clips (research/cockpit/walk_bob.py --steady):
+// the Nix's cabin, smoothed as it is, still moves 9 to 15 cm at up to 0.3 m/s.
+// The Barga's pelvis heaves 2.1 m once in 3.5 s; followed over 4 s it moves
+// 0.5 m at 0.3 m/s, the Nix's pace. The Depth Crawler's body shakes 4 cm three
+// times a second; followed over the Nix's own 0.35 s, 7 mm is left. The view is
+// held within 2 m of the Barga's real cabin and 5 cm of the Crawler's, so a
+// landing or a fall is not softened (a Crawler's landing drops it 1.4 m: 95%
+// of it comes through). 0 seconds turns either off.
+// Hardware 2026-10-13 (WALKERBOB): the Barga walking, the cabin's height moved
+// 2.3 to 2.6 m in five seconds and the view's 0.26 to 0.42 m; a fall's 26 m came
+// through whole. The Crawler walking, 4.6 to 8 cm and 0.8 to 2.9 cm; its
+// landings (0.84, 1.0, 1.3 m, the clips' own figures) came through.
+edf6vr::HeaveSteady g_walkerHeave{};   // update thread only
+void SteadyWalkerHeave(void* vehicle,edf6vr::Matrix& cabin,bool barga) noexcept {
+    const float seconds=barga?g_bargaBobSeconds:g_depthBobSeconds,limit=barga?2.0f:0.05f;
+    auto& s=g_walkerHeave;
+    if(!(seconds>0.001f) || !vehicle) { s.primed=false; return; }
+    float origin[3]{},up[3]{};
+    __try {
+        auto* v=static_cast<unsigned char*>(vehicle);
+        if(!edf6vr::Readable(v+0x60,sizeof(edf6vr::Matrix))) { s.primed=false; return; }
+        const auto& root=*reinterpret_cast<const edf6vr::Matrix*>(v+0x60);
+        for(int j=0;j<3;++j) { origin[j]=root.m[3][j]; up[j]=root.m[1][j]; }
+    } __except(EXCEPTION_EXECUTE_HANDLER) { s.primed=false; return; }
+    const float n=std::sqrt(up[0]*up[0]+up[1]*up[1]+up[2]*up[2]);
+    if(!(n>1e-4f) || !std::isfinite(n)) { s.primed=false; return; }
+    float height=0;
+    for(int j=0;j<3;++j) { up[j]/=n; height+=(cabin.m[3][j]-origin[j])*up[j]; }
+    const float shift=edf6vr::SteadyHeave(s,vehicle,height,Now(),seconds,limit);
+    if(!std::isfinite(shift)) { s.primed=false; return; }
+    for(int j=0;j<3;++j) cabin.m[3][j]+=shift*up[j];
+    // What the cabin's height did and what the view's did, for the log.
+    static ULONGLONG reportAt=0; static float low=0,high=0,lowSeen=0,highSeen=0,furthest=0; static bool any=false;
+    const float seen=height+shift;
+    if(!any) { low=high=height; lowSeen=highSeen=seen; furthest=0; any=true; }
+    low=(std::min)(low,height); high=(std::max)(high,height);
+    lowSeen=(std::min)(lowSeen,seen); highSeen=(std::max)(highSeen,seen);
+    furthest=(std::max)(furthest,std::fabs(shift));
+    if(GetTickCount64()-reportAt>5000) {
+        reportAt=GetTickCount64();
+        Log("WALKERBOB %s, followed over %.2f s: the cabin's height moved %.1f cm, the view's %.1f cm (last 5 s); the view at most %.1f cm from the cabin (held within %.0f)",
+            barga?"Barga":"Depth Crawler",seconds,(high-low)*100.0f,(highSeen-lowSeen)*100.0f,furthest*100.0f,limit*100.0f);
+        any=false;
+    }
+}
 bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
                         edf6vr::Matrix nativeCamera,edf6vr::PlayerPose& rider,bool& detected) noexcept {
     detected=false;
@@ -4944,6 +5002,10 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
         SteadyCabin(seat.vehicle,base);
         PublishCabinHeadFix(seat.vehicle,raw,base);   // the head follows the cabin (vehicle_recoil.h)
     } else { g_cabinSteady.have=false; ClearCabinHeadFix(); }
+    // The two big walkers: their walking heave eased, their angles left alone.
+    if(cockpit&&(g_cockpitRig.kind==edf6vr::CockpitKind::Barga||g_cockpitRig.kind==edf6vr::CockpitKind::Crawler))
+        SteadyWalkerHeave(seat.vehicle,base,g_cockpitRig.kind==edf6vr::CockpitKind::Barga);
+    else g_walkerHeave.primed=false;
     // The Brute's door guns (the user, 2026-09-27): the game's own stick (its
     // up and down no longer inverted, 2026-10-01), the base out of the door and
     // a pass over the bottom (AssistBruteGun). Only the gun changes: the
@@ -7546,7 +7608,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.7 cockpit loading, with EDF6MultiSlot 1.6.9. Lock-on: the sight's frame on foot; each hand's weapon locks along its own aim (a Fencer's shoulder weapons, a Ranger's left gun, whose sight is shown too); [Render] LockSightWidth.");
+    Log("EDF6VR 3.2.8 cockpit loading, with EDF6MultiSlot 1.6.9. The Barga's and the Depth Crawler's walking heave eased ([VR] BargaBobSmoothSeconds, DepthBobSmoothSeconds); a hand launcher's missile leaves along the hand's aim; [Diagnostics] MissionRequestPoints beside MultiSlot 1.6.9.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');

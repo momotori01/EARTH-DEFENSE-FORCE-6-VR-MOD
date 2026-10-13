@@ -13,6 +13,13 @@ struct RequestPointBudget {
     bool applied=false;
 };
 bool CheckRequestPointProfile(const ImageProfile&) noexcept;
+// The weapon tick's `sub [rsi+0xE68],eax; movss [rsi+0xE80],xmm6` (693F18), as
+// the game has it or with its first instruction hooked the way EDF6MultiSlot
+// 1.6.9 hooks it (the Air Raider's credit with five or more players): a jump
+// to a thunk, NOP-padded to the instruction's six bytes, which runs the
+// instruction itself. Byte for byte the hooked form was refused, and with it
+// the allowance, on every install with the bundled MultiSlot.
+bool CreditConsumeSite(const unsigned char* at) noexcept;
 unsigned OwnedWeaponCount(void* soldier) noexcept;
 void* OwnedWeaponAt(void* soldier,unsigned index) noexcept;
 // One diagnostic allowance against initial point-reload debt, once per owner/

@@ -88,6 +88,46 @@ int main() {
         CHECK(!CameraKeepsSceneLive(now,now-kSceneSignalMs));
         CHECK(CameraKeepsSceneLive(now,now-(kSceneSignalMs-1)));
     }
+    {
+        // SteadyHeave: a walker's heave eased, with the numbers of the game's own
+        // clips (research/cockpit/walk_bob.py). What is left over the last bounce,
+        // and how far the view got from the cabin.
+        auto walk=[](float span,float period,float seconds,float limit,float& left,float& furthest) {
+            HeaveSteady s{}; int owner=0; float low=1e9f,high=-1e9f; furthest=0;
+            const double dt=1.0/60.0; const int count=static_cast<int>(period*8/dt),tail=static_cast<int>(period/dt);
+            for(int i=0;i<count;++i) {
+                const float h=10.0f+0.5f*span*std::sin(6.2831853f*static_cast<float>(i*dt)/period);
+                const float shift=SteadyHeave(s,&owner,h,i*dt,seconds,limit);
+                if(i>=count-tail) { low=std::fmin(low,h+shift); high=std::fmax(high,h+shift); furthest=std::fmax(furthest,std::fabs(shift)); }
+            }
+            left=high-low;
+        };
+        float left=0,furthest=0;
+        walk(2.134f,3.5f,4.0f,2.0f,left,furthest);       // the Barga forwards: 2.1 m once in 3.5 s, followed over 4 s
+        CHECK(left>0.25f && left<0.60f && furthest<1.5f);
+        walk(2.134f,1.75f,4.0f,2.0f,left,furthest);      // its clip at twice the pace: less still
+        CHECK(left>0.10f && left<0.35f);
+        walk(0.043f,0.308f,0.35f,0.05f,left,furthest);   // the Depth Crawler: 4 cm three times a second, the Nix's 0.35 s
+        CHECK(left>0.003f && left<0.010f && furthest<0.03f);
+        walk(0.203f,2.5f,0.35f,0.35f,left,furthest);     // the Nix's own, for the measure: 9 to 15 cm of 20 are left
+        CHECK(left>0.09f && left<0.16f);
+        // A landing, a fall: the view is held back by the limit and no more, and is on the cabin soon after.
+        HeaveSteady s{}; int crawler=0,barga=0;
+        CHECK(SteadyHeave(s,&crawler,10.0f,0.0,0.35f,0.05f)==0 && s.primed);
+        CHECK(std::fabs(SteadyHeave(s,&crawler,8.6f,1.0/60,0.35f,0.05f)-0.05f)<1e-5f);
+        float shift=1;
+        for(int i=2;i<200;++i) shift=SteadyHeave(s,&crawler,8.6f,i/60.0,0.35f,0.05f);
+        CHECK(std::fabs(shift)<0.001f);
+        // Another machine, a gap in the updates, a clock that went back: from the real height again.
+        CHECK(SteadyHeave(s,&barga,40.0f,200/60.0,4.0f,2.0f)==0);
+        CHECK(SteadyHeave(s,&barga,41.0f,200/60.0+1.0/60,4.0f,2.0f)<0);
+        CHECK(SteadyHeave(s,&barga,42.0f,200/60.0+1.0,4.0f,2.0f)==0);
+        CHECK(SteadyHeave(s,&barga,43.0f,1.0,4.0f,2.0f)==0);
+        // Turned off, or a height that is no number: nothing, and a fresh start afterwards.
+        CHECK(SteadyHeave(s,&barga,43.0f,1.0+1.0/60,0.0f,2.0f)==0 && !s.primed);
+        CHECK(SteadyHeave(s,&barga,std::numeric_limits<float>::quiet_NaN(),1.1,4.0f,2.0f)==0 && !s.primed);
+        CHECK(SteadyHeave(s,&barga,43.0f,1.2,4.0f,2.0f)==0 && s.primed);
+    }
     printf("EDF6VR tests: %d failures\n",failures);
     return failures?1:0;
 }

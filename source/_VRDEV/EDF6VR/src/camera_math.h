@@ -68,6 +68,24 @@ float SteadyHead(HeadSteady&, const Matrix& root, const float rawEye[3],
                  float aimPitchRadians, float damping, float limitMetres,
                  float out[3]) noexcept;
 
+// A big walker's walking heave, eased along one axis and nothing else.
+//
+// The cabin of a walking machine rides an animated bone, and each pair of steps
+// lifts and drops it: the Barga's pelvis by 2.1 m once in 3.5 s (2.7 m walking
+// backwards), the Depth Crawler's body by 4 cm three times a second, the Nix's
+// by 20 cm (research/cockpit/walk_bob.py, from the game's own clips). The
+// machine's own transform carries none of that -- it is where the machine
+// stands and how it lies, a slope, a wall, a fall -- so the heave is the
+// cabin's height over the machine's origin, along the machine's own up, and
+// only that number is followed with a lag. Travel, the ground, every turn and
+// tilt pass through untouched, by construction.
+//
+// `height` now; the return is what to add to it: the followed height minus the
+// real one, never further than `limit` from it, so a jump, a landing or a fall
+// drags the view by no more than that. A new owner, a gap of a quarter of a
+// second or a clock that ran backwards starts again from the real height.
+struct HeaveSteady { float height=0; double at=0; bool primed=false; const void* owner=nullptr; };
+float SteadyHeave(HeaveSteady&,const void* owner,float height,double now,float seconds,float limit) noexcept;
 // Build a camera basis pointing along `forward`, laid out and handed the same
 // way as `like`, keeping its translation.
 //

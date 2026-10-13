@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.7'
+VERSION = '3.2.8'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
@@ -142,6 +142,12 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.8 (the user, after the hardware run: "テスト完了 それじゃあまとめてv001上げてアップして 修正 バルガとデプスのヘッドボブを
+# 少し軽減"; +0.0.1): the Barga's and the Depth Crawler's walking heave eased -- the cabin's height over the machine's
+# own origin followed with a lag, its angles untouched (src/camera_math.h SteadyHeave, plugin.cpp SteadyWalkerHeave;
+# [VR] BargaBobSmoothSeconds 4.0, DepthBobSmoothSeconds 0.35). Riding along, not in the notes: a hand launcher's
+# missile (the Arm Hound) turned onto the hand's aim (src/shot_origin.h; not run on hardware), and [Diagnostics]
+# MissionRequestPoints accepted beside EDF6MultiSlot 1.6.9's hook at 693F18 (src/diagnostic_points.cpp).
 # 3.2.7 (the user, after the hardware runs: "ハウンドに大きな問題がなければアップ用にまとめて v001アップ 各種ミサイルの
 # ロックオンサイトが出ていなかったバグを修正"; +0.0.1): the lock-on sight. Its frame is drawn on foot (it was drawn in
 # vehicle seats only, src/aim_hud.cpp); every VR hand's weapon locks along that hand's own aim -- a Fencer's shoulder
@@ -162,8 +168,8 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = '64CE6F3E402A46D9381DF4F4AEAEBE6DA93556A95C701C44FB6803E1343E7582'
-VERIFIED_SETTINGS_SHA = 'B723CCFBEF7734D5AEF506E06369DA13F68737BB6CEF78DE4F8E0D7F75D941BE'
+VERIFIED_VR_SHA = '6DAF38643421FDD05AA2D188D53A9B3EAD3CA88751A4F899C8E5B20598DD6446'
+VERIFIED_SETTINGS_SHA = 'C5B489047A4B561A9585332215276844C0354DB4E45620B2B12A84F431F7D2A7'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()
