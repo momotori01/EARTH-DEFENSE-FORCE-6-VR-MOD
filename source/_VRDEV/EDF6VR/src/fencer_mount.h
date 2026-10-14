@@ -115,6 +115,139 @@ struct FencerMoveOwner {
         return owner;
     }
 };
+// The gatlings' feed belt.
+//
+// A gatling's data ties its root to the body's arms bone and three of its
+// nodes to three bones of the body's back (ModelConstraint: chain_base ->
+// chain_bp, the drum by the shoulder blade; chain0 -> chain0 and chain1 ->
+// chain1, the two links of the loop that hangs from it), and the belt's last
+// stretch runs from the lower link into the gun. Carried with the gun's root,
+// as every node of a held weapon is, the drum and the loop went wherever the
+// arm's animation was not: in a reload they swung up in front of the player
+// (user 2026-10-14: "リロードアニメーション中は前に出てきて視界に入る ... ベルトの
+// 根本だけ肩に固定").
+//
+// The drum hangs on the player's own body -- the eye and the body's facing --
+// where the body has it at a level aim. The two links ride with the gun, where
+// the game's own aim poses keep them against the gun's root: from straight
+// down to straight up they stay within some 40 cm in the root's axes while
+// they travel over a metre in the body (research/fencer/gatling_belt_aim.py),
+// because the strip's last stretch hangs 56% on the lower link and 44% on the
+// gun (gatling_belt_weights.py). The first cut hung the links on the body too,
+// and that stretch came off the gun as soon as the gun left the level hip
+// (user: "背中にベルトは固定されたけど銃を上に向けた時とか変な挙動"). Nothing of the
+// body's animation is left in any of the three.
+//
+// kFencerDrumPlace / kFencerDrumRows: the drum from the eye in the body's
+// frame (left, up, forward) for the left gun (the right's is mirrored left to
+// right), and its rows in that frame, left gun then right gun: stand_base +
+// stand_waist_poseAim, the stance's six degrees of twist about the vertical
+// taken out (gatling_belt.py --fixed; the places are the two sides' mean).
+// kFencerBeltLinks: the left gun's links (chain0, then chain1) at the nine
+// pitches kFencerBeltPitch of its root -- place, then rows, in the root's own
+// axes -- the mean of the game's left side and its right side's mirror
+// (gatling_belt_aim.py --header). The right gun's are their mirror.
+inline constexpr const wchar_t* kFencerBeltNodes[3]={L"chain_bp",L"chain0",L"chain1"};
+inline constexpr float kFencerDrumPlace[3]={0.417f,-0.128f,-0.377f};
+inline constexpr float kFencerDrumRows[2][3][3]={
+    {{-0.9999f,-0.0106f,-0.0054f},{-0.0115f,0.9731f,0.2299f},{0.0028f,0.2299f,-0.9732f}},
+    {{0.9999f,0.0106f,0.0054f},{-0.0115f,0.9731f,0.2299f},{-0.0028f,-0.2299f,0.9732f}}};
+inline constexpr float kFencerBeltPitch[9]={-87.7f,-68.2f,-45.4f,-22.6f,-0.0f,22.5f,45.5f,69.6f,82.6f};
+inline constexpr float kFencerBeltLinks[2][9][4][3]={
+    {   // chain0
+     {{-0.136f,-0.293f,-0.787f},{0.7543f,0.0978f,0.6492f},{0.0330f,0.9819f,-0.1863f},{-0.6557f,0.1619f,0.7374f}},
+     {{-0.089f,-0.202f,-0.806f},{0.7660f,0.0820f,0.6376f},{0.0457f,0.9824f,-0.1812f},{-0.6412f,0.1680f,0.7487f}},
+     {{-0.033f,-0.116f,-0.816f},{0.7812f,0.0691f,0.6204f},{0.0463f,0.9847f,-0.1680f},{-0.6225f,0.1600f,0.7661f}},
+     {{0.025f,-0.053f,-0.797f},{0.8027f,0.0481f,0.5944f},{0.0387f,0.9904f,-0.1324f},{-0.5951f,0.1293f,0.7932f}},
+     {{0.082f,-0.025f,-0.788f},{0.8285f,0.0314f,0.5591f},{0.0221f,0.9958f,-0.0887f},{-0.5595f,0.0859f,0.8244f}},
+     {{0.094f,0.057f,-0.776f},{0.7724f,-0.0323f,0.6344f},{-0.0018f,0.9986f,0.0532f},{-0.6352f,-0.0422f,0.7712f}},
+     {{0.115f,0.134f,-0.779f},{0.7116f,-0.1344f,0.6896f},{0.0026f,0.9820f,0.1886f},{-0.7026f,-0.1324f,0.6992f}},
+     {{0.146f,0.250f,-0.753f},{0.6708f,-0.2209f,0.7080f},{0.0030f,0.9554f,0.2953f},{-0.7417f,-0.1960f,0.6415f}},
+     {{0.194f,0.383f,-0.701f},{0.6212f,-0.3037f,0.7224f},{-0.0214f,0.9150f,0.4030f},{-0.7834f,-0.2658f,0.5619f}},
+    },
+    {   // chain1
+     {{-0.160f,-0.700f,-0.689f},{0.9881f,0.0385f,-0.1490f},{-0.1425f,0.5954f,-0.7907f},{0.0583f,0.8025f,0.5938f}},
+     {{-0.090f,-0.551f,-0.673f},{0.9962f,0.0408f,-0.0771f},{-0.0841f,0.6857f,-0.7230f},{0.0234f,0.7267f,0.6865f}},
+     {{-0.018f,-0.470f,-0.655f},{0.9995f,0.0310f,-0.0117f},{-0.0312f,0.7646f,-0.6437f},{-0.0110f,0.6437f,0.7652f}},
+     {{0.053f,-0.435f,-0.657f},{0.9971f,0.0150f,0.0742f},{0.0284f,0.8344f,-0.5504f},{-0.0701f,0.5509f,0.8316f}},
+     {{0.117f,-0.457f,-0.711f},{0.9880f,-0.0448f,0.1476f},{0.1068f,0.8891f,-0.4450f},{-0.1113f,0.4554f,0.8833f}},
+     {{0.115f,-0.314f,-0.707f},{0.9922f,-0.0652f,0.1061f},{0.1005f,0.9223f,-0.3731f},{-0.0735f,0.3808f,0.9217f}},
+     {{0.125f,-0.239f,-0.687f},{0.9943f,-0.0683f,0.0818f},{0.0891f,0.9537f,-0.2873f},{-0.0584f,0.2930f,0.9543f}},
+     {{0.150f,-0.209f,-0.660f},{0.9942f,-0.0576f,0.0905f},{0.0729f,0.9817f,-0.1758f},{-0.0787f,0.1813f,0.9803f}},
+     {{0.207f,-0.205f,-0.694f},{0.9875f,-0.0360f,0.1536f},{0.0428f,0.9983f,-0.0408f},{-0.1519f,0.0468f,0.9873f}},
+    },
+};
+// A belt node rebuilt: `rows` its unit rows and `place` its place in the drawn
+// world; `in` is the node as the game has it, for the length of each row and
+// its W lane only.
+inline bool FencerBeltPut(const float rows[3][3],const float place[3],const float in[4][4],float out[4][4]) noexcept {
+    float made[4][4]{};
+    for(int i=0;i<3;++i) {
+        const float length=std::sqrt(in[i][0]*in[i][0]+in[i][1]*in[i][1]+in[i][2]*in[i][2]);
+        if(!std::isfinite(length) || length<1e-4f) return false;
+        for(int j=0;j<3;++j) {
+            made[i][j]=rows[i][j]*length;
+            if(!std::isfinite(made[i][j]) || !std::isfinite(place[j])) return false;
+        }
+        made[i][3]=in[i][3];
+        made[3][i]=place[i];
+    }
+    made[3][3]=in[3][3];
+    for(int i=0;i<4;++i) for(int j=0;j<4;++j) out[i][j]=made[i][j];
+    return true;
+}
+// The drum of hand `hand`'s gun: `body` the body's unit rows (left, up,
+// forward), `eye` its eye.
+inline bool FencerBeltDrum(unsigned hand,const float body[3][3],const float eye[3],const float in[4][4],float out[4][4]) noexcept {
+    if(hand>1) return false;
+    float rows[3][3]{},place[3]{};
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j)
+        rows[i][j]=kFencerDrumRows[hand][i][0]*body[0][j]+kFencerDrumRows[hand][i][1]*body[1][j]+kFencerDrumRows[hand][i][2]*body[2][j];
+    const float side=hand==1?-kFencerDrumPlace[0]:kFencerDrumPlace[0];
+    for(int j=0;j<3;++j) place[j]=eye[j]+side*body[0][j]+kFencerDrumPlace[1]*body[1][j]+kFencerDrumPlace[2]*body[2][j];
+    return FencerBeltPut(rows,place,in,out);
+}
+// Link `link` (0 the upper, chain0; 1 the lower, chain1) of hand `hand`'s gun:
+// `gun` the gun's root as it is drawn, `up` the world's up. The link's place
+// and rows against the root are read off the table at the root's pitch, between
+// the two pitches beside it.
+inline bool FencerBeltLink(unsigned hand,unsigned link,const float gun[4][4],const float up[3],const float in[4][4],float out[4][4]) noexcept {
+    if(hand>1 || link>1) return false;
+    float axes[3][3]{};
+    for(int i=0;i<3;++i) {
+        const float length=std::sqrt(gun[i][0]*gun[i][0]+gun[i][1]*gun[i][1]+gun[i][2]*gun[i][2]);
+        if(!std::isfinite(length) || length<1e-4f) return false;
+        for(int j=0;j<3;++j) axes[i][j]=gun[i][j]/length;
+    }
+    const float rise=std::clamp(axes[2][0]*up[0]+axes[2][1]*up[1]+axes[2][2]*up[2],-1.0f,1.0f);
+    if(!std::isfinite(rise)) return false;
+    const float pitch=std::asin(rise)*57.29578f;
+    constexpr int last=static_cast<int>(sizeof(kFencerBeltPitch)/sizeof(kFencerBeltPitch[0]))-1;
+    int k=0; while(k<last-1 && pitch>kFencerBeltPitch[k+1]) ++k;
+    const float t=std::clamp((pitch-kFencerBeltPitch[k])/(kFencerBeltPitch[k+1]-kFencerBeltPitch[k]),0.0f,1.0f);
+    // In the root's axes; the right gun's is the left's mirror, left to right.
+    float local[4][3]{};
+    for(int i=0;i<4;++i) for(int j=0;j<3;++j) {
+        const float value=kFencerBeltLinks[link][k][i][j]*(1-t)+kFencerBeltLinks[link][k+1][i][j]*t;
+        const bool flipped=hand==1 && (i==0?j==0:(i==1)!=(j==0));       // the place's x; a row's x or the x row, not both
+        local[i][j]=flipped?-value:value;
+    }
+    // The rows between two pitches, made square again.
+    for(int i=1;i<4;++i) {
+        for(int before=1;before<i;++before) {
+            const float along=local[i][0]*local[before][0]+local[i][1]*local[before][1]+local[i][2]*local[before][2];
+            for(int j=0;j<3;++j) local[i][j]-=along*local[before][j];
+        }
+        const float length=std::sqrt(local[i][0]*local[i][0]+local[i][1]*local[i][1]+local[i][2]*local[i][2]);
+        if(length<1e-4f) return false;
+        for(int j=0;j<3;++j) local[i][j]/=length;
+    }
+    float rows[3][3]{},place[3]{};
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j)
+        rows[i][j]=local[i+1][0]*axes[0][j]+local[i+1][1]*axes[1][j]+local[i+1][2]*axes[2][j];
+    for(int j=0;j<3;++j) place[j]=gun[3][j]+local[0][0]*axes[0][j]+local[0][1]*axes[1][j]+local[0][2]*axes[2][j];
+    return FencerBeltPut(rows,place,in,out);
+}
 // A swung weapon's rows on the hand, from where its root is now.
 //
 // A blade, a hammer or the katana in its swing is drawn as the game swings it:

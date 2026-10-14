@@ -969,6 +969,73 @@ void FencerPlaceSheath(const WeaponHoldCommand& command,edf6vr::Matrix& m) noexc
     m=out;
     g_fencerSheathsPlaced.fetch_add(1,std::memory_order_relaxed);
 }
+// A gatling's feed belt (fencer_mount.h): its drum hangs on the player's body --
+// the eye and the body's yaw frame, as the shoulder weapons and a blade's sheath
+// do -- and its two links ride with the gun at fixed places for the gun's pitch,
+// none of them where the body's animation has them (the user, 2026-10-14:
+// "ガトリング系の肩に繋がった給弾ベルトが、リロードアニメーション中は前に出てきて
+// 視界に入る事がある ベルトの根本だけ肩に固定").
+// The model is asked for the three nodes every time (FencerModelTrusted says
+// why); written into the command as the body's rows and eye in the frame of its
+// hand, so the draw's yaw retiming carries them. False -- and the belt carried
+// with the gun as before -- without the body's yaw, with the shoulders left on
+// the game's mounts, or for a weapon that has no such nodes.
+std::atomic<unsigned long long> g_fencerBeltsPlaced{0};
+std::atomic<const void*> g_fencerBeltLogged[2]{};
+bool FencerBeltCommand(unsigned hand,void* weapon,void* model,const void* nodes,unsigned count,WeaponHoldCommand& out) noexcept {
+    out.beltValid=false;
+    if(hand>1 || !g_fencerShoulderOnHead || !g_fencerBodyYawValid) return false;
+    for(int i=0;i<3;++i) {
+        out.beltNodes[i]=FencerNodeIndex(model,nodes,count,edf6vr::kFencerBeltNodes[i]);
+        if(out.beltNodes[i]<1) return false;
+    }
+    float axes[3][3]{};
+    for(int k=0;k<3;++k) {
+        const float n=std::sqrt(out.hand.axes[k][0]*out.hand.axes[k][0]+out.hand.axes[k][1]*out.hand.axes[k][1]+out.hand.axes[k][2]*out.hand.axes[k][2]);
+        if(!std::isfinite(n) || n<1e-3f) return false;
+        for(int j=0;j<3;++j) axes[k][j]=out.hand.axes[k][j]/n;
+    }
+    // The body's yaw frame: left (+R, the body's left on hardware), up, forward.
+    const float body[3][3]={{std::cos(g_fencerBodyYaw),0,-std::sin(g_fencerBodyYaw)},{0,1,0},{std::sin(g_fencerBodyYaw),0,std::cos(g_fencerBodyYaw)}};
+    for(int i=0;i<3;++i) for(int k=0;k<3;++k) out.beltBody[i][k]=body[i][0]*axes[k][0]+body[i][1]*axes[k][1]+body[i][2]*axes[k][2];
+    for(int k=0;k<3;++k) {
+        float d=0; for(int j=0;j<3;++j) d+=(g_eyeWorld[j]-out.hand.palm[j])*axes[k][j];
+        out.beltEye[k]=d;
+    }
+    out.beltValid=true;
+    if(g_fencerBeltLogged[hand].exchange(weapon,std::memory_order_relaxed)!=weapon)
+        Log("FENCERBELT %s gatling %p: the drum (node %d) hangs on the body, the belt's links (nodes %d, %d) ride with the gun at its pitch",
+            hand?"right":"left",weapon,out.beltNodes[0],out.beltNodes[1],out.beltNodes[2]);
+    return true;
+}
+// The draw: the drum's palette matrix rebuilt on the body as drawn, the two
+// links' on the gun's root as drawn (wanted[0], already carried onto the hand).
+void FencerPlaceBelt(const WeaponHoldCommand& command,const edf6vr::Matrix* kept,edf6vr::Matrix* wanted,std::size_t count) noexcept {
+    if(command.handIndex>1) return;
+    float axes[3][3]{};
+    for(int k=0;k<3;++k) {
+        const float n=std::sqrt(command.hand.axes[k][0]*command.hand.axes[k][0]+command.hand.axes[k][1]*command.hand.axes[k][1]+command.hand.axes[k][2]*command.hand.axes[k][2]);
+        if(!std::isfinite(n) || n<1e-3f) return;
+        for(int j=0;j<3;++j) axes[k][j]=command.hand.axes[k][j]/n;
+    }
+    float body[3][3]{},eye[3]{};
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j)
+        body[i][j]=command.beltBody[i][0]*axes[0][j]+command.beltBody[i][1]*axes[1][j]+command.beltBody[i][2]*axes[2][j];
+    for(int j=0;j<3;++j)
+        eye[j]=command.hand.palm[j]+command.beltEye[0]*axes[0][j]+command.beltEye[1]*axes[1][j]+command.beltEye[2]*axes[2][j];
+    // All three or none: a belt with one node left where the animation has it
+    // is the fault this is here for.
+    edf6vr::Matrix made[3]{};
+    for(unsigned n=0;n<3;++n) {
+        const int b=command.beltNodes[n];
+        if(b<1 || static_cast<std::size_t>(b)>=count) return;
+        const bool placed=n==0?edf6vr::FencerBeltDrum(command.handIndex,body,eye,kept[b].m,made[n].m)
+                              :edf6vr::FencerBeltLink(command.handIndex,n-1,wanted[0].m,body[1],kept[b].m,made[n].m);
+        if(!placed) return;
+    }
+    for(unsigned n=0;n<3;++n) wanted[command.beltNodes[n]]=made[n];
+    g_fencerBeltsPlaced.fetch_add(1,std::memory_order_relaxed);
+}
 // A back mount's barrel hangs from its node "joint" (root -> body -> joint ->
 // the barrel's own parts, in every back model that has one), and the game ties
 // that node to the Fencer's backWeaponJoint bone (sgott: ModelConstraint
@@ -1736,6 +1803,7 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
     // shoulder, whatever the model does on its mount (lock_sight.h).
     if(hand<2) { FencerAimFrameYaw(wantDir,wantYaw,out.lockRows); out.lockFrame=true; }
     if(FencerBladeSheath(wp.weapon,wp.model,wp.nodes,static_cast<unsigned>(wp.nodeCount))>0) FencerSheathCommand(hand,out);
+    FencerBeltCommand(hand,wp.weapon,wp.model,wp.nodes,static_cast<unsigned>(wp.nodeCount),out);
     out.headRoom[0]=g_lastHeadXr.x; out.headRoom[1]=g_lastHeadXr.y; out.headRoom[2]=g_lastHeadXr.z;
     out.yawOffset=g_yawOffset;
     out.tracked=true; out.handIndex=hand; out.fencer=true; out.latch=false;

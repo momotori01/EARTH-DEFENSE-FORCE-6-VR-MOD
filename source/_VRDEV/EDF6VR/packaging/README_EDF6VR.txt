@@ -1,5 +1,9 @@
-﻿EDF6VR 3.2.8
+﻿EDF6VR 3.2.9
 =============================
+
+CHANGES IN 3.2.9
+- Fixed: the Fencer's gatling feed belt was not held in place on the back.
+- Still bundles EDF6MultiSlot 1.6.9.
 
 CHANGES IN 3.2.8
 - Fixed: the Barga and the Depth Crawler bob up and down a little less as

@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.8'
+VERSION = '3.2.9'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
@@ -142,6 +142,11 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.9 (the user, after the hardware run: "ベルトOK v001上げてアップして 修正 フェンサーの給弾ベルトが背中に固定されて
+# いなかった 文章の確認は不要。そのままアップして"; +0.0.1): a Fencer gatling's feed belt. Carried with the gun's root, its
+# drum and loop swung up into view in a reload; now the drum hangs on the player's back (the eye and the body's yaw) and
+# the loop's two links ride with the gun where the game's own aim poses keep them for the gun's pitch (src/fencer_mount.h
+# FencerBeltDrum, FencerBeltLink; fencer_dual.h FencerPlaceBelt). No setting, no INI key.
 # 3.2.8 (the user, after the hardware run: "テスト完了 それじゃあまとめてv001上げてアップして 修正 バルガとデプスのヘッドボブを
 # 少し軽減"; +0.0.1): the Barga's and the Depth Crawler's walking heave eased -- the cabin's height over the machine's
 # own origin followed with a lag, its angles untouched (src/camera_math.h SteadyHeave, plugin.cpp SteadyWalkerHeave;
@@ -168,8 +173,8 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = '6DAF38643421FDD05AA2D188D53A9B3EAD3CA88751A4F899C8E5B20598DD6446'
-VERIFIED_SETTINGS_SHA = 'C5B489047A4B561A9585332215276844C0354DB4E45620B2B12A84F431F7D2A7'
+VERIFIED_VR_SHA = '28F49D09A27E2AD1D1BE729B78F021462364FC7C6EC655B5D6C6217360F46A27'
+VERIFIED_SETTINGS_SHA = '7DE1ACF972A5D3BBE97D56F85D35B80E665F51F0BFF7D983CB27CD2566DE484E'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

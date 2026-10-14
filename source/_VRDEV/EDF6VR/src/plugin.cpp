@@ -494,6 +494,11 @@ struct WeaponHoldCommand {
     // carries it with the weapon.
     bool sheathValid=false;
     float sheathAxes[3][3]{},sheathPos[3]{};
+    // A gatling's feed belt on the player's body (fencer_dual.h FencerPlaceBelt):
+    // its three nodes, and the body's rows and eye in the frame of `hand`.
+    bool beltValid=false;
+    int beltNodes[3]{-1,-1,-1};
+    float beltBody[3][3]{},beltEye[3]{};
     // A Fencer blade, hammer or katana (fencer_dual.h, the melee branch): the
     // game's aim frame its swing is posed in and the hand's frame it is drawn
     // on, so the weapon's tick can work the swing's rows out again from the
@@ -7265,6 +7270,9 @@ bool DrawHeldWeapon(void* model,void* renderContext,int pass,void* view) {
                         if(command.sheathValid) FencerPlaceSheath(command,wanted[sheath]);
                         g_fencerSheathsKept.fetch_add(1,std::memory_order_relaxed);
                     }
+                    // A gatling's drum and hanging belt stay on the player's body
+                    // (FencerPlaceBelt); carried with the gun if that is unknown.
+                    if(command.beltValid) FencerPlaceBelt(command,kept,wanted,paletteCount);
                 }
                 if(prepared) {
                     const bool dual=RangerDualWeapon(command.weapon);
@@ -7608,7 +7616,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.8 cockpit loading, with EDF6MultiSlot 1.6.9. The Barga's and the Depth Crawler's walking heave eased ([VR] BargaBobSmoothSeconds, DepthBobSmoothSeconds); a hand launcher's missile leaves along the hand's aim; [Diagnostics] MissionRequestPoints beside MultiSlot 1.6.9.");
+    Log("EDF6VR 3.2.9 cockpit loading, with EDF6MultiSlot 1.6.9. A Fencer gatling's feed belt: its drum on the player's back, its two links riding with the gun at its pitch (fencer_mount.h FencerBeltDrum, FencerBeltLink).");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');

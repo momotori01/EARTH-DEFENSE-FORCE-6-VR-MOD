@@ -213,6 +213,113 @@ int main() {
         const float bad[3][3]={{NAN,0,0},{0,1,0},{0,0,1}};
         CHECK(!edf6vr::FencerSwingRows(bad,from,to,out));
     }
+    {
+        // A gatling's feed belt. Its drum hangs on the player's body, wherever
+        // the game's animation has it (FencerBeltDrum).
+        const float ahead[3][3]={{1,0,0},{0,1,0},{0,0,1}},eye[3]={10,20,30},up[3]={0,1,0};
+        const float gameA[4][4]={{1,0,0,0},{0,1,0,0},{0,0,1,0},{3,4,5,1}};                       // as the game has the node...
+        const float gameB[4][4]={{0,0,-2,0},{0,2,0,0},{2,0,0,0},{-7,1,9,1}};                     // ...and in a reload: elsewhere, turned, twice the size
+        float left[4][4]{},right[4][4]{},again[4][4]{};
+        CHECK(edf6vr::FencerBeltDrum(0,ahead,eye,gameA,left) && edf6vr::FencerBeltDrum(1,ahead,eye,gameA,right));
+        // Behind the shoulder on the gun's own side, the two sides mirrored.
+        CHECK(std::fabs(left[3][0]-10.417f)<1e-4f && std::fabs(left[3][1]-19.872f)<1e-4f && std::fabs(left[3][2]-29.623f)<1e-4f);
+        CHECK(std::fabs(right[3][0]-9.583f)<1e-4f && right[3][1]==left[3][1] && right[3][2]==left[3][2]);
+        CHECK(left[3][3]==1 && left[0][3]==0);
+        // Nothing of the game's pose is left in it but the size of its rows.
+        CHECK(edf6vr::FencerBeltDrum(0,ahead,eye,gameB,again));
+        for(int j=0;j<3;++j) CHECK(again[3][j]==left[3][j]);
+        for(int i=0;i<3;++i) for(int j=0;j<3;++j) CHECK(std::fabs(again[i][j]-2*left[i][j])<1e-5f);
+        // The body turned a quarter to its left (yaw 90: its forward along +X, its left along -Z): the drum goes with it.
+        const float turned[3][3]={{0,0,-1},{0,1,0},{1,0,0}};
+        float quarter[4][4]{};
+        CHECK(edf6vr::FencerBeltDrum(0,turned,eye,gameA,quarter));
+        CHECK(std::fabs(quarter[3][0]-(10-0.377f))<1e-4f && std::fabs(quarter[3][2]-(30-0.417f))<1e-4f && std::fabs(quarter[3][1]-19.872f)<1e-4f);
+
+        // Its two links ride with the gun (FencerBeltLink). A gun's root: turned
+        // `yaw` to its left, pitched up, rolled about its barrel, at `at`.
+        const auto gun=[](float yaw,float pitch,float roll,float x,float y,float z,float out[4][4]) {
+            const float k=0.01745329252f,cy=std::cos(yaw*k),sy=std::sin(yaw*k),cp=std::cos(pitch*k),sp=std::sin(pitch*k),cr=std::cos(roll*k),sr=std::sin(roll*k);
+            const float f[3]={sy*cp,sp,cy*cp},r[3]={cy,0,-sy};
+            const float u[3]={f[1]*r[2]-f[2]*r[1],f[2]*r[0]-f[0]*r[2],f[0]*r[1]-f[1]*r[0]};
+            for(int j=0;j<3;++j) { out[0][j]=r[j]*cr+u[j]*sr; out[1][j]=u[j]*cr-r[j]*sr; out[2][j]=f[j]; }
+            out[0][3]=out[1][3]=out[2][3]=0; out[3][0]=x; out[3][1]=y; out[3][2]=z; out[3][3]=1;
+        };
+        // A link in its gun's own axes: its place from the root, and its rows.
+        const auto inGun=[](const float g[4][4],const float node[4][4],float place[3],float rows[3][3]) {
+            for(int k=0;k<3;++k) {
+                place[k]=(node[3][0]-g[3][0])*g[k][0]+(node[3][1]-g[3][1])*g[k][1]+(node[3][2]-g[3][2])*g[k][2];
+                for(int i=0;i<3;++i) rows[i][k]=node[i][0]*g[k][0]+node[i][1]*g[k][1]+node[i][2]*g[k][2];
+            }
+        };
+        float level[4][4]{},link[4][4]{},place[3]{},rows[3][3]{};
+        gun(0,0,0,10.28f,19.7f,30.45f,level);
+        // Held level: the lower link behind and below the root, on the gun's outer side, where the game has it at a level aim.
+        CHECK(edf6vr::FencerBeltLink(0,1,level,up,gameA,link));
+        inGun(level,link,place,rows);
+        CHECK(near3(place,0.117f,-0.457f,-0.711f,2e-3f));
+        CHECK(edf6vr::FencerBeltLink(1,1,level,up,gameA,link));
+        inGun(level,link,place,rows);
+        CHECK(near3(place,-0.117f,-0.457f,-0.711f,2e-3f));
+        // Turned, rolled, carried anywhere: the link is where it was against the gun -- the strip's last stretch,
+        // which hangs half on this link and half on the gun, keeps its shape.
+        for(unsigned hand=0;hand<2;++hand) for(unsigned n=0;n<2;++n) for(float pitch:{-60.0f,0.0f,35.0f,80.0f}) {
+            float base[4][4]{},baseLink[4][4]{},basePlace[3]{},baseRows[3][3]{};
+            gun(0,pitch,0,0,0,0,base);
+            CHECK(edf6vr::FencerBeltLink(hand,n,base,up,gameA,baseLink));
+            inGun(base,baseLink,basePlace,baseRows);
+            CHECK(std::sqrt(basePlace[0]*basePlace[0]+basePlace[1]*basePlace[1]+basePlace[2]*basePlace[2])<1.0f && basePlace[2]<-0.6f);
+            const float poses[4][5]={{70,0,3,-2,8},{-140,25,-1,5,0},{15,-40,0.3f,0.1f,0.6f},{180,90,7,7,7}};
+            for(const auto& pose:poses) {
+                float moved[4][4]{},movedLink[4][4]{},movedPlace[3]{},movedRows[3][3]{};
+                gun(pose[0],pitch,pose[1],pose[2],pose[3],pose[4],moved);
+                CHECK(edf6vr::FencerBeltLink(hand,n,moved,up,gameA,movedLink));
+                inGun(moved,movedLink,movedPlace,movedRows);
+                CHECK(near3(movedPlace,basePlace[0],basePlace[1],basePlace[2],2e-4f));
+                for(int i=0;i<3;++i) CHECK(near3(movedRows[i],baseRows[i][0],baseRows[i][1],baseRows[i][2],2e-4f));
+            }
+        }
+        // From straight down to straight up: square rows, no jump (under 1.5 cm a degree), never further than the
+        // game takes it, and the right gun's link the left's mirror.
+        float before[2][3]{}; bool first=true;
+        for(int degrees=-90;degrees<=90;++degrees) {
+            float g[4][4]{};
+            gun(0,static_cast<float>(degrees),0,0,0,0,g);
+            for(unsigned n=0;n<2;++n) {
+                float l[4][4]{},r[4][4]{},pl[3]{},pr[3]{},rl[3][3]{},rr[3][3]{};
+                CHECK(edf6vr::FencerBeltLink(0,n,g,up,gameA,l) && edf6vr::FencerBeltLink(1,n,g,up,gameA,r));
+                inGun(g,l,pl,rl); inGun(g,r,pr,rr);
+                for(int i=0;i<3;++i) for(int k=0;k<3;++k) {
+                    const float dot=l[i][0]*l[k][0]+l[i][1]*l[k][1]+l[i][2]*l[k][2];
+                    CHECK(std::fabs(dot-(i==k?1.0f:0.0f))<1e-4f);
+                    CHECK(std::fabs(rr[i][k]-((i==0)!=(k==0)?-rl[i][k]:rl[i][k]))<1e-4f);
+                }
+                CHECK(std::fabs(pr[0]+pl[0])<1e-5f && std::fabs(pr[1]-pl[1])<1e-5f && std::fabs(pr[2]-pl[2])<1e-5f);
+                CHECK(pl[2]<-0.6f && pl[2]>-0.9f && std::fabs(pl[0])<0.25f && pl[1]>-0.75f && pl[1]<0.45f);
+                if(!first) CHECK(std::sqrt((pl[0]-before[n][0])*(pl[0]-before[n][0])+(pl[1]-before[n][1])*(pl[1]-before[n][1])+(pl[2]-before[n][2])*(pl[2]-before[n][2]))<0.015f);
+                for(int j=0;j<3;++j) before[n][j]=pl[j];
+            }
+            first=false;
+        }
+        // The size of the game's rows and its W lane are kept; nothing else of its pose.
+        float sized[4][4]{},plain[4][4]{};
+        CHECK(edf6vr::FencerBeltLink(0,0,level,up,gameB,sized) && edf6vr::FencerBeltLink(0,0,level,up,gameA,plain));
+        for(int j=0;j<3;++j) CHECK(sized[3][j]==plain[3][j]);
+        for(int i=0;i<3;++i) for(int j=0;j<3;++j) CHECK(std::fabs(sized[i][j]-2*plain[i][j])<1e-5f);
+        CHECK(sized[3][3]==1 && sized[1][3]==0);
+        // The world's up is the caller's: a level gun in a world lying on its side is a level gun.
+        const float sideUp[3]={1,0,0};
+        float lying[4][4]={{0,-1,0,0},{1,0,0,0},{0,0,1,0},{0,0,0,1}},lyingLink[4][4]{},lyingPlace[3]{},lyingRows[3][3]{};
+        CHECK(edf6vr::FencerBeltLink(0,1,lying,sideUp,gameA,lyingLink));
+        inGun(lying,lyingLink,lyingPlace,lyingRows);
+        CHECK(near3(lyingPlace,0.117f,-0.457f,-0.711f,2e-3f));
+        // No such link, no such hand, a gun or a node that is no matrix: nothing written.
+        float untouched[4][4]{{9,9,9,9},{9,9,9,9},{9,9,9,9},{9,9,9,9}};
+        const float flat[4][4]={{0,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}};
+        CHECK(!edf6vr::FencerBeltLink(0,2,level,up,gameA,untouched) && !edf6vr::FencerBeltLink(2,0,level,up,gameA,untouched));
+        CHECK(!edf6vr::FencerBeltLink(0,0,flat,up,gameA,untouched) && !edf6vr::FencerBeltLink(0,0,level,up,flat,untouched));
+        CHECK(!edf6vr::FencerBeltDrum(2,ahead,eye,gameA,untouched) && !edf6vr::FencerBeltDrum(0,ahead,eye,flat,untouched));
+        CHECK(untouched[0][0]==9 && untouched[3][3]==9);
+    }
     std::printf("Fencer heavy aim: %d failures\n",failures);
     return failures?1:0;
 }

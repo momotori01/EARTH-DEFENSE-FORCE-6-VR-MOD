@@ -766,6 +766,7 @@ void ReportGuideProbe() noexcept {
     if(g_fencerAimCarries[0].load() || g_fencerAimCarries[1].load())
         Log("FENCERAIMCARRY muzzle turned onto the hand's aim (Arm Hound) L/R=%llu/%llu ticks",g_fencerAimCarries[0].load(),g_fencerAimCarries[1].load());
     LogLockSight();
+    if(g_fencerBeltsPlaced.load()) Log("FENCERBELT gatling draws with the drum on the body and the links on the gun=%llu",g_fencerBeltsPlaced.load());
     if(g_fencerLunges.load()) Log("FENCERLUNGE left weapon's moves turned onto the left aim=%llu (%llu steps); the last by %.1fdeg from the body's facing, %.1fm so far",
                                   g_fencerLunges.load(),g_fencerLungeSteps.load(),g_fencerLungeTurnDeg.load(),g_fencerLungeMetres.load());
     Log("SIGHTLINE laser x%.2f lent=%llu width=%.4f guide x%.2f thinned=%llu (0.02 -> %.4f) vehicle x%.2f lines=%llu width=%.3f",
