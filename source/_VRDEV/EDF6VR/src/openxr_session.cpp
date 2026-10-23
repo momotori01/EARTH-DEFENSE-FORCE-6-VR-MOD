@@ -2389,7 +2389,8 @@ void RunDisplayFrame(ID3D11Texture2D* backBuffer,unsigned width,unsigned height,
     bool cockpitHud=false;
     if(nativeImages.ready && nativeImages.cockpitMatched) {
         auto* hud=g_uiLayer.load()?UiTexture():nullptr;
-        // A cockpit with a subtitle screen: the radio subtitles from their own
+        // A cockpit's subtitle screen (the Nix-type cabins'; the others have
+        // none): the radio subtitles from their own
         // capture (ui_capture.h), none when there is no line this frame -- once
         // that capture has worked at all; till then (or should the game's draw
         // ever escape the scope) the screen keeps its crop of the HUD.

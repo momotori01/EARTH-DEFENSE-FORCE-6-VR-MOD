@@ -1,5 +1,13 @@
-﻿EDF6VR 3.2.9
+﻿EDF6VR 3.2.10
 =============================
+
+CHANGES IN 3.2.10
+- Fixed: the Eiren's arms shook while its Electromagnetic Laser Cannons
+  fired. These lasers and the flame throwers (the Depth Crawler's
+  Incinerators, the Nix's Combat Burner) no longer recoil.
+- Fixed: in a vehicle, the cockpit monitors changed size when a radio
+  subtitle appeared.
+- Still bundles EDF6MultiSlot 1.6.9.
 
 CHANGES IN 3.2.9
 - Fixed: the Fencer's gatling feed belt was not held in place on the back.

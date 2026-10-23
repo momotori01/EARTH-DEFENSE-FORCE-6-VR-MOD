@@ -25,6 +25,13 @@ int main() {
     CHECK(Near(kick.Level(5.0,decay),kick.level));
     RecoilKick untouched{}; untouched.Shot(std::nan(""),decay); CHECK(Near(untouched.Level(1.0,decay),0));
 
+    // The Electromagnetic Laser Cannons and the flame throwers do not kick; every other bullet does.
+    CHECK(RecoillessAmmo(L"EfsExposureBullet") && RecoillessAmmo(L"FlameBullet02"));
+    for(const wchar_t* kicks:{L"SolidBullet01",L"LaserBullet01",L"HomingLaserBullet01",L"MissileBullet01",L"RocketBullet01",
+                              L"GrenadeBullet01",L"FlameBullet01",L"EfsExposureBullet2",L"",L"flamebullet02"})
+        CHECK(!RecoillessAmmo(kicks));
+    CHECK(!RecoillessAmmo(nullptr));
+
     // The kick tilts the muzzle up about the palm and moves the hand back.
     float axes[3][3]={{1,0,0},{0,1,0},{0,0,1}}; float palm[3]={0,0,0};
     RecoilKickShape shape{3.14159265f/2,0.01f};

@@ -29,9 +29,10 @@ WorldUiStats ReadWorldUiStats() noexcept;
 // on, a read-back every 5 s) where in the world image the plates landed.
 void ReadWorldUiNotes(char* out,size_t size) noexcept;
 // The radio subtitles: draws inside a subtitle scope go to a target of their
-// own (as the world scope's do), for a cockpit's subtitle screen. Only while
-// MarkSubtitleUi has been called in the last half second (a cockpit with that
-// screen is in use); otherwise the subtitles stay on the HUD.
+// own (as the world scope's do), for a cockpit's subtitle screen and to keep
+// them out of the HUD the cockpit monitors crop. Only while MarkSubtitleUi has
+// been called in the last half second (a built cabin is in use); otherwise the
+// subtitles stay on the HUD.
 void UiCaptureSubtitleScope(bool enter) noexcept;
 void EnableSubtitleUi(bool on) noexcept;
 void MarkSubtitleUi() noexcept;

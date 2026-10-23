@@ -4996,13 +4996,22 @@ bool ApplyVehicleCamera(void* camera,void* source,void* cameraSoldier,
         anchored=true;
     }
     else edf6vr::ClearCockpitPose();
+    // In every built cabin the radio subtitles are drawn off the HUD, into their
+    // own picture (nameplate_hooks.h SubtitleDrawHook): the Nix-type cabins'
+    // lower screen shows them alone. The others have no such screen, and the
+    // monitors that crop the HUD fit their crop to what is drawn in it
+    // (cockpit_draw.cpp crop): a subtitle in the left half of the screen widened
+    // the weapon monitor's crop and shrank everything on it, the line itself cut
+    // at the screen's middle (the user, 2026-10-17: "バルガの情報モニター、字幕が入ると
+    // 表示されてるもののサイズが変わる ... ビーグル搭乗中は字幕通信が入っても表示物の
+    // サイズ変らないようにできる？").
+    if(cockpit) edf6vr::MarkSubtitleUi();
     // The Nix-type cabins' walking bob (SteadyCabin), before anything hangs on the cabin.
     // This, the arm aim (NixArmAimTarget below) and the subtitle screen go by the
     // cabin alone, never by the hand aim's switch for the seat (VehicleHandAimNix,
     // the settings program's Nix box): unticked, the body turns on the stick and
     // the rest stays (the user, 2026-10-03).
     if(cockpit&&edf6vr::HandAimClassOf(g_cockpitRig.kind)==edf6vr::HandAimClass::Nix) {
-        edf6vr::MarkSubtitleUi();   // the cabin's lower screen shows the radio subtitles alone
         const auto raw=base;
         SteadyCabin(seat.vehicle,base);
         PublishCabinHeadFix(seat.vehicle,raw,base);   // the head follows the cabin (vehicle_recoil.h)
@@ -7616,7 +7625,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.9 cockpit loading, with EDF6MultiSlot 1.6.9. A Fencer gatling's feed belt: its drum on the player's back, its two links riding with the gun at its pitch (fencer_mount.h FencerBeltDrum, FencerBeltLink).");
+    Log("EDF6VR 3.2.10 cockpit loading, with EDF6MultiSlot 1.6.9. The Eiren's Electromagnetic Laser Cannons and the flame throwers do not kick (weapon_kick.h RecoillessAmmo); in every built cabin the radio subtitles are kept off the HUD the monitors crop.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');

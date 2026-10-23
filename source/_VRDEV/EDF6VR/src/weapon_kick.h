@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <cwchar>
 namespace edf6vr {
 // Visual recoil. Placing the weapon at the hand discards the game's own kick
 // animation, so the shots are counted instead: each discharge adds one to a
@@ -27,6 +28,20 @@ struct RecoilKick {
         return level*std::exp(-static_cast<float>(age)/decaySeconds);
     }
 };
+// The vehicle weapons that do not kick at all, told by the bullet they fire
+// (the weapon's AmmoClass): the Eiren's Electromagnetic Laser Cannons
+// (EfsExposureBullet) and the flame throwers -- the Depth Crawler's
+// Incinerators and the Nix's Combat Burner (FlameBullet02). Nothing else on
+// the machines that kick fires either bullet (research/vehicle/
+// eiren_weapons.py --rates). The lasers fire every frame (FireInterval 1):
+// counted on every update the level sat at kMax and jolted at that rate, the
+// arm held 8 to 10 degrees up and 20 to 25 cm back and shaking (a friend's
+// log, 2026-10-24: "エイレンの射撃が荒ぶっていた"; "重いシーンではレーザーが荒ぶる").
+// The user: "電磁レーザーと火炎放射は初段から反動無しで。どちらも無反動なイメージの
+// 武器だし 他は従来通りで" ("インシネレーターと火炎放射とレーザーね").
+inline bool RecoillessAmmo(const wchar_t* ammoClass) noexcept {
+    return ammoClass && (!std::wcscmp(ammoClass,L"EfsExposureBullet") || !std::wcscmp(ammoClass,L"FlameBullet02"));
+}
 struct RecoilKickShape { float pitchRadians=0; float backMetres=0; };
 // axes rows: right, up, ahead (the hand frame the weapon is placed in). The
 // muzzle end tilts up about the palm and the whole thing moves back along the

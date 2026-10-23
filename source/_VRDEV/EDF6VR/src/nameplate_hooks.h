@@ -90,8 +90,9 @@ void* __fastcall NameplateDraw3(void* s,void* a,void* b,void* c) { return Namepl
 // override of xgs::ui::Object's draw slot (vtable 17F4298+0x10 -> 7D8940, the
 // base's is pure): it scales its layout from the screen size to 1920x1080 and
 // draws the rounded box and the text. Wrapped in a subtitle scope while a
-// cockpit with a subtitle screen is in use (MarkSubtitleUi), its draws go to a
-// picture of their own -- the same means as the chat bubbles' world scope.
+// built cabin is in use (MarkSubtitleUi), its draws go to a picture of their
+// own -- the same means as the chat bubbles' world scope -- shown on a Nix-type
+// cabin's subtitle screen and kept out of every cabin's HUD monitors.
 constexpr unsigned kSubtitleVtable=0x17F4298,kSubtitleDraw=0x7D8940;
 using SubtitleDraw=void*(__fastcall*)(void*,void*,void*,void*);
 SubtitleDraw g_subtitleOriginal=nullptr;

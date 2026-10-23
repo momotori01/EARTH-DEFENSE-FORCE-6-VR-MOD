@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.9'
+VERSION = '3.2.10'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
@@ -142,6 +142,12 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.10 (the user: "v001上げてアップして"; +0.0.1): the Eiren's Electromagnetic Laser Cannons (EfsExposureBullet) and the
+# flame throwers -- the Depth Crawler's Incinerators, the Nix's Combat Burner (FlameBullet02) -- do not kick (the weapon's
+# AmmoClass at weapon+0x240, src/weapon_kick.h RecoillessAmmo, vehicle_recoil.h); the lasers fire every frame and their kick
+# had sat at its cap, shaking the arms (a friend's log: "エイレンの射撃が荒ぶっていた"). And in every built cabin the radio
+# subtitles are drawn off the HUD the monitors crop (plugin.cpp MarkSubtitleUi), so a line no longer widens the weapon
+# monitor's crop. Neither run on hardware before the upload.
 # 3.2.9 (the user, after the hardware run: "ベルトOK v001上げてアップして 修正 フェンサーの給弾ベルトが背中に固定されて
 # いなかった 文章の確認は不要。そのままアップして"; +0.0.1): a Fencer gatling's feed belt. Carried with the gun's root, its
 # drum and loop swung up into view in a reload; now the drum hangs on the player's back (the eye and the body's yaw) and
@@ -173,8 +179,8 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = '28F49D09A27E2AD1D1BE729B78F021462364FC7C6EC655B5D6C6217360F46A27'
-VERIFIED_SETTINGS_SHA = '7DE1ACF972A5D3BBE97D56F85D35B80E665F51F0BFF7D983CB27CD2566DE484E'
+VERIFIED_VR_SHA = '91B8CFB7EF5E48BE74576DE1216E7BCA0AB2524663374AC14029B3562C5C2E01'
+VERIFIED_SETTINGS_SHA = '8F12750573314149E3DC228BA6C55341A407F15823F75258CFFF390D58E8623C'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

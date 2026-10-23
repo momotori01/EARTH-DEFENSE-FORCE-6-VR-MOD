@@ -20,7 +20,8 @@
 // the same decay -- turned about the part's own pivot, so a longer arm swings
 // further, and pushed back along the shot by a distance set for the part's
 // size. It is applied to the bones as they are handed to the draw and taken
-// off again afterwards, so the game's skeleton never sees it.
+// off again afterwards, so the game's skeleton never sees it. The Eiren's
+// lasers and the flame throwers do not kick (weapon_kick.h RecoillessAmmo).
 #pragma once
 
 struct VehicleRecoilPart {
@@ -117,7 +118,9 @@ struct VehicleRecoilWork {
     unsigned weaponCount=0,scans=0;
     ULONGLONG scannedAt=0,reportedAt=0;
     unsigned long long shots[kVehicleRecoilParts]{};
-    unsigned long long unplaced=0,notMine=0,drained=0;
+    unsigned long long unplaced=0,notMine=0,drained=0,quiet=0;
+    // Per weapon: it fires a bullet that does not kick (weapon_kick.h RecoillessAmmo).
+    bool recoilless[kVehicleRecoilWeapons]{};
     // Per weapon: every drop seen, the drops with nobody at the controls
     // counted over a second, and until when it is taken to be draining.
     unsigned long long drops[kVehicleRecoilWeapons]{};
@@ -367,6 +370,25 @@ unsigned VehicleRecoilNearestPart(const VehicleRecoilPublished& out,const unsign
     }
     return nearest<=6.0f*6.0f?best:out.partCount;
 }
+// The bullet a weapon fires, by name: the weapon's constructor (68A920, at
+// 68D4F2; Weapon_VehicleShoot's 6B3250 calls it on the same object) keeps a
+// pointer to its SGO's AmmoClass string at weapon+0x240 when there is one.
+// Empty when it cannot be read.
+void VehicleWeaponAmmoClass(void* weapon,wchar_t* out,std::size_t size) noexcept {
+    if(!out || !size) return;
+    out[0]=0;
+    __try {
+        auto* w=static_cast<unsigned char*>(weapon);
+        if(!w || !edf6vr::Readable(w+0x240,sizeof(void*))) return;
+        const auto* name=*reinterpret_cast<const wchar_t* const*>(w+0x240);
+        // The name's first character only: a short name near the end of a page
+        // must not read as unreadable (the copy below runs under the SEH).
+        if(!name || !edf6vr::Readable(name,sizeof(wchar_t))) return;
+        std::size_t n=0;
+        while(n+1<size && name[n]) { out[n]=name[n]; ++n; }
+        out[n]=0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { out[0]=0; }
+}
 // Every camera update while the player is in a vehicle.
 void VehicleRecoilUpdate(void* vehicle) noexcept {
     if((!g_vehicleRecoilOn && !g_nixArmAimOn) || !vehicle || !g_nodeLookup) return;
@@ -393,8 +415,12 @@ void VehicleRecoilUpdate(void* vehicle) noexcept {
             void* owner=nullptr;
             __try { owner=*reinterpret_cast<void**>(static_cast<unsigned char*>(w.weapons[i])+0x120); }
             __except(EXCEPTION_EXECUTE_HANDLER) { owner=nullptr; }
-            Log("VEHICLERECOIL weapon %u %s ammo=%d owner=%p (vehicle %p) muzzle=%d (%.2f,%.2f,%.2f)",i,
-                edf6vr::TypeName(g_image,w.weapons[i]),w.ammo[i],owner,vehicle,muzzle?1:0,at[0],at[1],at[2]);
+            wchar_t ammoClass[48]{};
+            VehicleWeaponAmmoClass(w.weapons[i],ammoClass,48);
+            w.recoilless[i]=edf6vr::RecoillessAmmo(ammoClass);
+            Log("VEHICLERECOIL weapon %u %s ammo=%d owner=%p (vehicle %p) muzzle=%d (%.2f,%.2f,%.2f) fires %ls%s",i,
+                edf6vr::TypeName(g_image,w.weapons[i]),w.ammo[i],owner,vehicle,muzzle?1:0,at[0],at[1],at[2],
+                ammoClass[0]?ammoClass:L"(not read)",w.recoilless[i]?": no kick":"");
         }
         if(!w.weaponCount) Log("VEHICLERECOIL %s: no weapons found yet (scan %u)",w.machine->label,w.scans);
         auto& found=w.published;
@@ -440,7 +466,8 @@ void VehicleRecoilUpdate(void* vehicle) noexcept {
         // The part with a bone nearest the muzzle.
         const unsigned best=VehicleRecoilNearestPart(out,nodes,at);
         if(best>=out.partCount) { ++w.unplaced; continue; }
-        if(g_vehicleRecoilOn) out.parts[best].kick.Shot(now,g_recoilDecaySeconds);
+        if(w.recoilless[i]) ++w.quiet;
+        else if(g_vehicleRecoilOn) out.parts[best].kick.Shot(now,g_recoilDecaySeconds);
         for(int j=0;j<3;++j) out.parts[best].direction[j]=d[j];
         ++w.shots[best];
     }
@@ -458,8 +485,8 @@ void VehicleRecoilUpdate(void* vehicle) noexcept {
             if(n<0) break;
             used+=static_cast<unsigned>(n);
         }
-        Log("VEHICLERECOIL %s weapons=%u models=%u drops by weapon=%s shots by part=%llu/%llu/%llu/%llu/%llu/%llu unplaced=%llu notMine=%llu drained=%llu drawn=%llu paletteMismatch=%llu(palette %u, nodes %u) framesTaken=%llu",
-            w.machine->label,w.weaponCount,out.weaponModelCount,drops,w.shots[0],w.shots[1],w.shots[2],w.shots[3],w.shots[4],w.shots[5],w.unplaced,w.notMine,w.drained,
+        Log("VEHICLERECOIL %s weapons=%u models=%u drops by weapon=%s shots by part=%llu/%llu/%llu/%llu/%llu/%llu (of them recoilless: %llu) unplaced=%llu notMine=%llu drained=%llu drawn=%llu paletteMismatch=%llu(palette %u, nodes %u) framesTaken=%llu",
+            w.machine->label,w.weaponCount,out.weaponModelCount,drops,w.shots[0],w.shots[1],w.shots[2],w.shots[3],w.shots[4],w.shots[5],w.quiet,w.unplaced,w.notMine,w.drained,
             g_vehicleRecoilApplied.load(),g_vehicleRecoilMismatch.load(),g_vehicleRecoilPalette.load(),w.nodeCount,g_vehicleRecoilFrames.load());
     }
 }
