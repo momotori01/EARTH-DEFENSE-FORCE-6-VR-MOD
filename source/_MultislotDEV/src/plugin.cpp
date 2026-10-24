@@ -42,7 +42,7 @@
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.6.9";
+constexpr const char* kVersion = "1.6.10";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -532,6 +532,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     int copyArmorKey = 0;
     std::uint32_t copyArmorPad = 0;
     int copyArmorIgnore = 0;
+    int copyArmorInfernoLine = 0;
     int copyArmorCaps[kSoldierTypeCount]{};
     wchar_t copyArmorHint[24]{};
     if (GetPrivateProfileIntW(L"CopyArmor", L"Enabled", 1, iniPath) != 0) {
@@ -558,6 +559,11 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         }
         // Someone barely different from you is no help to copy, so they are passed over for the next one up.
         copyArmorIgnore = static_cast<int>(GetPrivateProfileIntW(L"CopyArmor", L"IgnoreWithin", 300, iniPath));
+        copyArmorInfernoLine = static_cast<int>(GetPrivateProfileIntW(L"CopyArmor", L"InfernoLine", 1000, iniPath));
+        if (copyArmorInfernoLine < 0) {
+            Log("[CopyArmor] InfernoLine=%d is below zero; using 0 (INFERNO like any other difficulty)", copyArmorInfernoLine);
+            copyArmorInfernoLine = 0;
+        }
         if (copyArmorIgnore < 0) {
             Log("[CopyArmor] IgnoreWithin=%d is below zero; using 0", copyArmorIgnore);
             copyArmorIgnore = 0;
@@ -616,7 +622,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     InitFakeMembers(base);
     InitMission(base, ghosts);
     InitJoinLog(base);
-    InitArmor(base, copyArmorKey, copyArmorPad, copyArmorHint, copyArmorIgnore, copyArmorCaps);
+    InitArmor(base, copyArmorKey, copyArmorPad, copyArmorHint, copyArmorIgnore, copyArmorCaps, copyArmorInfernoLine);
     InitHostMode(base, iniPath, eightPlayers, hostModeKey, hostModePad, hostModeHint);
     // The patch only takes when a percentage was asked for and it differs from the stock 0.05.
     InitDesyncMeter(base, smoothing > 0.0f ? smoothing : kVanillaSmoothing);
@@ -644,6 +650,10 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             "class if anyone else plays it, otherwise the room), up to %d/%d/%d/%d for Ranger/Wing Diver/Air "
             "Raider/Fencer; it never lowers, never reaches the room's own display and never saves",
             copyArmorHint, copyArmorIgnore, copyArmorCaps[0], copyArmorCaps[1], copyArmorCaps[2], copyArmorCaps[3]);
+    if ((copyArmorKey || copyArmorPad) && copyArmorInfernoLine > 0)
+        Log("Copy armor on INFERNO: when anyone in the room is at or under %d, only they copy, from the lowest of those "
+            "at or over %d (nobody there: the rule above); when everyone is over it, the rule above",
+            copyArmorInfernoLine, copyArmorInfernoLine);
     else
         Log("Copy armor: off, the armor sites are untouched");
     if (joinRetrySeconds > kVanillaJoinRetrySeconds)

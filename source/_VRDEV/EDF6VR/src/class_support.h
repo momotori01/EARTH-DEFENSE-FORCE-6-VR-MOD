@@ -124,7 +124,88 @@ void __fastcall HookBoosterDraw(void* effect) {
     if(HideOwnBooster(effect,GetTickCount64())) { ++g_boosterHidden; return; }
     g_originalBooster(effect);
 }
-// start/end are caller-local values, not weapon or skeleton storage.
+// The Fencer's backpack boosters, held on the standing chest in first person
+// (fencer_mount.h FencerBoosterHeld). The frame published here serves the Wing
+// Diver's streamers too (HookStreamerEmit): whichever of the two the player is. A Booster's update (slot +28, 2CBE30)
+// copies the matrix its +3D8 points at -- the soldier's attach point, which
+// the animation moves -- into its own +60 and its glow's place, then updates
+// its emitter from there; for the length of that call +3D8 points at the held
+// matrix instead. The camera update publishes the body's frame and eye.
+struct FencerBoosterFrame { void* soldier=nullptr; std::uint32_t id=0; float body[3][3]{}; float eye[3]{}; ULONGLONG at=0; };
+FencerBoosterFrame g_fencerBoosterFrame{};
+std::atomic<unsigned long long> g_boosterUpdates{0},g_boosterHeld{0};
+using BoosterUpdate=void(__fastcall*)(void*,void*);
+BoosterUpdate g_originalBoosterUpdate=nullptr;
+void PublishFencerBoosterFrame(void* soldier,std::uint32_t id,const float body[3][3],const float eye[3],ULONGLONG now) noexcept {
+    AcquireSRWLockExclusive(&g_classLock);
+    g_fencerBoosterFrame.soldier=soldier; g_fencerBoosterFrame.id=id; g_fencerBoosterFrame.at=now;
+    for(int i=0;i<3;++i) { g_fencerBoosterFrame.eye[i]=eye[i]; for(int j=0;j<3;++j) g_fencerBoosterFrame.body[i][j]=body[i][j]; }
+    ReleaseSRWLockExclusive(&g_classLock);
+}
+bool FencerBoosterTarget(void* effect,float out[4][4]) noexcept {
+    FencerBoosterFrame f{};
+    AcquireSRWLockShared(&g_classLock); f=g_fencerBoosterFrame; ReleaseSRWLockShared(&g_classLock);
+    const ULONGLONG now=GetTickCount64();
+    if(!f.soldier || now<f.at || now-f.at>250 || !g_nodeLookup) return false;
+    __try {
+        auto* e=static_cast<unsigned char*>(effect);
+        if(!edf6vr::Readable(e,0x3E0) || *reinterpret_cast<void**>(e+0x3D0)!=f.soldier) return false;
+        if(!edf6vr::Readable(f.soldier,0x318) || !edf6vr::HasType(g_image,f.soldier,".?AVHeavyArmor@@")
+           || *reinterpret_cast<const std::uint32_t*>(static_cast<unsigned char*>(f.soldier)+0x314)!=f.id) return false;
+        const auto* live=*reinterpret_cast<const float* const*>(e+0x3D8);
+        if(!live || !edf6vr::Readable(live,64)) return false;
+        float m[4][4]{};
+        for(int i=0;i<4;++i) for(int j=0;j<4;++j) m[i][j]=live[i*4+j];
+        float rows[3][3]{},at[3]{};
+        if(!edf6vr::ReadNamedBoneFrame(f.soldier,g_nodeLookup,L"mune",rows,at)) return false;
+        return edf6vr::FencerBoosterHeld(m,rows,at,f.body,f.eye,out);
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void __fastcall HookBoosterUpdate(void* effect,void* context) {
+    ++g_boosterUpdates;
+    alignas(16) float held[4][4]{};   // the update reads it with movaps
+    if(!FencerBoosterTarget(effect,held)) { g_originalBoosterUpdate(effect,context); return; }
+    auto** slot=reinterpret_cast<const float**>(static_cast<unsigned char*>(effect)+0x3D8);
+    const float* kept=*slot;
+    *slot=&held[0][0];
+    ++g_boosterHeld;
+    __try { g_originalBoosterUpdate(effect,context); }
+    __finally { *slot=kept; }
+}
+// The Wing Diver's streamer sources held on her standing chest (fencer_mount.h
+// DiverStreamerHeld). Her update (in 57FABF's loop over the streamer entries at
+// +2068, 0x18 each, count +2078, the streamer at +10) works out each source's
+// attach matrix (6BB5A0) and hands its translation, its negated third row and
+// her velocity to the streamer at 57FB24 (call 300780, which keeps them at
+// +280/+290/+2A0 and emits from there); that call is redirected to hand over
+// the held place and way instead. Only her own streamers (+3D0), in first
+// person, with the body frame published.
+using StreamerEmit=void(__fastcall*)(void*,const float*,const float*,const float*);
+StreamerEmit g_originalStreamerEmit=nullptr;
+std::atomic<unsigned long long> g_streamerEmits{0},g_streamerHeld{0};
+void __fastcall HookStreamerEmit(void* streamer,const float* place,const float* way,const float* velocity) {
+    ++g_streamerEmits;
+    alignas(16) float heldPlace[4]{},heldWay[4]{};
+    bool held=false;
+    FencerBoosterFrame f{};
+    AcquireSRWLockShared(&g_classLock); f=g_fencerBoosterFrame; ReleaseSRWLockShared(&g_classLock);
+    const ULONGLONG now=GetTickCount64();
+    if(f.soldier && now>=f.at && now-f.at<=250 && g_nodeLookup && place && way) {
+        __try {
+            auto* e=static_cast<unsigned char*>(streamer);
+            if(edf6vr::Readable(e,0x3D8) && *reinterpret_cast<void**>(e+0x3D0)==f.soldier
+               && edf6vr::Readable(f.soldier,0x318) && edf6vr::HasType(g_image,f.soldier,".?AVPaleWing@@")
+               && *reinterpret_cast<const std::uint32_t*>(static_cast<unsigned char*>(f.soldier)+0x314)==f.id) {
+                float rows[3][3]{},at[3]{};
+                held=edf6vr::ReadNamedBoneFrame(f.soldier,g_nodeLookup,L"mune",rows,at)
+                    && edf6vr::DiverStreamerHeld(place,way,rows,at,f.body,f.eye,heldPlace,heldWay);
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) { held=false; }
+    }
+    if(held) { ++g_streamerHeld; g_originalStreamerEmit(streamer,heldPlace,heldWay,velocity); }
+    else g_originalStreamerEmit(streamer,place,way,velocity);
+}
+// start/end are caller-local values, not weapon or skeleton storage.// start/end are caller-local values, not weapon or skeleton storage.
 bool RebaseMarkerRay(void* common,const float* start,const float* end,float* movedStart,float* movedEnd) noexcept {
     __try {
         if(g_nativeTactical || !edf6vr::HasType(g_image,common,".?AVLaserMarkerCommon@@")
@@ -164,10 +245,22 @@ bool InstallClassEffects() noexcept {
     // PaleWing ctor57D8B2 -> factory351480 -> Booster ctor2CB810.
     // Param+30 is the soldier, copied to effect+3D0. This draw submits both
     // the nozzle and its child glow (+3F8). Leave update slot+28 untouched.
+    // The Fencer's (HeavyArmor ctor 565130, at 565ADD) come from the same
+    // factory with the soldier (rdi, this) at param+30 too: they are not hidden
+    // but held on the standing chest by the update (slot +28, HookBoosterUpdate).
+    // The other Booster makers are the Nix's (63CEC0/63DEC0/640340, its
+    // begaruta_boost settings), the Barga's (601420) and the Berserker rocket
+    // punch's (351940).
     constexpr unsigned char booster[]={0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0xD9,
         0x48,0x8D,0x51,0x60,0x48,0x81,0xC1,0x20,0x01,0,0,0xE8,0x87,0x7B,0x02,0};
     __try {
         if(std::memcmp(g_image.base+0x2CBDF0,booster,sizeof(booster))) return false;
+        constexpr unsigned char boosterUpdate[]={0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x20,
+            0x48,0x8B,0x81,0xD8,0x03,0,0,0x48,0x8B,0xFA,0x48,0x8B,0xD9,0x0F,0x28,0x00};
+        if(std::memcmp(g_image.base+0x2CBE30,boosterUpdate,sizeof(boosterUpdate))
+           || *reinterpret_cast<void**>(g_image.base+0x17A6D80)!=g_image.base+0x2CBE30) return false;
+        constexpr unsigned char streamerEmit[]={0x0F,0x10,0x02,0x0F,0x11,0x81,0x80,0x02,0,0,0x41,0x0F,0x10,0x00};
+        if(std::memcmp(g_image.base+0x300780,streamerEmit,sizeof(streamerEmit))) return false;
         constexpr unsigned char droneCommon[]={0x48,0x8B,0x8B,0x70,0x15,0,0};
         if(std::memcmp(g_image.base+0x68424B,droneCommon,sizeof(droneCommon))) return false;
         void* table=g_image.base+0x17A6D58;
@@ -177,9 +270,13 @@ bool InstallClassEffects() noexcept {
             if(g_image.base[site]!=0xE8 || g_image.base+site+5+*reinterpret_cast<const std::int32_t*>(g_image.base+site+1)!=g_image.base+0x6A64A0) return false;
         }
         g_originalBooster=reinterpret_cast<BoosterDraw>(g_image.base+0x2CBDF0);
+        g_originalBoosterUpdate=reinterpret_cast<BoosterUpdate>(g_image.base+0x2CBE30);
+        g_originalStreamerEmit=reinterpret_cast<StreamerEmit>(g_image.base+0x300780);
         g_originalMarker=reinterpret_cast<MarkerUpdate>(g_image.base+0x6A64A0);
         bool changed=false;
         if(!edf6vr::ReplacePointer(reinterpret_cast<void**>(g_image.base+0x17A6D70),reinterpret_cast<void*>(g_originalBooster),reinterpret_cast<void*>(&HookBoosterDraw),changed)) return false;
+        if(!edf6vr::ReplacePointer(reinterpret_cast<void**>(g_image.base+0x17A6D80),reinterpret_cast<void*>(g_originalBoosterUpdate),reinterpret_cast<void*>(&HookBoosterUpdate),changed)) return false;
+        if(!edf6vr::RedirectCall(g_image.base+0x57FB24,reinterpret_cast<void*>(g_originalStreamerEmit),reinterpret_cast<void*>(&HookStreamerEmit),changed)) return false;
         for(const auto site:{0x6A3D0Eu,0x6A3DFBu,0x684271u})
             if(!edf6vr::RedirectCall(g_image.base+site,reinterpret_cast<void*>(g_originalMarker),reinterpret_cast<void*>(&HookMarkerUpdate),changed)) return false;
         return true;

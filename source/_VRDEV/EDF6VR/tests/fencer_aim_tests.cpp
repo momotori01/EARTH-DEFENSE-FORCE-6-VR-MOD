@@ -320,6 +320,64 @@ int main() {
         CHECK(!edf6vr::FencerBeltDrum(2,ahead,eye,gameA,untouched) && !edf6vr::FencerBeltDrum(0,ahead,eye,flat,untouched));
         CHECK(untouched[0][0]==9 && untouched[3][3]==9);
     }
+    {
+        // The backpack boosters held on the standing chest (FencerBoosterHeld).
+        const float body[3][3]={{1,0,0},{0,1,0},{0,0,1}},eye[3]={5,10,20};
+        // The standing chest as the constants put it, and a booster 0.66 behind it: unchanged.
+        float chest[3][3]{},chestAt[3]{};
+        for(int k=0;k<3;++k) for(int j=0;j<3;++j) chest[k][j]=edf6vr::kFencerMuneRows[k][j];
+        for(int j=0;j<3;++j) chestAt[j]=eye[j]+edf6vr::kFencerMunePlace[j];
+        float live[4][4]{};
+        for(int i=0;i<3;++i) for(int j=0;j<3;++j) live[i][j]=(i==j?0.5f:0.0f);
+        const float local[3]={0.08f,0.661f,-0.158f};   // ブースターL1 in the chest's axes
+        for(int j=0;j<3;++j) live[3][j]=chestAt[j]+local[0]*chest[0][j]+local[1]*chest[1][j]+local[2]*chest[2][j];
+        live[3][3]=1;
+        float held[4][4]{};
+        CHECK(edf6vr::FencerBoosterHeld(live,chest,chestAt,body,eye,held));
+        for(int i=0;i<4;++i) CHECK(near3(held[i],live[i][0],live[i][1],live[i][2],1e-4f));
+        CHECK(held[3][1]<eye[1]-0.1f && held[3][2]<eye[2]-0.5f);                // behind and below the eye
+        // A dash tips the chest 70 degrees forward about its left-right axis and drops it: the booster, which
+        // went with it (over the head), comes back to the same held place, turned the same against the body.
+        const float t=1.2217f,ct=std::cos(t),st=std::sin(t);
+        float tipped[3][3]{},tippedAt[3]{chestAt[0],chestAt[1]-0.3f,chestAt[2]+0.2f};
+        for(int k=0;k<3;++k) {
+            const float* r=chest[k];
+            tipped[k][0]=r[0]; tipped[k][1]=r[1]*ct-r[2]*st; tipped[k][2]=r[1]*st+r[2]*ct;   // about x
+        }
+        float moved[4][4]{};
+        for(int i=0;i<3;++i) { moved[i][0]=live[i][0]; moved[i][1]=live[i][1]*ct-live[i][2]*st; moved[i][2]=live[i][1]*st+live[i][2]*ct; moved[i][3]=0; }
+        for(int j=0;j<3;++j) moved[3][j]=tippedAt[j]+local[0]*tipped[0][j]+local[1]*tipped[1][j]+local[2]*tipped[2][j];
+        moved[3][3]=1;
+        CHECK(moved[3][1]>live[3][1]+0.1f);                                    // the game's: thrown up
+        float again[4][4]{};
+        CHECK(edf6vr::FencerBoosterHeld(moved,tipped,tippedAt,body,eye,again));
+        for(int i=0;i<4;++i) CHECK(near3(again[i],held[i][0],held[i][1],held[i][2],1e-4f));
+        // The body turned a quarter: the booster goes round with it, staying behind.
+        const float turned[3][3]={{0,0,-1},{0,1,0},{1,0,0}};
+        float quarter[4][4]{};
+        CHECK(edf6vr::FencerBoosterHeld(live,chest,chestAt,turned,eye,quarter));
+        const float back[3]={held[3][0]-eye[0],held[3][1]-eye[1],held[3][2]-eye[2]};
+        CHECK(near3(quarter[3],eye[0]+back[2],eye[1]+back[1],eye[2]-back[0],1e-4f));
+        // No chest, nothing.
+        float none[4][4]{{9,9,9,9},{9,9,9,9},{9,9,9,9},{9,9,9,9}};
+        const float flat[3][3]{};
+        CHECK(!edf6vr::FencerBoosterHeld(live,flat,chestAt,body,eye,none) && none[0][0]==9);
+    }
+    {
+        // The Wing Diver's streamer source (DiverStreamerHeld): at her standing chest it is where it was; a way of
+        // length 1 stays 1; a zero way is refused.
+        const float body[3][3]={{1,0,0},{0,1,0},{0,0,1}},eye[3]={0,10,0};
+        float chest[3][3]{},chestAt[3]{};
+        for(int k=0;k<3;++k) for(int j=0;j<3;++j) chest[k][j]=edf6vr::kDiverMuneRows[k][j];
+        for(int j=0;j<3;++j) chestAt[j]=eye[j]+edf6vr::kDiverMunePlace[j];
+        const float place[4]={0.27f,9.71f,-0.26f,1},way[4]={0,0.6f,-0.8f,0.5f};
+        float heldPlace[4]{},heldWay[4]{};
+        CHECK(edf6vr::DiverStreamerHeld(place,way,chest,chestAt,body,eye,heldPlace,heldWay));
+        CHECK(near3(heldPlace,place[0],place[1],place[2],1e-4f) && heldPlace[3]==1);
+        CHECK(near3(heldWay,way[0],way[1],way[2],1e-4f) && heldWay[3]==0.5f);
+        const float none[4]={0,0,0,0};
+        CHECK(!edf6vr::DiverStreamerHeld(place,none,chest,chestAt,body,eye,heldPlace,heldWay));
+    }
     std::printf("Fencer heavy aim: %d failures\n",failures);
     return failures?1:0;
 }

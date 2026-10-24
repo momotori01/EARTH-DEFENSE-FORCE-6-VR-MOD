@@ -20,12 +20,19 @@ constexpr std::uint32_t kLocalPlayers = 0x6E90;  // GameStatus: this machine's c
 constexpr std::uint32_t kGameData = 0x130;       // GameStatus: the game data the rules come from
 constexpr std::uint32_t kArmorBase = 0x0E3470;   // (game data, class) -> armor with no pickups
 constexpr std::uint32_t kArmorStep = 0x0E34A0;   // (game data, class) -> armor per pickup
+// GameStatus: the difficulty, EASY 0 .. INFERNO 4. The host's room publishes it as its DIFFICULTY attribute
+// (78BC36: the lobby settings' +8 from GameStatus+0x4C, read by the attribute builder at 749D2B), and a guest's
+// mission runs on it - the scripts' GetDifficulty and every difficulty table read it - while the mission data a
+// guest receives at the sortie never writes it (790600): so on every machine it is the room's difficulty
+// before the mission starts.
+constexpr std::uint32_t kDifficulty = 0x4C;
 constexpr int kSoldierTypes = kSoldierTypeCount;
 
 unsigned char* game = nullptr;
 int copyKey = 0;
 std::uint32_t copyPad = 0;
 int ignoreArmorWithin = 0;
+int infernoArmorLine = 0;
 int armorCaps[kSoldierTypeCount]{};
 wchar_t copyHint[24]{};
 std::atomic<bool> copyArmor{false};
@@ -111,6 +118,24 @@ int TargetArmor(const RoomMemberArmor* members, std::size_t count, std::size_t s
     return sameClass ? sameClass : anyClass;
 }
 
+int InfernoTargetArmor(const RoomMemberArmor* members, std::size_t count, std::size_t self, int soldier, int mine,
+                       int ignoreWithin, int line) {
+    if (!members || line <= 0) return TargetArmor(members, count, self, soldier, mine, ignoreWithin);
+    bool anyoneUnder = mine > 0 && mine <= line;
+    int sameClass = 0, anyClass = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (i == self || !members[i].valid || members[i].armor <= 0) continue;
+        if (members[i].armor <= line) anyoneUnder = true;
+        if (members[i].armor < line) continue;
+        if (!anyClass || members[i].armor < anyClass) anyClass = members[i].armor;
+        if (members[i].soldier == soldier && (!sameClass || members[i].armor < sameClass)) sameClass = members[i].armor;
+    }
+    if (!anyoneUnder) return TargetArmor(members, count, self, soldier, mine, ignoreWithin);
+    if (mine > line) return 0;  // someone is under the line: they are the ones raised
+    if (sameClass || anyClass) return sameClass ? sameClass : anyClass;
+    return TargetArmor(members, count, self, soldier, mine, ignoreWithin);
+}
+
 int CappedArmor(int target, int cap) { return cap > 0 && target > cap ? cap : target; }
 
 std::size_t FindSelf(const RoomMemberArmor* members, std::size_t count, int soldier, int armor) {
@@ -121,11 +146,12 @@ std::size_t FindSelf(const RoomMemberArmor* members, std::size_t count, int sold
 }
 
 void InitArmor(unsigned char* gameBase, int key, std::uint32_t padButton, const wchar_t* hint, int ignoreWithin,
-               const int* caps) {
+               const int* caps, int infernoLine) {
     game = gameBase;
     copyKey = key;
     copyPad = padButton;
     ignoreArmorWithin = ignoreWithin < 0 ? 0 : ignoreWithin;
+    infernoArmorLine = infernoLine < 0 ? 0 : infernoLine;
     for (int i = 0; i < kSoldierTypes; ++i) armorCaps[i] = caps && caps[i] > 0 ? caps[i] : 0;
     copyHint[0] = 0;
     if (hint && (key || padButton)) {
@@ -173,9 +199,10 @@ void NoteRoomMembers(const RoomMemberArmor* members, std::size_t count) {
     if (!copyArmor.load()) return;
     const std::uint8_t* status = Status();
     if (!status || !members || !count) return;
-    int soldier = 0, mine = 0;
+    int soldier = 0, mine = 0, difficulty = -1;
     ArmorRules rules{};
     __try {
+        difficulty = Field32(status, kDifficulty);
         soldier = Field32(status, kLocalPlayers);
         if (soldier < 0 || soldier >= kSoldierTypes) return;
         if (!RulesFor(status, soldier, rules)) return;
@@ -189,10 +216,31 @@ void NoteRoomMembers(const RoomMemberArmor* members, std::size_t count) {
     // which is what makes everyone's decision here stable: nobody ever copies a copied number.
     const std::size_t self = FindSelf(members, count, soldier, own);
 
-    const int found = TargetArmor(members, count, self, soldier, own, ignoreArmorWithin);
+    const bool inferno = difficulty == kInfernoDifficulty && infernoArmorLine > 0;
+    // On INFERNO, whether its own rule decides (someone at or under the line) or the usual one does: said on the
+    // raise line, so a log tells the two apart (a guest's first INFERNO room, 2026-10-24, said "the INFERNO rule"
+    // for a copy the usual rule had made, nobody there being under 1000).
+    bool underLine = inferno && own <= infernoArmorLine;
+    for (std::size_t i = 0; inferno && !underLine && i < count; ++i)
+        underLine = i != self && members[i].valid && members[i].armor > 0 && members[i].armor <= infernoArmorLine;
+    const int found = inferno ? InfernoTargetArmor(members, count, self, soldier, own, ignoreArmorWithin, infernoArmorLine)
+                              : TargetArmor(members, count, self, soldier, own, ignoreArmorWithin);
+    // Said whenever the rule in use changes, raise or not, so a log shows which one a room was decided by.
+    static int lastRule = -2;
+    const int rule = inferno ? 1 : 0;
+    if (lastRule != rule * 10 + difficulty) {
+        lastRule = rule * 10 + difficulty;
+        if (inferno)
+            Log("ARMOR copy armor: difficulty %d (INFERNO) - anyone at or under %d copies the lowest of those at or "
+                "over it; with nobody under it, the usual rule", difficulty, infernoArmorLine);
+        else
+            Log("ARMOR copy armor: difficulty %d - the usual rule", difficulty);
+    }
     const int target = CappedArmor(found, armorCaps[soldier]);
     if (target <= own) {
-        Clear(!found                  ? "there is nobody to copy from"
+        Clear(!found                  ? (inferno && own > infernoArmorLine ? "on INFERNO someone else is under the line, "
+                                                                               "or nobody is worth copying"
+                                                                             : "there is nobody to copy from")
               : found > target        ? "you are already at the most this can give your class"
                                       : "nobody in the room is far enough ahead of you");
         return;
@@ -211,9 +259,11 @@ void NoteRoomMembers(const RoomMemberArmor* members, std::size_t count) {
     ownArmor.store(own);
     raisedAtMax.store(found > target);
     if (!countChanged && !classChanged) return;
-    Log("ARMOR copy armor: class %d, your armor %d -> %d (copying %d%s, %d pickups instead of %d; anyone within "
-        "%d of you is passed over)", soldier, own, reached, found,
-        found > target ? " held down to this class's most" : "", wanted, mine, ignoreArmorWithin);
+    Log("ARMOR copy armor: class %d, your armor %d -> %d (copying %d%s, %d pickups instead of %d; difficulty %d, %s)",
+        soldier, own, reached, found, found > target ? " held down to this class's most" : "", wanted, mine, difficulty,
+        !inferno     ? "the usual rule, anyone within the gap of you passed over"
+        : underLine  ? "the INFERNO rule: someone is at or under the line"
+                     : "INFERNO, everyone over the line: the usual rule");
     for (std::size_t i = 0; i < count; ++i)
         Log("ARMOR   member %zu: class %d, armor %d%s%s", i + 1, members[i].soldier, members[i].armor,
             members[i].valid ? "" : " (not reported)", i == self ? " <- you" : "");

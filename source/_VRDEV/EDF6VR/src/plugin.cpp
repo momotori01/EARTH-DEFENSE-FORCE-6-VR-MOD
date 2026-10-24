@@ -1347,6 +1347,14 @@ void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
         edf6vr::g_openxr.Buzz(1,0.06f,inZone?0.7f:0.35f);
     }
 
+    // The left hand beside the head: its stick click opens the menu (Start), as
+    // the right stick's does with the right hand there (the user, 2026-10-24:
+    // "左手も左側頭部のマッピングエリアに有る時は、スティック押し込みでメニューが
+    // 開くようにして"). Judged as the left temple's holds are; not while the
+    // holster grip is held. Elsewhere the left click stays the left thumb (L3).
+    const bool leftClickMenu=!holsterGrip && leftTracked
+        && edf6vr::NearTemple(headXr,leftHandXr,headYaw,g_gestureRight,g_gestureUp,
+            g_gestureAhead,g_gestureRadiusLeave,g_gestureFrontLeave);
     if(g_gestureOn) {
         // The right stick becomes the d-pad, and the stick clicks become the
         // two buttons a headset has nowhere else to put.
@@ -1355,7 +1363,7 @@ void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
         if(y<-g_stickButtonEdge) pad.buttons|=kPadDown;
         if(x<-g_stickButtonEdge) pad.buttons|=kPadLeft;
         if(x>g_stickButtonEdge) pad.buttons|=kPadRight;
-        if(controls.stickClick[0]) pad.buttons|=kPadBack;
+        if(controls.stickClick[0]) pad.buttons|=leftClickMenu?kPadStart:kPadBack;
         if(controls.stickClick[1]) pad.buttons|=kPadStart;
         g_stickButtonState={};
     } else {
@@ -1387,16 +1395,20 @@ void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
             const bool turned=bruteGun&&g_gunPitchTurned.load(std::memory_order_relaxed);
             pad.rightY=ToAxis(turned?-y:y);
         }
-        if(controls.stickClick[0]) pad.buttons|=kPadLeftThumb;
+        if(controls.stickClick[0]) pad.buttons|=leftClickMenu?kPadStart:kPadLeftThumb;
         if(controls.stickClick[1]) pad.buttons|=kPadRightThumb;
     }
     // Fencer uses the game's complete pad look path. Head/body turning is a
     // separate target offset; feeding this synthetic look back to yawOffset
     // would create a self-chasing target and perpetual rotation.
     g_fencerTurn.store(g_gestureOn?0.0f:controls.stick[1][0],std::memory_order_relaxed);
+    // The aim goes on following the hand while it is at the temple, as every
+    // other class's does (their aim is written outright): the stick's d-pad
+    // there is buttons, and the right stick's axes are free for the pursuit (the
+    // user, 2026-10-24: "右手がキーマッピングエリアに入るとエイムが止まる").
     edf6vr::FencerPadCommand pursuit{};
     AcquireSRWLockShared(&g_fencerPadLock); pursuit=g_fencerPad; ReleaseSRWLockShared(&g_fencerPadLock);
-    if(!VehiclePadActive() && g_vrEnabled && g_fpsEnabled && handTracked && !g_gestureOn && pursuit.Fresh(GetTickCount64())) {
+    if(!VehiclePadActive() && g_vrEnabled && g_fpsEnabled && handTracked && pursuit.Fresh(GetTickCount64())) {
         pad.rightX=ToAxis(pursuit.x); pad.rightY=ToAxis(pursuit.y);
     }
     PublishControllerPad(pad,true);
@@ -6016,6 +6028,26 @@ void AfterUpdate(void* camera) noexcept {
         if(!fpsApplied && !(vehicleApplied && pose.headFound) && g_bodyTarget.camera==camera) g_bodyTarget={};
         PublishBoosterOwner(fpsApplied && g_hideBody && edf6vr::HasType(g_image,g_vrSoldier,".?AVPaleWing@@")?g_vrSoldier:nullptr,
                             pose.objectId,GetTickCount64());
+        {
+            // The Fencer's boosters held on his back, from the eye and the body's
+            // yaw as his shoulder weapons are (class_support.h HookBoosterUpdate);
+            // the Wing Diver's streamer sources likewise (HookStreamerEmit), her
+            // body's yaw the head's followed over about a third of a second as the
+            // Fencer's is (fencer_dual.h).
+            static float diverYaw=0; static bool diverYawValid=false;
+            const bool fencer=fpsApplied && g_fencerShoulderOnHead && g_fencerBodyYawValid
+                && edf6vr::HasType(g_image,g_vrSoldier,".?AVHeavyArmor@@");
+            const bool diver=fpsApplied && !fencer && edf6vr::HasType(g_image,g_vrSoldier,".?AVPaleWing@@");
+            if(diver) {
+                const float headYaw=std::remainder(g_lastHeadYaw+g_yawOffset,6.28318530718f);
+                if(!diverYawValid) { diverYaw=headYaw; diverYawValid=true; }
+                else diverYaw=std::remainder(diverYaw+std::remainder(headYaw-diverYaw,6.28318530718f)*0.05f,6.28318530718f);
+            } else diverYawValid=false;
+            const float yaw=fencer?g_fencerBodyYaw:diverYaw;
+            const float c=std::cos(yaw),s=std::sin(yaw);
+            const float body[3][3]={{c,0,-s},{0,1,0},{s,0,c}};
+            PublishFencerBoosterFrame(fencer||diver?g_vrSoldier:nullptr,pose.objectId,body,g_eyeWorld,GetTickCount64());
+        }
         // Menus with the wait removed are unusable, so the moment this stops
         // looking like a live mission the stock limiter goes back. Best effort:
         // if the hook stops being called at all, F5 in a mission is the way back.
@@ -6182,8 +6214,9 @@ void AfterUpdate(void* camera) noexcept {
             Log("MUZZLEFLASH draws=%llu owned=%llu scaled=%llu scale=%.2f leftPrepared=%llu dualPassthrough=%llu efsUpdates=%llu efsLeftUpdates=%llu efsLeftCreates=%llu why=notOurs%llu/staleFrame%llu/class%llu/carried%llu/skeleton%llu/range%llu/carry%llu gapL=%.3f/%.3fm up%+.3f n%llu gapR=%.3f/%.3fm up%+.3f n%llu carryL kept=%llu lost=%llu by%.2fm carryR kept=%llu lost=%llu by%.2fm toPalm=%.3f/%.3f toRoot=%.3f/%.3f",g_flashDraws.load(),g_flashOwned.load(),g_flashScaled.load(),g_muzzleFlashScale.load(),g_flashLeftPrepared.load(),g_flashLeftRejected.load(),g_efsFlashUpdates.load(),g_efsFlashLeftUpdates.load(),g_efsFlashLeftCreates.load(),g_flashLeftWhy[0].load(),g_flashLeftWhy[1].load(),g_flashLeftWhy[2].load(),g_flashLeftWhy[3].load(),g_flashLeftWhy[4].load(),g_flashLeftWhy[5].load(),g_flashLeftWhy[6].load(),g_flashGapLast[0].load(),g_flashGapMax[0].load(),g_flashGapUp[0].load(),g_flashGapSamples[0].load(),g_flashGapLast[1].load(),g_flashGapMax[1].load(),g_flashGapUp[1].load(),g_flashGapSamples[1].load(),g_flashCarryKept[0].load(),g_flashCarryLost[0].load(),g_flashCarryLostBy[0].load(),g_flashCarryKept[1].load(),g_flashCarryLost[1].load(),g_flashCarryLostBy[1].load(),g_flashToPalm[0].load(),g_flashToPalm[1].load(),g_flashToRoot[0].load(),g_flashToRoot[1].load());
             Log("CASING calls=%llu candidates=%llu applied=%llu passthrough=%llu stage=%u",
                 g_casingCalls.load(),g_casingCandidates.load(),g_casingApplied.load(),g_casingRejected.load(),g_casingStage.load());
-            Log("CLASSEFFECT booster=%llu hidden=%llu marker=%llu moved=%llu muzzleRebased=%llu expired=%llu tactical=%d tacticalPeak=%.1fm above=%.1fm",
-                g_boosterDraws.load(),g_boosterHidden.load(),g_markerCalls.load(),g_markerApplied.load(),
+            Log("CLASSEFFECT booster=%llu hidden=%llu updates=%llu heldOnTheBack=%llu streamer emits=%llu heldOnTheBack=%llu marker=%llu moved=%llu muzzleRebased=%llu expired=%llu tactical=%d tacticalPeak=%.1fm above=%.1fm",
+                g_boosterDraws.load(),g_boosterHidden.load(),g_boosterUpdates.load(),g_boosterHeld.load(),
+                g_streamerEmits.load(),g_streamerHeld.load(),g_markerCalls.load(),g_markerApplied.load(),
                 g_muzzleRebased.load(),g_muzzleExpired.load(),g_nativeTactical.load(),g_tacticalPeak,g_tacticalPeakHeight);
             g_tacticalPeak=g_tacticalPeakHeight=0;   // per window, so one strike does not colour the rest of the mission
             Log("RADAR calls=%llu applied=%llu nativeYaw=%.4f headYaw=%.4f",
@@ -7625,7 +7658,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.10 cockpit loading, with EDF6MultiSlot 1.6.9. The Eiren's Electromagnetic Laser Cannons and the flame throwers do not kick (weapon_kick.h RecoillessAmmo); in every built cabin the radio subtitles are kept off the HUD the monitors crop.");
+    Log("EDF6VR 3.2.11 cockpit loading, with EDF6MultiSlot 1.6.10. The Fencer's aim starts at the game pad's dead zone (fencer_input.h kFencerPadDeadzone); the Fencer's boosters and the Wing Diver's streamers start from the standing chest (fencer_mount.h StandingChestHeld).");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');

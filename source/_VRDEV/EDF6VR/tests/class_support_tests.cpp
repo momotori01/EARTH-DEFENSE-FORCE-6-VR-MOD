@@ -7,6 +7,21 @@ static float seenStart[4]{},seenEnd[4]{};
 static void* seenContext=nullptr;
 static bool seenActive=false; static int seenMode=0;
 static void __fastcall FakeBooster(void*) { ++draws; }
+// The Booster update as the game's: it reads the matrix +3D8 points at.
+static int updates=0; static const float* seenLive=nullptr; static float seenMatrix[16]{};
+static void __fastcall FakeBoosterUpdate(void* effect,void*) {
+    ++updates; seenLive=*reinterpret_cast<const float* const*>(static_cast<unsigned char*>(effect)+0x3D8);
+    if(seenLive) for(int k=0;k<16;++k) seenMatrix[k]=seenLive[k];   // the Wing Diver's test effect points nowhere
+}
+alignas(16) static unsigned char boneNodes[0x200]{};
+// The streamer emit as the game's: what place and way it was handed.
+static int emits=0; static float seenPlace[4]{},seenWay[4]{};
+static void __fastcall FakeStreamerEmit(void*,const float* place,const float* way,const float*) {
+    ++emits; for(int j=0;j<4;++j) { seenPlace[j]=place[j]; seenWay[j]=way[j]; }
+}
+static void* __fastcall FakeBoneLookup(void*,const void* name) {
+    return !wcscmp(static_cast<const wchar_t*>(name),L"mune")?boneNodes:nullptr;
+}
 static void __fastcall FakeMarker(void*,void* context,const float* a,const float* b,bool active,int mode) {
     ++queries; memcpy(seenStart,a,16); memcpy(seenEnd,b,16);
     seenContext=context; seenActive=active; seenMode=mode;
@@ -25,7 +40,7 @@ int wmain(int argc,wchar_t** argv) {
     const auto now=GetTickCount64();
     PublishBoosterOwner(soldier,42,now);
     auto booster=*reinterpret_cast<BoosterDraw*>(g_image.base+0x17A6D70);
-    CHECK(*reinterpret_cast<void**>(g_image.base+0x17A6D80)==g_image.base+0x2CBE30); // update untouched
+    CHECK(*reinterpret_cast<void**>(g_image.base+0x17A6D80)==reinterpret_cast<void*>(&HookBoosterUpdate)); // the update: the Fencer's held on his back
     CHECK(*reinterpret_cast<void**>(g_image.base+0x17A8D20)==g_image.base+0x2FE5D0); // unused old class untouched
     Field<void*>(effect,0)=g_image.base+0x17A8D08;
     CHECK(!HideOwnBooster(effect,now));
@@ -36,6 +51,99 @@ int wmain(int argc,wchar_t** argv) {
     booster(effect); CHECK(draws==2); Field<unsigned>(soldier,0x314)=42;
     CHECK(!HideOwnBooster(effect,now+251));
     ClearClassPresentation(); booster(effect); CHECK(draws==3);
+
+    // The Fencer's boosters: never hidden, held on the standing chest by the update (HookBoosterUpdate).
+    {
+        g_originalBoosterUpdate=FakeBoosterUpdate; g_nodeLookup=FakeBoneLookup;
+        alignas(16) unsigned char heavy[0x2100]{},fencerEffect[0x3F0]{};
+        Field<void*>(heavy,0)=g_image.base+0x17CF5B8; Field<unsigned>(heavy,0x314)=7;
+        Field<void*>(fencerEffect,0)=g_image.base+0x17A6D58; Field<void*>(fencerEffect,0x3D0)=heavy;
+        // The chest tipped well forward by a dash, and the attach point it carries 0.66 m out behind it.
+        const float t=1.2f,ct=std::cos(t),st=std::sin(t);
+        float chest[3][3]{},chestAt[3]={3,11,20};
+        for(int k=0;k<3;++k) {
+            const float* r=edf6vr::kFencerMuneRows[k];
+            chest[k][0]=r[0]; chest[k][1]=r[1]*ct-r[2]*st; chest[k][2]=r[1]*st+r[2]*ct;
+        }
+        auto* bone=reinterpret_cast<float*>(boneNodes+0xB0);
+        for(int k=0;k<3;++k) { for(int j=0;j<3;++j) bone[k*4+j]=chest[k][j]; bone[k*4+3]=0; }
+        for(int j=0;j<3;++j) bone[12+j]=chestAt[j]; bone[15]=1;
+        alignas(16) float attach[16]{};
+        for(int k=0;k<3;++k) for(int j=0;j<3;++j) attach[k*4+j]=chest[k][j]*0.5f;
+        for(int j=0;j<3;++j) attach[12+j]=chestAt[j]+0.08f*chest[0][j]+0.661f*chest[1][j]-0.158f*chest[2][j];
+        attach[15]=1;
+        Field<const float*>(fencerEffect,0x3D8)=attach;
+        auto update=*reinterpret_cast<BoosterUpdate*>(g_image.base+0x17A6D80);
+        // No frame published (third person, VR off): as the game has it.
+        update(fencerEffect,nullptr);
+        CHECK(updates==1 && seenLive==attach && Field<const float*>(fencerEffect,0x3D8)==attach && g_boosterHeld==0);
+        const float body[3][3]={{1,0,0},{0,1,0},{0,0,1}},eye[3]={3,11.4f,20.03f};
+        PublishFencerBoosterFrame(heavy,7,body,eye,GetTickCount64());
+        update(fencerEffect,nullptr);
+        CHECK(updates==2 && seenLive!=attach && g_boosterHeld==1);
+        CHECK(Field<const float*>(fencerEffect,0x3D8)==attach);                 // put back after the call
+        float live[4][4]{},expected[4][4]{};
+        for(int i=0;i<4;++i) for(int j=0;j<4;++j) live[i][j]=attach[i*4+j];
+        CHECK(edf6vr::FencerBoosterHeld(live,chest,chestAt,body,eye,expected));
+        for(int i=0;i<4;++i) for(int j=0;j<4;++j) CHECK(std::fabs(seenMatrix[i*4+j]-expected[i][j])<1e-5f);
+        CHECK(seenMatrix[13]<eye[1] && seenMatrix[14]<eye[2]-0.5f && attach[13]>eye[1]);   // held behind and below; the game's above the eye
+        // Another soldier's booster, a stale id, or the Wing Diver's: the game's.
+        Field<unsigned>(heavy,0x314)=8; update(fencerEffect,nullptr);
+        CHECK(updates==3 && seenLive==attach && g_boosterHeld==1);
+        Field<unsigned>(heavy,0x314)=7;
+        update(effect,nullptr); CHECK(updates==4 && g_boosterHeld==1);
+        PublishFencerBoosterFrame(nullptr,0,body,eye,GetTickCount64());
+        update(fencerEffect,nullptr); CHECK(updates==5 && seenLive==attach && g_boosterHeld==1);
+        g_nodeLookup=nullptr;
+    }
+
+    // The Wing Diver's streamer sources held on her standing chest (HookStreamerEmit at 57FB24).
+    {
+        CHECK(*reinterpret_cast<void**>(g_image.base+0x17A8F20)==g_image.base+0x300B60);   // the draw untouched
+        const auto site=g_image.base+0x57FB24;
+        CHECK(site[0]==0xE8 && site+5+*reinterpret_cast<const std::int32_t*>(site+1)!=g_image.base+0x300780);   // redirected
+        g_originalStreamerEmit=FakeStreamerEmit; g_nodeLookup=FakeBoneLookup;
+        alignas(16) unsigned char diver[0x2100]{},streamer[0x400]{};
+        Field<void*>(diver,0)=g_image.base+0x17D0FF8; Field<unsigned>(diver,0x314)=9;
+        Field<void*>(streamer,0)=g_image.base+0x17A8F08; Field<void*>(streamer,0x3D0)=diver;
+        // Her chest leant 60 degrees forward in flight; a source 0.3 m behind it, thrown up and ahead.
+        const float t=1.05f,ct=std::cos(t),st=std::sin(t);
+        float chest[3][3]{},chestAt[3]={4,12,30};
+        for(int k=0;k<3;++k) {
+            const float* r=edf6vr::kDiverMuneRows[k];
+            chest[k][0]=r[0]; chest[k][1]=r[1]*ct-r[2]*st; chest[k][2]=r[1]*st+r[2]*ct;
+        }
+        auto* bone=reinterpret_cast<float*>(boneNodes+0xB0);
+        for(int k=0;k<3;++k) { for(int j=0;j<3;++j) bone[k*4+j]=chest[k][j]; bone[k*4+3]=0; }
+        for(int j=0;j<3;++j) bone[12+j]=chestAt[j]; bone[15]=1;
+        alignas(16) float place[4]{},way[4]{0,0,-1,0};
+        for(int j=0;j<3;++j) place[j]=chestAt[j]+0.25f*chest[0][j]+0.30f*chest[1][j]+0.3f*chest[2][j];
+        place[3]=1;
+        const float velocity[4]{0,0,8,0};
+        const float body[3][3]={{1,0,0},{0,1,0},{0,0,1}},eye[3]={4,12.35f,29.96f};
+        // No frame: as the game hands it over.
+        PublishFencerBoosterFrame(nullptr,0,body,eye,GetTickCount64());
+        HookStreamerEmit(streamer,place,way,velocity);
+        CHECK(emits==1 && seenPlace[2]==place[2] && g_streamerHeld==0);
+        PublishFencerBoosterFrame(diver,9,body,eye,GetTickCount64());
+        HookStreamerEmit(streamer,place,way,velocity);
+        float expectedPlace[4]{},expectedWay[4]{};
+        CHECK(edf6vr::DiverStreamerHeld(place,way,chest,chestAt,body,eye,expectedPlace,expectedWay));
+        CHECK(emits==2 && g_streamerHeld==1);
+        for(int j=0;j<4;++j) CHECK(std::fabs(seenPlace[j]-expectedPlace[j])<1e-5f && std::fabs(seenWay[j]-expectedWay[j])<1e-5f);
+        CHECK(place[2]>eye[2] && seenPlace[2]<eye[2]-0.1f);                   // the game's ahead of the eye; held behind it
+        CHECK(seenPlace[3]==1 && std::fabs(seenWay[0]*seenWay[0]+seenWay[1]*seenWay[1]+seenWay[2]*seenWay[2]-1)<1e-4f);
+        // Another soldier's streamer, a stale id, or the Fencer published: as the game hands it over.
+        Field<unsigned>(diver,0x314)=10; HookStreamerEmit(streamer,place,way,velocity);
+        CHECK(emits==3 && seenPlace[2]==place[2] && g_streamerHeld==1);
+        Field<unsigned>(diver,0x314)=9;
+        alignas(16) unsigned char heavy[0x2100]{};
+        Field<void*>(heavy,0)=g_image.base+0x17CF5B8; Field<unsigned>(heavy,0x314)=9;
+        PublishFencerBoosterFrame(heavy,9,body,eye,GetTickCount64());
+        HookStreamerEmit(streamer,place,way,velocity); CHECK(emits==4 && g_streamerHeld==1);
+        PublishFencerBoosterFrame(nullptr,0,body,eye,GetTickCount64());
+        g_nodeLookup=nullptr;
+    }
 
     // Translation compensation across multiple missing renders, including flight.
     const float reference[3]={100,200,300},muzzle[3]={101,201,301};

@@ -75,6 +75,51 @@ int main() {
     Check(TargetArmor(allClose.data(), allClose.size(), 0, 0, 1000, 300) == 0,
           "a room where everyone is close has nobody worth copying");
 
+    // INFERNO (the user, 2026-10-24): anyone at or under 1000 copies the lowest of those at or over 1000; when
+    // everyone is over 1000, the usual rule.
+    {
+        const std::vector<RoomMemberArmor> low{Member(0, 2000), Member(0, 1500), Member(0, 900), Member(0, 300)};
+        Check(InfernoTargetArmor(low.data(), low.size(), 2, 0, 900, 300, 1000) == 1500, "INFERNO: C 900 takes B 1500");
+        Check(InfernoTargetArmor(low.data(), low.size(), 3, 0, 300, 300, 1000) == 1500, "INFERNO: D 300 takes B 1500");
+        Check(InfernoTargetArmor(low.data(), low.size(), 1, 0, 1500, 300, 1000) == 0 &&
+                  InfernoTargetArmor(low.data(), low.size(), 0, 0, 2000, 300, 1000) == 0,
+              "INFERNO: with someone under the line, those over it are not raised");
+        Check(TargetArmor(low.data(), low.size(), 2, 0, 900, 300) == 300 &&
+                  TargetArmor(low.data(), low.size(), 3, 0, 300, 300) == 900,
+              "the usual rule on that room: C and D each see the other (so HARDEST and below keep it)");
+        const std::vector<RoomMemberArmor> high{Member(0, 2000), Member(0, 1500), Member(0, 1450), Member(0, 1100)};
+        Check(InfernoTargetArmor(high.data(), high.size(), 3, 0, 1100, 300, 1000) == 1450, "INFERNO, all over 1000: D takes C 1450");
+        Check(InfernoTargetArmor(high.data(), high.size(), 2, 0, 1450, 300, 1000) <= 1450 &&
+                  InfernoTargetArmor(high.data(), high.size(), 1, 0, 1500, 300, 1000) <= 1500 &&
+                  InfernoTargetArmor(high.data(), high.size(), 0, 0, 2000, 300, 1000) <= 2000,
+              "INFERNO, all over 1000: the usual rule raises only the lowest and those near it");
+        Check(InfernoTargetArmor(high.data(), high.size(), 3, 0, 1100, 300, 1000) ==
+                  TargetArmor(high.data(), high.size(), 3, 0, 1100, 300),
+              "INFERNO, all over 1000: exactly the usual rule");
+        // Exactly 1000 is under the line (it may copy) and a source (others may copy it).
+        const std::vector<RoomMemberArmor> edge{Member(0, 1800), Member(0, 1000), Member(0, 700)};
+        Check(InfernoTargetArmor(edge.data(), edge.size(), 2, 0, 700, 300, 1000) == 1000, "INFERNO: 1000 is a source");
+        Check(InfernoTargetArmor(edge.data(), edge.size(), 1, 0, 1000, 300, 1000) == 1800, "INFERNO: 1000 is under the line too");
+        // Nobody at or over 1000: the usual rule.
+        const std::vector<RoomMemberArmor> allLow{Member(0, 900), Member(0, 600), Member(0, 300)};
+        Check(InfernoTargetArmor(allLow.data(), allLow.size(), 2, 0, 300, 300, 1000) ==
+                  TargetArmor(allLow.data(), allLow.size(), 2, 0, 300, 300),
+              "INFERNO, nobody over the line: the usual rule");
+        // Your own class first among the sources, as ever; and line 0 is the usual rule everywhere.
+        const std::vector<RoomMemberArmor> classes{Member(3, 2600), Member(0, 1500), Member(3, 800)};
+        Check(InfernoTargetArmor(classes.data(), classes.size(), 2, 3, 800, 300, 1000) == 2600,
+              "INFERNO: a Fencer under the line copies the lowest Fencer over it");
+        Check(InfernoTargetArmor(classes.data(), classes.size(), 2, 1, 800, 300, 1000) == 1500,
+              "INFERNO: no one of your class over the line, the lowest of the room over it");
+        Check(InfernoTargetArmor(low.data(), low.size(), 2, 0, 900, 300, 0) == TargetArmor(low.data(), low.size(), 2, 0, 900, 300),
+              "InfernoLine 0: the usual rule");
+        // A member who has not reported is neither under the line nor a source.
+        const std::vector<RoomMemberArmor> silent{Member(0, 2000), Member(0, 1300), Member(0, 500, false)};
+        Check(InfernoTargetArmor(silent.data(), silent.size(), 1, 0, 1300, 300, 1000) ==
+                  TargetArmor(silent.data(), silent.size(), 1, 0, 1300, 300),
+              "INFERNO: an unreported member does not count as under the line");
+    }
+
     // Which member this machine is: the one publishing this class and this armor.
     Check(FindSelf(room.data(), room.size(), 3, 2014) == 1, "you are the member with your class and armor");
     Check(FindSelf(room.data(), room.size(), 3, 9999) == room.size(), "no match leaves nobody out");
@@ -146,12 +191,12 @@ int main() {
 
     // The feature is off until it is switched on, and it has no key until one is installed.
     Check(!CopyArmor() && CopyArmorKey() == 0 && CopyArmorPad() == 0, "off with no input before it is installed");
-    InitArmor(nullptr, 0x73, 0xB0, L"F4/LS", 300, caps);
+    InitArmor(nullptr, 0x73, 0xB0, L"F4/LS", 300, caps, 1000);
     Check(CopyArmorKey() == 0x73 && CopyArmorPad() == 0xB0 && !CopyArmor(), "installed with a key and a pad button, still off");
     Check(std::wcscmp(CopyArmorHint(), L"F4/LS") == 0, "the label guide names both inputs");
-    InitArmor(nullptr, 0, 0, L"F4/LS", 300, caps);
+    InitArmor(nullptr, 0, 0, L"F4/LS", 300, caps, 1000);
     Check(CopyArmorHint()[0] == 0, "with no input there is no guide to show");
-    InitArmor(nullptr, 0x73, 0xB0, L"F4/LS", 300, caps);
+    InitArmor(nullptr, 0x73, 0xB0, L"F4/LS", 300, caps, 1000);
     SetCopyArmor(true);
     Check(CopyArmor(), "the key switches it on");
     SetCopyArmor(false);

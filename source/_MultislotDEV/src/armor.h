@@ -38,8 +38,11 @@ struct RoomMemberArmor {
 // someone who is barely different would not help, so the next one up is taken instead. `caps` is the most
 // armor this may give, one per class in class order (0 = no ceiling); it is a rescue, not a shortcut to
 // someone else's armor.
+// `infernoLine` is the INFERNO rule's armor line (1000 by default, 0 = INFERNO like any other difficulty): see
+// InfernoTargetArmor.
 void InitArmor(unsigned char* gameBase, int key, std::uint32_t padButton, const wchar_t* hint, int ignoreWithin,
-               const int* caps);
+               const int* caps, int infernoLine);
+constexpr int kInfernoDifficulty = 4;  // GameStatus+0x4C: EASY 0 .. INFERNO 4
 constexpr int kSoldierTypeCount = 4;  // 0 Ranger, 1 Wing Diver, 2 Air Raider, 3 Fencer
 // F4 (0 = the feature is not installed).
 int CopyArmorKey();
@@ -80,6 +83,13 @@ int CountFor(const ArmorRules& rules, int count, int armor);
 // leave out, or `count` for none.
 int TargetArmor(const RoomMemberArmor* members, std::size_t count, std::size_t self, int soldier, int mine,
                 int ignoreWithin);
+// The same on INFERNO (the user, 2026-10-24). When anyone in the room - this machine included - is at or
+// under `line` (1000), only they copy, and from the lowest of the others at or over `line` (your own class
+// first, as ever); with nobody at or over it, TargetArmor's choice. When everyone is over `line`, TargetArmor's
+// choice: the lowest and those within `ignoreWithin` of the lowest are the ones raised. With A 2000, B 1500,
+// C 900, D 300, C and D both take 1500; with A 2000, B 1500, C 1450, D 1100, D takes 1450.
+int InfernoTargetArmor(const RoomMemberArmor* members, std::size_t count, std::size_t self, int soldier, int mine,
+                       int ignoreWithin, int line);
 // Which member this machine is, by the class and armor it publishes; `count` when none matches.
 std::size_t FindSelf(const RoomMemberArmor* members, std::size_t count, int soldier, int armor);
 // `target` held down to `cap` (0 = no ceiling).

@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.10'
+VERSION = '3.2.11'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.9.zip'
-MULTISLOT_SHA = 'B88E15F753147555A3367679E79A3FADC0B4C6D6E156C4159B2BF13C8CA9E780'
-MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E202757F'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.10.zip'
+MULTISLOT_SHA = '035A000EF1705C786EF998D18B7E44464096C2857E251363355729B5BF74251F'
+MULTISLOT_DLL_SHA = '0214800A4CE77D3E1079F050C36AE272391144A1935F5821F8D05AA4D1C49E7D'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -142,6 +142,13 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.11 (the user: "v001上げてアップして"; +0.0.1): the Fencer's 1-degree band is gone and its pursuit starts at the game
+# pad's dead zone, 0.24 (fencer_input.h kFencerPadDeadzone), so the right hand no longer trembles (hardware log: near-rest
+# look 0.00016 rad/tick, a tenth of before); the Fencer's aim keeps following with the right hand at a temple; the left
+# hand at a temple makes the left stick click Start; the Fencer's four boosters and the Wing Diver's streamer sources start
+# from the chest at its standing place (fencer_mount.h StandingChestHeld, class_support.h HookBoosterUpdate,
+# HookStreamerEmit) -- the boosters checked on hardware ("フェンサーOK"), the streamers not. With EDF6MultiSlot 1.6.10
+# (copy-armour change; the guest's read of the room's setting checked on hardware).
 # 3.2.10 (the user: "v001上げてアップして"; +0.0.1): the Eiren's Electromagnetic Laser Cannons (EfsExposureBullet) and the
 # flame throwers -- the Depth Crawler's Incinerators, the Nix's Combat Burner (FlameBullet02) -- do not kick (the weapon's
 # AmmoClass at weapon+0x240, src/weapon_kick.h RecoillessAmmo, vehicle_recoil.h); the lasers fire every frame and their kick
@@ -179,8 +186,8 @@ MULTISLOT_DLL_SHA = 'BD0DA3B4F0859CAF14F015FD8D1EA56836690A914D13C55689AD2E23E20
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = '91B8CFB7EF5E48BE74576DE1216E7BCA0AB2524663374AC14029B3562C5C2E01'
-VERIFIED_SETTINGS_SHA = '8F12750573314149E3DC228BA6C55341A407F15823F75258CFFF390D58E8623C'
+VERIFIED_VR_SHA = '560FF386644E2F812313BA8A6F4E847A33560F5C8764D189427FAF64E9FCE11A'
+VERIFIED_SETTINGS_SHA = '8B8B0AC5BBF574DDE4E960B3288FA18A94F1A16F0F5E339DA0493FDF97532391'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

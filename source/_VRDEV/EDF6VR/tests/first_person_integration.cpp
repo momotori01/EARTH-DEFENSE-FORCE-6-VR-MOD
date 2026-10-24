@@ -61,6 +61,9 @@ int wmain(int argc,wchar_t** argv) {
     At<edf6vr::Matrix>(camera,0x220)=thirdPerson;
     g_original=FakeUpdate; g_modelOriginal=FakeDraw; g_nodeLookup=FakeLookup;
     g_fpsReady=true; g_fpsEnabled=true; g_enabled=false;
+    // The first update would install the Present hook, whose D3D device takes
+    // 0.2-0.3 s and so outlasts the 250 ms body lease before the first draw.
+    g_measureWithoutVr=false;
     for(int i=0;i<1000;++i) {
         HookUpdate(camera,nullptr);
         HookModelDraw(soldier+0x860,nullptr,2,nullptr);
@@ -172,12 +175,20 @@ int wmain(int argc,wchar_t** argv) {
     VERIFY(edf6vr::FencerPursuitAxis(-100)==-1);
     {
         constexpr float degree=0.0174532925f;
-        VERIFY(edf6vr::FencerPursuitAxis(0.5f*degree)==0);                 // settled within a degree
+        // No band: half a degree off still pushes, just past the game's own dead zone.
+        constexpr float edge=edf6vr::kFencerPadDeadzone;
+        static_assert(edge>0.22f && edge<0.26f,"the game's measured dead zone");
+        const float half=edf6vr::FencerPursuitAxis(0.5f*degree);
+        VERIFY(half>edge && half<edge+0.09f && edf6vr::FencerPursuitAxis(-0.5f*degree)==-half);
+        const float tenth=edf6vr::FencerPursuitAxis(0.1f*degree);           // smaller error, smaller push
+        VERIFY(tenth>edge && tenth<half && tenth<edge+0.02f);              // and next to nothing past the edge
         VERIFY(edf6vr::FencerPursuitAxis(5.01f*degree)==1);                // full stick from 5 degrees
         VERIFY(edf6vr::FencerPursuitAxis(-6.0f*degree)==-1);
         const float three=edf6vr::FencerPursuitAxis(3.0f*degree);          // a small correction: well past the dead zone
-        VERIFY(three>0.6f && three<0.7f);
-        VERIFY(edf6vr::FencerPursuitAxis(1.2f*degree)>0.28f);              // just outside the band: moving, gently
+        VERIFY(three>0.69f && three<0.71f);
+        // What the game turns by, past its dead zone, grows in step with the error.
+        const float one=edf6vr::FencerPursuitAxis(1.0f*degree)-edge,two=edf6vr::FencerPursuitAxis(2.0f*degree)-edge;
+        VERIFY(std::fabs(two-2*one)<1e-5f);
     }
     VERIFY(!edf6vr::FencerPursuit(0,0,0,std::numeric_limits<float>::infinity(),100).valid);
     VERIFY(std::fabs(edf6vr::FencerYawError(-3.13f,3.13f))<0.03f);

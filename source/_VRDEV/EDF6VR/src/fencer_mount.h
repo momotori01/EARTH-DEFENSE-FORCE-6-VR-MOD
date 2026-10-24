@@ -248,6 +248,91 @@ inline bool FencerBeltLink(unsigned hand,unsigned link,const float gun[4][4],con
     for(int j=0;j<3;++j) place[j]=gun[3][j]+local[0][0]*axes[0][j]+local[0][1]*axes[1][j]+local[0][2]*axes[2][j];
     return FencerBeltPut(rows,place,in,out);
 }
+// The backpack boosters.
+//
+// The Fencer's Booster effects (HeavyArmor ctor 565130, heavy_booster_setting)
+// sit on four attach points of the chest bone mune -- ブースターL1/R1/L2/R2,
+// 0.66 and 0.57 out from it and 0.158 to either side (OBJECT/P607_FENCER.SGO,
+// animation_model block; research/vehicle/fencer_boosters.py) -- and copy the
+// attach point's matrix every update. The dash and jump clips tip the chest
+// forward and back, and the boosters went with it: standing they are 0.66 m
+// behind the eye and 0.16 below; in the dashes they rose to 0.38-0.52 m above
+// it and in the back dash and the boost recovery came 0.47-0.58 m in front of
+// it (research/fencer/booster_fixed.py) -- in view every time (the user,
+// 2026-10-24: "ダッシュブースタージャンプブースターが元のアニメーションと一緒に移動
+// してるせいで、毎回視界に映り込む ... ブースターは消さずに固定にできる？").
+// So each booster keeps its place and turn against the chest as the game has
+// them this frame, and the chest is put where it stands at a level aim, from
+// the eye in the body's frame (left, up, forward), the stance's 6.4 degrees of
+// twist taken out (the gatling drum's way): kFencerMunePlace / kFencerMuneRows
+// (booster_fixed.py). Drawn as ever; only where.
+inline constexpr float kFencerMunePlace[3]={0.002f,-0.389f,-0.035f};
+inline constexpr float kFencerMuneRows[3][3]={{-0.0099f,0.9731f,0.2300f},{-0.0040f,0.2299f,-0.9732f},{-0.9999f,-0.0106f,0.0016f}};
+// Something carried by the chest held on the standing chest: `live` its matrix
+// as the game made it, `chestRows` / `chestAt` the chest bone this frame,
+// `body` the body's unit rows (left, up, forward), `eye` its eye, and the
+// chest's standing `place` (from the eye) and `rows`, in the body's frame.
+// The rows keep their lengths and the W lane is kept.
+inline bool StandingChestHeld(const float live[4][4],const float chestRows[3][3],const float chestAt[3],
+                              const float body[3][3],const float eye[3],const float place[3],const float rows[3][3],
+                              float out[4][4]) noexcept {
+    float chest[3][3]{};
+    for(int k=0;k<3;++k) {
+        const float length=std::sqrt(chestRows[k][0]*chestRows[k][0]+chestRows[k][1]*chestRows[k][1]+chestRows[k][2]*chestRows[k][2]);
+        if(!std::isfinite(length) || length<1e-4f) return false;
+        for(int j=0;j<3;++j) chest[k][j]=chestRows[k][j]/length;
+    }
+    float standing[3][3]{},standingAt[3]{};
+    for(int k=0;k<3;++k) for(int j=0;j<3;++j)
+        standing[k][j]=rows[k][0]*body[0][j]+rows[k][1]*body[1][j]+rows[k][2]*body[2][j];
+    for(int j=0;j<3;++j) standingAt[j]=eye[j]+place[0]*body[0][j]+place[1]*body[1][j]+place[2]*body[2][j];
+    float made[4][4]{};
+    for(int i=0;i<4;++i) {
+        float local[3]{};
+        for(int k=0;k<3;++k) {
+            float d=0;
+            for(int j=0;j<3;++j) d+=(i<3?live[i][j]:live[3][j]-chestAt[j])*chest[k][j];
+            local[k]=d;
+        }
+        for(int j=0;j<3;++j) {
+            made[i][j]=(i<3?0.0f:standingAt[j])+local[0]*standing[0][j]+local[1]*standing[1][j]+local[2]*standing[2][j];
+            if(!std::isfinite(made[i][j])) return false;
+        }
+        made[i][3]=live[i][3];
+    }
+    for(int i=0;i<4;++i) for(int j=0;j<4;++j) out[i][j]=made[i][j];
+    return true;
+}
+// A Fencer's booster (`live`) on his standing chest.
+inline bool FencerBoosterHeld(const float live[4][4],const float chestRows[3][3],const float chestAt[3],
+                              const float body[3][3],const float eye[3],float out[4][4]) noexcept {
+    return StandingChestHeld(live,chestRows,chestAt,body,eye,kFencerMunePlace,kFencerMuneRows,out);
+}
+// The Wing Diver's streamers (PaleWingStreamer, the white lines she trails in
+// flight): six sources on her backpack's wing joints (P606_WINGDIVER.SGO
+// pale_wing_streamer_setting -- streamer_l/r on booster6B_joint2, _lt/_rt/_lb/_rb
+// on booster6B_joint1; research/vehicle/wingdiver_streamers.py). Her flight
+// clips lean her body and bring them 0.26-0.71 m in front of the eye (fly_axis,
+// the rolls): a line across the middle of the view. Held on her standing chest
+// they stay 0.06-0.23 m behind it in every flight clip, the wings' own spread
+// against the chest kept (wingdiver_streamer_held.py; the user, 2026-10-24:
+// "アニメーションに追従してるのが問題だから背中のウイングの位置に発生源を固定して").
+// Her chest at stand_hand, from the eye in the body's frame, untwisted.
+inline constexpr float kDiverMunePlace[3]={0.004f,-0.350f,0.040f};
+inline constexpr float kDiverMuneRows[3][3]={{-0.0218f,0.9997f,0.0111f},{0.0057f,0.0112f,-0.9999f},{-0.9997f,-0.0218f,-0.0059f}};
+// A streamer's source as her update hands it over: its place and its way (the
+// attach point's translation and its negated third row), each a vec4 whose W
+// is kept.
+inline bool DiverStreamerHeld(const float place[4],const float way[4],const float chestRows[3][3],const float chestAt[3],
+                              const float body[3][3],const float eye[3],float heldPlace[4],float heldWay[4]) noexcept {
+    const float live[4][4]={{1,0,0,0},{0,1,0,0},{way[0],way[1],way[2],way[3]},{place[0],place[1],place[2],place[3]}};
+    float out[4][4]{};
+    // The way's length is the attach point's own scale; it is kept as the rows' are.
+    if(!(way[0]*way[0]+way[1]*way[1]+way[2]*way[2]>1e-8f)) return false;
+    if(!StandingChestHeld(live,chestRows,chestAt,body,eye,kDiverMunePlace,kDiverMuneRows,out)) return false;
+    for(int j=0;j<4;++j) { heldWay[j]=out[2][j]; heldPlace[j]=out[3][j]; }
+    return true;
+}
 // A swung weapon's rows on the hand, from where its root is now.
 //
 // A blade, a hammer or the katana in its swing is drawn as the game swings it:

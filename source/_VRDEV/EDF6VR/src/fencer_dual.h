@@ -570,7 +570,7 @@ std::atomic<void*> g_fencerLeftModel{nullptr};
 // aim, a stale pad against a fresh look) cannot drag it -- the per-bucket EMA
 // they fed collapsed to a tenth of the value twice in play, and the left hand
 // went heavy at large deflections with it.
-constexpr float kFencerDeadzone=0.28f;   // the pursuit's own compensation (fencer_input.h); the game answered 0.286 with a small look
+constexpr float kFencerDeadzone=edf6vr::kFencerPadDeadzone;   // the game's own, as measured (fencer_input.h)
 constexpr unsigned kFencerSlopeRing=32;
 float g_fencerSlope[2][kFencerSlopeRing]{};
 unsigned g_fencerSlopeCount[2]{},g_fencerSlopeNext[2]{};
