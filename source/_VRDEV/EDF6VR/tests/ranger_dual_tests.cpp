@@ -557,6 +557,138 @@ static float g_seenRay[2][3]{};
 static void* __fastcall FakeGuideRay(void*,void*,unsigned char* items,int,int) {
     std::memcpy(g_seenRay[0],items,12);std::memcpy(g_seenRay[1],items+0x10,12);return nullptr;
 }
+// hand_aim_sync.h 6 and fencer_dual.h FencerShieldBashTurn (2026-10-27): a
+// straight shoulder weapon's send goes out on the hand's aim, not the game's
+// dipped muzzle, and a shield's reflect field is turned onto its hand's aim.
+static float g_sentDir[3]{},g_sentAt[3]{};
+static int g_sends=0;
+static void __fastcall FakeShotSend(void* weapon,int index,unsigned,unsigned) {
+    ++g_sends;
+    unsigned char* entry=DualAt<unsigned char*>(weapon,0x1D0)+index*0xF0;
+    for(int j=0;j<3;++j) { g_sentDir[j]=reinterpret_cast<const float*>(entry+0x70)[j]; g_sentAt[j]=reinterpret_cast<const float*>(entry+0x80)[j]; }
+}
+static void CheckShoulderAndShieldSends() {
+    auto angle=[](const float* a,const float* b){float c=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];return std::acos(std::clamp(c,-1.0f,1.0f));};
+    alignas(16) static unsigned char weapon[0x1000]{},entries[0xF0]{},owner[0x2000]{},shield[0x1000]{},attachment[0xF0]{};
+    const bool shoulder0=g_fencerShoulder[0],shoulder1=g_fencerShoulder[1],active=g_fencerActive.load(),sync=g_handAimSync;
+    void* const was0=g_fencerWeapons[0].load();void* const was1=g_fencerWeapons[1].load();
+    const auto sendWas=g_shotSendOriginal;const auto tickWas=g_dualTick;
+    FencerShadow savedShadow{};AcquireSRWLockShared(&g_fencerShadowLock);savedShadow=g_fencerShadow;ReleaseSRWLockShared(&g_fencerShadowLock);
+    AcquireSRWLockExclusive(&g_fencerShadowLock);g_fencerShadow={};g_fencerShadow.valid=true;ReleaseSRWLockExclusive(&g_fencerShadowLock);
+    const float ahead[3]={0,0,1},straight[4]={0,0,1,1};
+    // A light mortar on the left shoulder; its muzzle dipped 12 degrees by the barrel's animation.
+    DualAt<void*>(weapon,0)=g_image.base+0x17E3F18;            // Weapon_HeavyShoot
+    std::memcpy(weapon+0x350,straight,16);
+    DualAt<void*>(weapon,0x120)=owner;
+    DualAt<unsigned char*>(weapon,0x1D0)=entries;DualAt<std::uint64_t>(weapon,0x1E0)=1;
+    const float dip=12*0.01745329f;
+    const float r0[4]={1,0,0,0},r1[4]={0,std::cos(dip),std::sin(dip),0},r2[4]={0,-std::sin(dip),std::cos(dip),0},at[4]={5,1,-3,1};
+    for(int m=0;m<2;++m) {
+        std::memcpy(entries+0x50+m*0x40,r0,16);std::memcpy(entries+0x60+m*0x40,r1,16);std::memcpy(entries+0x70+m*0x40,r2,16);
+    }
+    std::memcpy(entries+0x80,at,16);
+    unsigned char before[0xF0];std::memcpy(before,entries,sizeof before);
+    g_fencerActive=true;g_fencerWeapons[0].store(weapon);g_fencerWeapons[1].store(nullptr);
+    g_fencerShoulder[0]=true;g_fencerShoulder[1]=false;g_handAimSync=true;g_dualTick={};
+    float dir[3]{};
+    CHECK(HandAimShoulderDirection(weapon,dir) && angle(dir,ahead)<1e-5f);
+    g_shotSendOriginal=FakeShotSend;g_sends=0;
+    const auto turnsBefore=g_handAimShoulderSends.load();
+    HookShotSend(weapon,0,0,0);
+    CHECK(g_sends==1 && angle(g_sentDir,ahead)<1e-4f);                         // sent along the aim, not 12 degrees under it
+    CHECK(g_sentAt[0]==5 && g_sentAt[1]==1 && g_sentAt[2]==-3);               // from where the game put it
+    CHECK(!std::memcmp(before,entries,sizeof before));                        // the muzzle is the game's again after
+    CHECK(g_handAimShoulderSends.load()==turnsBefore+1);
+    // In a hand (not on a shoulder) it is not this: the send goes as before (no tick, no turn).
+    g_fencerShoulder[0]=false;
+    CHECK(!HandAimShoulderDirection(weapon,dir));
+    g_sends=0;HookShotSend(weapon,0,0,0);
+    CHECK(g_sends==1 && angle(g_sentDir,r2)<1e-5f && g_handAimShoulderSends.load()==turnsBefore+1);
+    g_fencerShoulder[0]=true;
+    // The javelins' designed lob is not this either.
+    const float javelin[4]={0,1,1,1};std::memcpy(weapon+0x350,javelin,16);
+    CHECK(!HandAimShoulderDirection(weapon,dir));
+    std::memcpy(weapon+0x350,straight,16);
+    // A reflector in the left hand: its discharge 30 degrees up off the shadow's
+    // aim is turned onto it, both matrices, the point kept; a mortar is not turned.
+    DualAt<void*>(shield,0)=g_image.base+0x17E51A0;            // Weapon_Shield
+    std::memcpy(shield+0x350,straight,16);
+    const float up=30*0.01745329f;
+    const float s1[4]={0,std::cos(up),-std::sin(up),0},s2[4]={0,std::sin(up),std::cos(up),0},sat[4]={1,2,3,1};
+    for(int m=0;m<2;++m) {
+        std::memcpy(attachment+0x50+m*0x40,r0,16);std::memcpy(attachment+0x60+m*0x40,s1,16);std::memcpy(attachment+0x70+m*0x40,s2,16);
+    }
+    std::memcpy(attachment+0x80,sat,16);
+    const auto bashes=g_fencerBashTurns[0].load();
+    CHECK(FencerShieldBashTurn(shield,0,owner,attachment));
+    float fired[3]{};
+    CHECK(DualFireDirection(shield,attachment,fired) && angle(fired,ahead)<1e-4f);
+    CHECK(angle(reinterpret_cast<const float*>(attachment+0xB0),ahead)<1e-4f);  // the second matrix's row 2 too
+    CHECK(reinterpret_cast<const float*>(attachment+0x80)[0]==1 && reinterpret_cast<const float*>(attachment+0x80)[2]==3);
+    CHECK(g_fencerBashTurns[0].load()==bashes+1 && std::fabs(g_fencerBashTurnDeg[0].load()-30)<0.01f);
+    unsigned char mortar[0xF0];std::memcpy(mortar,entries,sizeof mortar);
+    CHECK(!FencerShieldBashTurn(weapon,0,owner,entries) && !std::memcmp(mortar,entries,sizeof mortar));
+    // The right hand: the soldier's own smoothed aim (+0x1240: pitch, yaw), here 0.5 rad to the side.
+    const float smooth[4]={0,0.5f,0,0};std::memcpy(owner+0x1240,smooth,16);
+    for(int m=0;m<2;++m) { std::memcpy(attachment+0x60+m*0x40,s1,16);std::memcpy(attachment+0x70+m*0x40,s2,16); }
+    CHECK(FencerShieldBashTurn(shield,1,owner,attachment));
+    const float side[3]={std::sin(0.5f),0,std::cos(0.5f)};
+    CHECK(DualFireDirection(shield,attachment,fired) && angle(fired,side)<1e-4f);
+    // Put back.
+    g_shotSendOriginal=sendWas;g_dualTick=tickWas;g_handAimSync=sync;
+    g_fencerShoulder[0]=shoulder0;g_fencerShoulder[1]=shoulder1;g_fencerActive=active;g_fencerWeapons[0].store(was0);g_fencerWeapons[1].store(was1);
+    AcquireSRWLockExclusive(&g_fencerShadowLock);g_fencerShadow=savedShadow;ReleaseSRWLockExclusive(&g_fencerShadowLock);
+}
+// fencer_dual.h HookFencerSecondary (2026-10-27): a left weapon's dash or jump
+// runs with the soldier's own aims, then the shadow goes back; other
+// secondaries and the right hand keep what the tick gave them.
+static float g_secondarySawYaw=0;
+static unsigned char* g_secondarySoldier=nullptr;
+static int g_secondaryCalls=0;
+static void __fastcall FakeSecondary(void*) {
+    ++g_secondaryCalls;
+    g_secondarySawYaw=*reinterpret_cast<const float*>(g_secondarySoldier+0x1244);
+    *reinterpret_cast<float*>(g_secondarySoldier+0x1244)+=0.25f;   // the dash turns the soldier
+}
+static void CheckFencerSecondary() {
+    alignas(16) static unsigned char fencerBody[0x2000]{},left[0x1000]{},right[0x1000]{};
+    const bool active=g_fencerActive.load();void* const was0=g_fencerWeapons[0].load();void* const was1=g_fencerWeapons[1].load();
+    const auto originalWas=g_secondaryOriginal;
+    g_fencerActive=true;g_fencerWeapons[0].store(left);g_fencerWeapons[1].store(right);
+    const float native[8]={0.1f,1.0f,0,0,0.1f,1.0f,0,0},shadow[8]={-0.2f,2.0f,0,0,-0.2f,2.0f,0,0};
+    std::memcpy(fencerBody+0x1230,shadow,32);
+    std::memcpy(g_fencerSwapSaved,native,32);
+    g_fencerSwapSoldier=fencerBody;g_fencerSwapLive=true;
+    g_secondarySoldier=fencerBody;g_secondaryOriginal=FakeSecondary;
+    const auto before=g_fencerSecondaryNative.load();
+    DualAt<int>(left,0x690)=5;                                  // dash
+    g_secondaryCalls=0;HookFencerSecondary(left);
+    CHECK(g_secondaryCalls==1 && g_secondarySawYaw==1.0f);      // the game's yaw, not the left hand's 2.0
+    CHECK(DualAt<float>(fencerBody,0x1244)==2.0f && DualAt<float>(fencerBody,0x1240)==-0.2f);   // the shadow back for the rest of the tick
+    CHECK(g_fencerSwapSaved[5]==1.25f);                         // the turn the dash made stays the game's
+    CHECK(g_fencerSecondaryNative.load()==before+1);
+    DualAt<int>(left,0x690)=4;                                  // jump: the same
+    HookFencerSecondary(left);
+    CHECK(g_secondarySawYaw==1.25f && DualAt<float>(fencerBody,0x1244)==2.0f);
+    DualAt<int>(left,0x690)=1;                                  // zoom: the left aim
+    HookFencerSecondary(left);
+    CHECK(g_secondarySawYaw==2.0f);
+    std::memcpy(fencerBody+0x1230,shadow,32);
+    DualAt<int>(right,0x690)=5;                                 // the right hand's: as the game had it
+    HookFencerSecondary(right);
+    CHECK(g_secondarySawYaw==2.0f);
+    std::memcpy(fencerBody+0x1230,shadow,32);
+    g_fencerSwapLive=false;DualAt<int>(left,0x690)=5;           // outside the left tick: untouched
+    HookFencerSecondary(left);
+    CHECK(g_secondarySawYaw==2.0f && g_fencerSecondaryNative.load()==before+2 && g_secondaryCalls==5);
+    // On the real image: the call at 693939 and the jumps at 692449 / 693270.
+    g_secondaryOriginal=originalWas;
+    CHECK(g_image.base[0x693939]==0xE8 && g_image.base[0x692449]==0xE9 && g_image.base[0x693270]==0xE9);
+    CHECK(InstallFencerSecondaryHook()==3 && g_secondaryOriginal==reinterpret_cast<SecondaryDispatch>(g_image.base+0x698570));
+    CHECK(InstallFencerSecondaryHook()==0);                     // the sites no longer reach 698570
+    g_fencerSwapSoldier=nullptr;
+    g_fencerActive=active;g_fencerWeapons[0].store(was0);g_fencerWeapons[1].store(was1);
+}
 static void CheckShoulderStraight() {
     auto angle=[](const float* a,const float* b){float c=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];return std::acos(std::clamp(c,-1.0f,1.0f));};
     alignas(16) static unsigned char weapon[0x1000]{},entries[0x100]{};
@@ -1038,5 +1170,7 @@ int wmain(int argc,wchar_t** argv) {
     CheckVehicleHandAimDefaults();
     CheckVehicleRecoilStaleState();
     CheckShoulderStraight();
+    CheckShoulderAndShieldSends();
+    CheckFencerSecondary();
     printf("Ranger dual production checks: %d failures\n",failures);return failures?1:0;
 }

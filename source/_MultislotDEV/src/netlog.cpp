@@ -12,6 +12,7 @@
 #include "traffic.h"
 #include "packetsize.h"
 #include "handaim.h"
+#include "downsync.h"
 
 namespace multislot {
 namespace {
@@ -213,6 +214,34 @@ void SendHandAimAfter(void* handle, const SendPacketOptions* sent) {
     originalSendPacket(handle, &ours);
 }
 
+// The down-sync word (downsync.h) to the peer the game just sent to: once a second, on the same terms as the hand
+// aim packet. Also notes that this peer is a member the game is talking to.
+void SendDownSyncAfter(void* handle, const SendPacketOptions* sent) {
+    if (!DownSyncInstalled()) return;
+    const auto now = GetTickCount64();
+    SendPacketOptions ours{};
+    __try {
+        if (!sent || sent->ApiVersion < 3 || !sent->RemoteUserId) return;
+        ours = *sent;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+    char peer[40]{};
+    HandAimPeerText(ours.RemoteUserId, peer, sizeof(peer));
+    if (!peer[0]) return;
+    NoteDownSyncPeer(peer, now);
+    std::uint8_t packet[kDownSyncPacketSize]{};
+    const auto size = DownSyncWordFor(peer, packet, sizeof(packet), now);
+    if (!size) return;
+    ours.Channel = kHandAimChannel;
+    ours.Data = packet;
+    ours.DataLengthBytes = static_cast<std::uint32_t>(size);
+    ours.Reliability = 0;
+    ours.AllowDelayedDelivery = 0;
+    if (TrafficMeterOn()) RecordSent(ours.RemoteUserId, ours.Channel, ours.DataLengthBytes, now);
+    originalSendPacket(handle, &ours);
+}
+
 // Keep the import wrapper itself small so its return address is always the real game caller.
 EOS_EResult DispatchSendPacket(void* handle, const SendPacketOptions* options, std::uintptr_t caller) {
     const bool finalHello = MatchFinalHello(handle, options, caller);
@@ -267,6 +296,7 @@ EOS_EResult DispatchSendPacket(void* handle, const SendPacketOptions* options, s
     // The game's own data to this peer just went out (12C8BC0), so the connection is up and this is the
     // thread the game drives EOS from: the right moment for the hand directions (handaim.h).
     if (caller == 0x12C8C5A && result == 0 && sentRead && HandAimEnabled()) SendHandAimAfter(handle, effective);
+    if (caller == 0x12C8C5A && result == 0 && sentRead) SendDownSyncAfter(handle, effective);
     if (finalHello) {
         ++activeHello->sends;
         activeHello->result = result;
@@ -301,7 +331,7 @@ EOS_EResult HookReceivePacket(void* handle, const void* options, void** peer, So
         if (TrafficMeterOn()) RecordReceived(from, channel ? *channel : 0, *size, now);
         char text[40]{};
         HandAimPeerText(from, text, sizeof(text));
-        ReceiveHandAimPacket(text, data, *size, now);
+        if (!ReceiveDownSyncPacket(text, data, *size, now)) ReceiveHandAimPacket(text, data, *size, now);
         result = originalReceivePacket(handle, options, peer, socket, channel, data, size);
     }
     if (result == 0 && size && *size && TrafficMeterOn())

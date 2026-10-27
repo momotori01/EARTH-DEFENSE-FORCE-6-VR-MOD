@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.11'
+VERSION = '3.2.12'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.10.zip'
-MULTISLOT_SHA = '035A000EF1705C786EF998D18B7E44464096C2857E251363355729B5BF74251F'
-MULTISLOT_DLL_SHA = '0214800A4CE77D3E1079F050C36AE272391144A1935F5821F8D05AA4D1C49E7D'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.11.zip'
+MULTISLOT_SHA = '609D2ED0C195E12B104137F7C3E641DDBE3769EDCC0810DFE97427B23360B26B'
+MULTISLOT_DLL_SHA = '409BDFB2825333F1F73B91AFB9193D3C51E1B1A5E9B61AE6F69BF0205BF53B5C'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -142,6 +142,13 @@ MULTISLOT_DLL_SHA = '0214800A4CE77D3E1079F050C36AE272391144A1935F5821F8D05AA4D1C
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.12 (the user: "それじゃあ全員揃えの方式でアップして"; +0.0.1): a Fencer's straight shoulder weapon (the mortars)
+# sends its muzzle along the hand's aim, the one its shell is turned onto here, so the others see it land where
+# this player does (hand_aim_sync.h 6; the barrel's post-shot dip had sent it 10-16 deg off); a reflector's
+# field (ShieldBashBullet01, which skips the bullet-birth turn) leaves along the shield's aim (fencer_dual.h
+# FencerShieldBashTurn, HandAimFinalPose); a left weapon's dash or jump runs with the soldier's own aims, not the
+# shadow (HookFencerSecondary at 693939 / 692449 / 693270). With EDF6MultiSlot 1.6.11: downed insects and robots
+# kept in sync, only when every member of the room has it switched on. None of it run on hardware.
 # 3.2.11 (the user: "v001上げてアップして"; +0.0.1): the Fencer's 1-degree band is gone and its pursuit starts at the game
 # pad's dead zone, 0.24 (fencer_input.h kFencerPadDeadzone), so the right hand no longer trembles (hardware log: near-rest
 # look 0.00016 rad/tick, a tenth of before); the Fencer's aim keeps following with the right hand at a temple; the left
@@ -186,8 +193,8 @@ MULTISLOT_DLL_SHA = '0214800A4CE77D3E1079F050C36AE272391144A1935F5821F8D05AA4D1C
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = '560FF386644E2F812313BA8A6F4E847A33560F5C8764D189427FAF64E9FCE11A'
-VERIFIED_SETTINGS_SHA = '8B8B0AC5BBF574DDE4E960B3288FA18A94F1A16F0F5E339DA0493FDF97532391'
+VERIFIED_VR_SHA = 'D94255C5208BC6C94631779DE302791CE8E8CE9372AD0F452AEE66A2A883B9BA'
+VERIFIED_SETTINGS_SHA = '962AF014060808F8C806692CE2325A0EAB4CAF6046505C14C5D8BA895ED916D5'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

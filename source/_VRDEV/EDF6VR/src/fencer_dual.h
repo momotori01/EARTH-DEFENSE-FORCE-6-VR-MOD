@@ -443,6 +443,12 @@ std::atomic<unsigned long long> g_fencerCarrySkips{0};   // carries skipped: the
 // game's aim: the left spear's bullets were "turned" by 0 degrees).
 thread_local bool g_fencerSwapLive=false;
 thread_local float g_fencerSwapNative[4]{};
+// The whole of the soldier's own two aims (+0x1230 target, +0x1240 smooth) and
+// the soldier, while the left tick has the shadow swapped in (HookFencerSecondary).
+thread_local float g_fencerSwapSaved[8]{};
+thread_local unsigned char* g_fencerSwapSoldier=nullptr;
+std::atomic<unsigned long long> g_fencerSecondaryNative{0};   // left dashes/jumps given the game's aim (HookFencerSecondary)
+unsigned g_fencerSecondarySites=0;
 std::atomic<unsigned long long> g_fencerBulletAligned[2]{},g_fencerCarryAdopted{0};
 // Bullets turned from the direction the game aimed them along before their cone
 // (shot_origin.h, NoteSpreadInput): the cone kept, the game's own aim not.
@@ -655,6 +661,56 @@ bool FencerHandAimForward(unsigned hand,void* soldier,float out[3]) noexcept {
     }
     if(!std::isfinite(smooth[0]) || !std::isfinite(smooth[1])) return false;
     FencerAimForward(smooth[0],smooth[1],out);
+    return true;
+}
+
+// A reflector's field, on its hand's aim.
+//
+// While guarding, a shield fires a ShieldBashBullet01 every FireInterval
+// frames (custom_parameter is_auto_bash; the weapon's state 6AB1C0 -> 690BB0
+// -> 690CC0). It is the reflector's field: a sphere of AmmoSize radius moving
+// along its own forward, and every enemy shot inside it coming at its face is
+// turned back (2A5600 -> 237860 -> 2A52A0). Its forward is the muzzle the
+// discharge carries (HookDualFire), which starts from the arm as the game
+// animates it on its single (right-hand) aim and is carried onto the shield
+// as drawn: up to 34 degrees off the drawn guard while raised, nearly straight
+// up while the arm is still rising, and further off the more the left hand
+// points away from the right. Bullets get that taken out at their birth
+// (shot_origin.h, the hook at 231CC0), but a bash's base constructor is
+// called with r8b = 0 (2A4C13) and never reaches 231CC0, so the field went
+// wherever the carry put it (the user, 2026-10-27: a Powered Reflector did not
+// turn back a Neiker's flame, FlameBullet02, which nothing in the game exempts).
+// So a shield's discharge is turned onto the aim its guard already uses
+// (HookGuardTest: the shadow for the left, the game's for the right), the
+// direction the drawn shield faces; its point stays where the carry put it.
+std::atomic<unsigned long long> g_fencerBashTurns[2]{};
+std::atomic<float> g_fencerBashTurnDeg[2]{},g_fencerBashTurnMax[2]{};
+bool FencerShieldAim(void* weapon,unsigned hand,void* soldier,float out[3]) noexcept {
+    if(hand>1 || !weapon || !edf6vr::HasType(g_image,weapon,".?AVWeapon_Shield@@")) return false;
+    return FencerHandAimForward(hand,soldier,out);
+}
+// Both muzzle matrices of a discharge (+0x50 and +0x90) turned by the arc from
+// their fire direction onto the shield's aim. False leaves them as they were.
+bool FencerShieldBashTurn(void* weapon,unsigned hand,void* soldier,unsigned char* attachment) noexcept {
+    float aim[3]{},from[3]{};
+    if(!FencerShieldAim(weapon,hand,soldier,aim) || !DualFireDirection(weapon,attachment,from)) return false;
+    __try {
+        float turned[2][3][4]{};
+        for(int m=0;m<2;++m) {
+            const auto* src=reinterpret_cast<const float*>(attachment+0x50+m*0x40);
+            for(int r=0;r<3;++r) for(int j=0;j<3;++j) turned[m][r][j]=src[r*4+j];
+            if(!FencerTurnRows(turned[m],from,aim)) return false;
+            for(int r=0;r<3;++r) for(int j=0;j<3;++j) if(!std::isfinite(turned[m][r][j])) return false;
+        }
+        for(int m=0;m<2;++m) {
+            auto* dst=reinterpret_cast<float*>(attachment+0x50+m*0x40);
+            for(int r=0;r<3;++r) for(int j=0;j<3;++j) dst[r*4+j]=turned[m][r][j];
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    const float deg=std::acos(std::clamp(from[0]*aim[0]+from[1]*aim[1]+from[2]*aim[2],-1.0f,1.0f))*57.29578f;
+    g_fencerBashTurns[hand].fetch_add(1,std::memory_order_relaxed);
+    g_fencerBashTurnDeg[hand].store(deg,std::memory_order_relaxed);
+    if(deg>g_fencerBashTurnMax[hand].load(std::memory_order_relaxed)) g_fencerBashTurnMax[hand].store(deg,std::memory_order_relaxed);
     return true;
 }
 
@@ -2019,10 +2075,11 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
             aim.pitch*57.29578f,aim.yaw*57.29578f,g_fencerLastKick[0],g_fencerLastKick[1],g_fencerLastKick[2]);
         Log("DASHSMOOTH speed=%.1f peak=%.1fm/s held=%llu (updates a posed weapon was held through a dash or jump) "
             "pressed dash=%llu jump=%llu secondaryType L=%d R=%d (weapon+0x690: 4 jump, 5 dash, 6 reflect) "
-            "shoulderRest fixed=%llu learnt=%llu used=%llu reported=%llu settled=%d mountByModel L/R=%u/%u",
+            "shoulderRest fixed=%llu learnt=%llu used=%llu reported=%llu settled=%d mountByModel L/R=%u/%u "
+            "left dashes/jumps on the game's aim=%llu (hook %u/3)",
             g_fencerSpeed,g_fencerSpeedPeak,g_fencerPoseSlowed.load(),g_fencerActions[0].load(),g_fencerActions[1].load(),
             g_fencerSecondaryType[0],g_fencerSecondaryType[1],g_fencerRestFixed.load(),g_fencerRestLearnt.load(),g_fencerRestUsed.load(),g_fencerRestReported.load(),g_fencerSettled?1:0,
-            g_fencerMountByModel[0].load(),g_fencerMountByModel[1].load());
+            g_fencerMountByModel[0].load(),g_fencerMountByModel[1].load(),g_fencerSecondaryNative.load(),g_fencerSecondarySites);
         g_fencerSpeedPeak=0;
         Log("FENCERJOINT index L/R=%d/%d draws=%llu joint off its target, on foot avg/max=%.1f/%.1fdeg (%u) moving or in the air avg/max=%.1f/%.1fdeg (%u) "
             "weapon matrices on the joint/root=%llu/%llu barrelsTurned=%llu",
@@ -2044,10 +2101,13 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
             g_fencerShoulderArcs[0].load(),g_fencerShoulderArcs[1].load());
         for(auto& w:g_fencerGuideWatch) { w.worst[0]=w.worst[1]=0; }
         Log("SHIELDSTATE shown lowered/guard=%llu/%llu offAnchor=%llu downs=%llu trigger L/R=%.2f/%.2f"
-            " guard tests=%llu on the left aim=%llu blocked there=%llu sites=%u/4",
+            " guard tests=%llu on the left aim=%llu blocked there=%llu sites=%u/4"
+            " reflect fields onto the aim L/R=%llu/%llu turned last %.1f/%.1f max %.1f/%.1f deg",
             g_fencerShieldShown[0].load(),g_fencerShieldShown[1].load(),
             g_fencerRestOffAnchor.load(),g_fencerDowns.load(),g_handTrigger[0].load(),g_handTrigger[1].load(),
-            g_fencerGuardTests.load(),g_fencerGuardLeft.load(),g_fencerGuardLeftBlocked.load(),g_fencerGuardSites);
+            g_fencerGuardTests.load(),g_fencerGuardLeft.load(),g_fencerGuardLeftBlocked.load(),g_fencerGuardSites,
+            g_fencerBashTurns[0].load(),g_fencerBashTurns[1].load(),g_fencerBashTurnDeg[0].load(),g_fencerBashTurnDeg[1].load(),
+            g_fencerBashTurnMax[0].load(),g_fencerBashTurnMax[1].load());
         for(unsigned h=0;h<2;++h) if(g_fencerShieldSeen[h]) {
             const auto& c=g_fencerShieldNative[h];
             Log("SHIELDPOSE %s native rows in the aim frame (left,up,forward): x=(%.2f,%.2f,%.2f) y=(%.2f,%.2f,%.2f) z=(%.2f,%.2f,%.2f)",
@@ -2392,6 +2452,60 @@ unsigned InstallFencerGuardHooks() noexcept {
         return sites;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
+// A left weapon's dash or jump on the game's own aim.
+//
+// A Fencer's dash (SecondaryFire_Type 5) and jump (4) are the weapon's
+// secondary: the weapon's update (6934F0, at 693939; also reached by the jumps
+// at 692449 and 693270) calls 698570, which sends message 0x2003 to the owner
+// at once (vtable +0x48, HeavyArmor 567250). The dash's state starts there
+// (568F10 -> 569D50) and lays the move input (+0x11E0, the stick in the aim's
+// frame; straight ahead without one) along the soldier's aim yaw (+0x1244), and
+// the network event for the others (567C10) carries the same yaw. That runs
+// inside the left weapon's tick, where the soldier holds the shadow (the left
+// hand's aim), so a left-hand dash went the stick's way turned by the left
+// hand's yaw instead of the way walking goes -- straight ahead was wherever the
+// left hand pointed (the user, 2026-10-27: "フェンサーの左手のスラスターの移動方向が
+// 変だった"). The right hand's never saw the shadow. For the call the soldier
+// gets his own aims back, then the shadow again; the other secondaries (zoom,
+// a shield's reflect) keep the left aim.
+using SecondaryDispatch=void(__fastcall*)(void* weapon);
+SecondaryDispatch g_secondaryOriginal=nullptr;
+void __fastcall HookFencerSecondary(void* weapon) {
+    unsigned char* const soldier=g_fencerSwapSoldier;
+    const int type=g_fencerSwapLive && soldier?FencerSecondaryType(weapon):-1;
+    if((type!=4 && type!=5) || weapon!=g_fencerWeapons[0].load(std::memory_order_relaxed)) { g_secondaryOriginal(weapon); return; }
+    float shadow[8]{};
+    bool swapped=false;
+    __try {
+        std::memcpy(shadow,soldier+0x1230,32);
+        std::memcpy(soldier+0x1230,g_fencerSwapSaved,32);
+        swapped=true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { swapped=false; }
+    if(!swapped) { g_secondaryOriginal(weapon); return; }
+    g_fencerSecondaryNative.fetch_add(1,std::memory_order_relaxed);
+    __try { g_secondaryOriginal(weapon); }
+    __finally {
+        // The game's own aims as the call left them stay the ones the tick
+        // puts back at its end; the shadow goes back in for the rest of it.
+        __try { std::memcpy(g_fencerSwapSaved,soldier+0x1230,32); std::memcpy(soldier+0x1230,shadow,32); }
+        __except(EXCEPTION_EXECUTE_HANDLER) {}
+    }
+}
+unsigned InstallFencerSecondaryHook() noexcept {
+    __try {
+        auto* base=g_image.base;
+        // 698570 as read: movsxd rax,[rcx+690] at +34, the 7-way table at 698754.
+        static const unsigned char entry[]={0x48,0x63,0x81,0x90,0x06,0x00,0x00};
+        if(!edf6vr::Readable(base+0x698570,0x40) || std::memcmp(base+0x6985A4,entry,sizeof(entry))) return 0;
+        g_secondaryOriginal=reinterpret_cast<SecondaryDispatch>(base+0x698570);
+        unsigned sites=0; bool changed=false;
+        if(edf6vr::RedirectCall(base+0x693939,base+0x698570,reinterpret_cast<void*>(&HookFencerSecondary),changed)) ++sites;
+        for(const std::uint32_t jump:{0x692449u,0x693270u})
+            if(edf6vr::RedirectJump(base+jump,base+0x698570,reinterpret_cast<void*>(&HookFencerSecondary),changed)) ++sites;
+        g_fencerSecondarySites=sites;
+        return sites;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
 // The left weapon's tick, on the weapon thread: the soldier carries the left
 // aim while it runs, and the weapon's recoil goes to the left aim afterwards.
 void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept {
@@ -2432,6 +2546,8 @@ void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept {
             std::memcpy(soldier+0x1240,shadow.smooth,16);
             swapped=true;
             std::memcpy(g_fencerSwapNative,saved+4,16);
+            std::memcpy(g_fencerSwapSaved,saved,32);
+            g_fencerSwapSoldier=soldier;
             g_fencerSwapLive=true;
         } __except(EXCEPTION_EXECUTE_HANDLER) { swapped=false; }
     }

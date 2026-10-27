@@ -38,11 +38,12 @@
 #include "handaim.h"
 #include "ridelog.h"
 #include "versionmsg.h"
+#include "downsync.h"
 
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.6.10";
+constexpr const char* kVersion = "1.6.11";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -143,7 +144,7 @@ struct SlotWrite {
 // read a capacity from a call that was never redirected, or page a member list the builder never sees.
 bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int ghosts, bool diagnostics, bool armor, bool recovery,
            bool desync, float smoothing, bool positions, bool facing, int joinRetrySeconds, bool handAim,
-           ThunkPage& thunks) {
+           bool& downSync, ThunkPage& thunks) {
     auto patches = GuestPatches();
     const auto sessionPatches = SessionPatches();
     patches.insert(patches.end(), sessionPatches.begin(), sessionPatches.end());
@@ -234,6 +235,27 @@ bool Apply(unsigned char* base, bool dummies, bool mission, bool spawns, int gho
                                  {LobbySlot(), reinterpret_cast<void*>(&LobbyOnUpdateHook)}};
     if (mission)
         for (const auto& missionSlot : MissionSlots()) slots.push_back({missionSlot, MissionSlotHandler(missionSlot.rva)});
+
+    // Downed insects and robots (downsync.h): optional like the hand aim above. When any of its sites is not
+    // the expected code only this part stays out; the gates themselves are checked when it starts.
+    if (downSync) {
+        bool expected = true;
+        for (const auto& slot : DownSyncSlots())
+            expected = expected && SlotTargets(base + slot.rva, reinterpret_cast<std::uint64_t>(base), slot.target);
+        for (const auto& slot : DownSyncSyncSlots())
+            expected = expected && SlotTargets(base + slot.rva, reinterpret_cast<std::uint64_t>(base), slot.target);
+        for (const auto& call : DownSyncSnapCalls())
+            expected = expected && CallTargets(base + call.rva, call.rva, call.target);
+        if (expected) {
+            for (const auto& slot : DownSyncSlots()) slots.push_back({slot, DownSyncSlotHandler(slot.rva)});
+            for (const auto& slot : DownSyncSyncSlots()) slots.push_back({slot, DownSyncSyncSlotHandler(slot.rva)});
+            for (const auto& call : DownSyncSnapCalls()) redirects.push_back({call, DownSyncSnapHandler(call.rva)});
+        } else {
+            Log("DOWNSYNC: the enemy update / sync sites are not the expected code; downed enemies are left as the "
+                "game has them. Nothing else is affected");
+            downSync = false;
+        }
+    }
 
     for (const auto& patch : patches) {
         if (patch.rva + patch.original.size() > kImageSize || !Matches(base + patch.rva, patch)) {
@@ -630,11 +652,29 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     InitHandAim(base);
     InitRideLog(base);
     InitVersionMessage(base);
+    // Downed insects and robots kept in sync (downsync.h, 1.6.11): on by default; it acts only when the whole room
+    // has it switched on, so it changes nothing beside players without it.
+    constexpr int kDownSyncDefault = 1;
+    DownSyncSettings downSettings;
+    downSettings.on = GetPrivateProfileIntW(L"Sync", L"DownSync", kDownSyncDefault, iniPath) != 0;
+    downSettings.sendFrames = static_cast<int>(GetPrivateProfileIntW(L"Sync", L"DownSyncSendFrames", 6, iniPath));
+    downSettings.sendCap = static_cast<int>(GetPrivateProfileIntW(L"Sync", L"DownSyncSendCap", 120, iniPath));
+    if (downSettings.sendFrames < 1 || downSettings.sendFrames > 120) downSettings.sendFrames = 6;
+    if (downSettings.sendCap < 1 || downSettings.sendCap > 1000) downSettings.sendCap = 120;
+    {
+        const auto downKeyText = IniText(iniPath, L"Sync", L"DownSyncKey", L"F9");
+        const int downKey = downKeyText.empty() || downKeyText == L"0" ? 0 : VirtualKey(downKeyText.c_str());
+        if (downKey < 0) Log("[Sync] DownSyncKey=%ls is not a known key; using F9", downKeyText.c_str());
+        downSettings.key = downKey < 0 ? VK_F9 : downKey;
+    }
+    bool downSync = GetPrivateProfileIntW(L"Sync", L"DownSyncMeasure", 1, iniPath) != 0;
+    if (downSync) InitDownSync(base, downSettings);
     if (!Apply(base, roomView.dummies, mission, spawns, ghosts, netLog, copyArmorKey || copyArmorPad, recovery,
-               desyncMeter, smoothing, positionEveryPacket, facingEveryPacket, joinRetrySeconds, handAim, thunks)) {
+               desyncMeter, smoothing, positionEveryPacket, facingEveryPacket, joinRetrySeconds, handAim, downSync, thunks)) {
         KeepMenuLayout(false);
         return false;
     }
+    if (downSync) StartDownSync(base, downSettings);
     KeepMenuLayout(true);
     Log("Joining: normal rooms and MultiSlot rooms are both listed and joinable; a MultiSlot room of another "
         "version (SEARCH_TYPE family other than 0x%X..0x%X) is refused, from the room list too, with a message "

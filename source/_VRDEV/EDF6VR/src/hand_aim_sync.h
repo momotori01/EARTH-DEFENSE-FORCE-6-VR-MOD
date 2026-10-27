@@ -59,7 +59,9 @@
 //     are left as the game builds them (shot_origin.h), so the others see the
 //     game's swing too: no direction goes for them, or EDF6MultiSlot would turn
 //     their matrix-less hits onto the hand. A shield strikes both in its tick
-//     (its state 6AB1C0) and on the event, and keeps its direction.
+//     (its state 6AB1C0) and on the event, and keeps its direction; in the tick
+//     that is its reflect field turned onto the shield's aim (fencer_dual.h
+//     FencerShieldBashTurn), and HandAimFinalPose gives the others the same.
 //  5. The Ranger's left gun out of its tick is held back by HookDualFire; its
 //     send is dropped with it, or the others would see a shot this player never
 //     fired, from the gun hanging on the back (an animation-fired weapon there:
@@ -170,6 +172,18 @@ bool HandAimFinalPose(void* weapon,const edf6vr::Matrix source[2],edf6vr::Matrix
                 }
             }
         }
+        // A Fencer shield's reflect field goes on the aim its guard uses, as
+        // HookDualFire turns it here (fencer_dual.h FencerShieldBashTurn), so the
+        // others get the field this player has.
+        float shield[3]{};
+        if(!rangerLeft && FencerWeaponActive(weapon)
+           && FencerShieldAim(weapon,command.handIndex<2?command.handIndex:1u,command.soldier,shield)) {
+            edf6vr::Matrix turned[2]{out[0],out[1]};
+            if(HandAimTurnRows(turned[0],carried,shield) && HandAimTurnRows(turned[1],carried,shield)) {
+                out[0]=turned[0]; out[1]=turned[1];
+                for(int j=0;j<3;++j) dir[j]=shield[j];
+            }
+        }
         return std::isfinite(dir[0]) && std::isfinite(dir[1]) && std::isfinite(dir[2]);
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -220,6 +234,28 @@ unsigned char* HandAimEntry(void* weapon,unsigned index) noexcept {
         return edf6vr::Readable(entry,0xF0,true)?entry:nullptr;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
 }
+// 6. A Fencer shoulder weapon that fires straight ahead (fencer_dual.h
+// FencerStraightShoulder: the mortars, the shoulder cannons). This player's
+// shell is turned onto the hand's aim at its birth (shot_origin.h, from its
+// cone's input), and that is after the send: the send carried the game's own
+// muzzle, which the barrel's animation pitches 5 to 17 degrees down after each
+// shot, so the others saw the shell land somewhere else (the user, 2026-10-27:
+// "迫撃砲が自分の画面では正常に飛んでいるのに他の人の画面では違う場所で爆発する";
+// the 10-26 log: all 71 shoulder shells turned here, each one after the first
+// of a run built 10 to 16 degrees off the aim). The mortars are synced shot by
+// shot with the muzzle's rows (mode 1), which the others fire along as they
+// are. So the send, and the direction given every tick, take the same aim the
+// shell is turned onto (FencerHandAimForward); the muzzle's point stays.
+std::atomic<unsigned long long> g_handAimShoulderSends{0};
+bool HandAimShoulderDirection(void* weapon,float dir[3]) noexcept {
+    if(!FencerWeaponActive(weapon)) return false;
+    const unsigned hand=weapon==g_fencerWeapons[0].load(std::memory_order_relaxed)?0u:1u;
+    if(!FencerStraightShoulder(hand,weapon)) return false;
+    void* soldier=nullptr;
+    __try { soldier=*reinterpret_cast<void**>(static_cast<unsigned char*>(weapon)+0x120); }   // the weapon's owner
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return soldier && FencerHandAimForward(hand,soldier,dir);
+}
 
 // 2. From the two-hand weapon ticks (HookDualWeaponTick for the Ranger's pair,
 // FencerWeaponTick), once g_dualTick is this weapon's: which way its shots go
@@ -232,6 +268,12 @@ void HandAimNoteTick(void* weapon) noexcept {
     if(!set) return;
     const int slot=HandAimSlot(g_dualTick.command.soldier,weapon);
     if(slot<0) return;
+    float shoulder[3]{};
+    if(HandAimShoulderDirection(weapon,shoulder)) {   // 6 above
+        __try { set(slot,shoulder); } __except(EXCEPTION_EXECUTE_HANDLER) { return; }
+        g_handAimNotes.fetch_add(1,std::memory_order_relaxed);
+        return;
+    }
     auto* entry=HandAimEntry(weapon,0);
     if(!entry) return;
     unsigned char kept[0xF0];
@@ -265,6 +307,22 @@ void __fastcall HookShotSend(void* weapon,int index,unsigned a,unsigned b) {
     // 5: HookDualFire's hold-back, the same test.
     if(g_handAimSync && !inTick && g_dualActive.load() && weapon && weapon==ReadRangerDual().weapons[0]) {
         g_handAimHeldSends.fetch_add(1,std::memory_order_relaxed);
+        return;
+    }
+    // 6: a straight shoulder weapon's muzzle goes out on the aim its shell is
+    // turned onto here, in the tick or out of it; its point stays.
+    float shoulder[3]{};
+    unsigned char* const shoulderEntry=g_handAimSync && fencer && HandAimShoulderDirection(weapon,shoulder)
+        ?HandAimEntry(weapon,static_cast<unsigned>(index)):nullptr;
+    if(shoulderEntry) {
+        unsigned char held[0xF0];
+        std::memcpy(held,shoulderEntry,sizeof(held));
+        bool turned=false;
+        __try {
+            turned=HandAimTurnEntry(weapon,shoulderEntry,shoulder);
+            g_shotSendOriginal(weapon,index,a,b);
+        } __finally { std::memcpy(shoulderEntry,held,sizeof(held)); }
+        if(turned) g_handAimShoulderSends.fetch_add(1,std::memory_order_relaxed);
         return;
     }
     WeaponHoldCommand away{};
@@ -330,11 +388,12 @@ void HandAimReport() noexcept {
     at=now;
     const unsigned long long notes=g_handAimNotes.load(),sends=g_handAimSendTurns.load();
     static unsigned long long last=~0ull;
-    const unsigned long long sum=notes+sends+g_handAimFailures.load()+g_handAimHeldSends.load()+g_handAimSwingTicks.load();
+    const unsigned long long sum=notes+sends+g_handAimFailures.load()+g_handAimHeldSends.load()+g_handAimSwingTicks.load()
+        +g_handAimShoulderSends.load();
     if(sum==last) return;
     last=sum;
-    Log("HANDAIM sync=%d multislot=%d (api %d) directions given=%llu shot sends on the hand=%llu (away from the tick %llu; count only %llu, per shot mode0 %llu mode1 %llu other %llu; last flags %02X mode %u) left-gun sends held back=%llu swing ticks without a direction=%llu failures=%llu (others' shots: EDF6MultiSlot turns them)",
+    Log("HANDAIM sync=%d multislot=%d (api %d) directions given=%llu shot sends on the hand=%llu (away from the tick %llu; count only %llu, per shot mode0 %llu mode1 %llu other %llu; last flags %02X mode %u) left-gun sends held back=%llu swing ticks without a direction=%llu shoulder sends onto the aim=%llu failures=%llu (others' shots: EDF6MultiSlot turns them)",
         g_handAimSync?1:0,g_handAimSet.load()?1:0,g_handAimApi.load(),notes,sends,g_handAimAwayTurns.load(),g_handAimCountOnly.load(),g_handAimMode0.load(),
         g_handAimMode1.load(),g_handAimModeOther.load(),g_handAimLastFlags.load(),g_handAimLastMode.load(),g_handAimHeldSends.load(),
-        g_handAimSwingTicks.load(),g_handAimFailures.load());
+        g_handAimSwingTicks.load(),g_handAimShoulderSends.load(),g_handAimFailures.load());
 }

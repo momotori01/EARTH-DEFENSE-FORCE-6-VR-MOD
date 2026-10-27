@@ -61,6 +61,7 @@ void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept;
 void FencerNoteShot(unsigned hand) noexcept;
 void FencerAimForward(float pitchGame,float yaw,float out[3]) noexcept;
 bool FencerTurnRows(float rows[3][4],const float from[3],const float to[3]) noexcept;
+bool FencerShieldBashTurn(void* weapon,unsigned hand,void* soldier,unsigned char* attachment) noexcept;
 void FencerAimFrameYaw(const float fwd[3],float yaw,float frame[3][3]) noexcept;
 // guide_probe.h: the soldier's own aim as a world direction.
 bool GuideAimForward(void* soldier,float* out) noexcept;
@@ -537,6 +538,8 @@ void __fastcall HookDualFire(void* weapon,unsigned index,void* alternate,void* c
             && DualFireDirection(weapon,attachment,gameDirection);
         if(CarryDualShotPose(attachment,static_cast<unsigned char*>(weapon)+0x150)) {
             if(haveGame) PrepareLeftFireTurn(weapon,attachment,gameDirection,g_dualTick.command);
+            // A Fencer shield's reflect field onto the aim its guard uses (fencer_dual.h).
+            if(fencer) FencerShieldBashTurn(weapon,hand,g_dualTick.command.soldier,attachment);
             g_dualFire(weapon,index,alternate,counter,consume);
         }
     } __finally {

@@ -7658,7 +7658,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.11 cockpit loading, with EDF6MultiSlot 1.6.10. The Fencer's aim starts at the game pad's dead zone (fencer_input.h kFencerPadDeadzone); the Fencer's boosters and the Wing Diver's streamers start from the standing chest (fencer_mount.h StandingChestHeld).");
+    Log("EDF6VR 3.2.12 cockpit loading, with EDF6MultiSlot 1.6.11. A Fencer's shoulder mortar sends its shell along the aim (hand_aim_sync.h 6), a reflector's field leaves along the shield's aim (FencerShieldBashTurn), a left weapon's dash or jump on the game's own aim (HookFencerSecondary).");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7963,6 +7963,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("CLASSEFFECT hooks ready=%d booster=2CBDF0 marker=6A3D0E/6A3DFB/684271",InstallClassEffects());
         Log("FENCERGUIDE hooks ready=%d guide=17E2498/688C30 laser=17E2458/6890A0",InstallFencerAttachmentHooks());
         Log("FENCERGUARD block test 5957C0 on the shield's own aim: %u/4 sites",InstallFencerGuardHooks());
+        Log("FENCERSECONDARY a left weapon's dash or jump (698570) on the game's own aim: %u/3 sites",InstallFencerSecondaryHook());
         Log("FENCERLUNGE root motion taken at 5758C0 (1166ED0): %s",InstallFencerLunge()?"installed":"REFUSED (call differs)");
         {
             const unsigned sight=InstallLockSight();
