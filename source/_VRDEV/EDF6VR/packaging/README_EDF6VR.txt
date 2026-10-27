@@ -1,5 +1,10 @@
-﻿EDF6VR 3.2.12
+﻿EDF6VR 3.2.13
 =============================
+
+CHANGES IN 3.2.13
+Online:
+- Now bundles EDF6MultiSlot 1.6.12 (plays together with 1.6.6 to 1.6.11).
+  Its changes are in README_EDF6MultiSlot.txt.
 
 CHANGES IN 3.2.12
 Fencer:

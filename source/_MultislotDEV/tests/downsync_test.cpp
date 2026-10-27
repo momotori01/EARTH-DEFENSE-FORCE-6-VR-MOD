@@ -43,11 +43,10 @@ struct Image {
 };
 
 void PureParts() {
-    // A window: alive and in the air, or alive in the blow reaction on the ground.
-    Check(DownWindow(false, false, false), "in the air is a window");
-    Check(DownWindow(false, true, true), "the blow on the ground is a window");
-    Check(!DownWindow(false, true, false), "standing is not");
-    Check(!DownWindow(true, false, true), "dead never is");
+    // A window: alive and blown away or knocked down by a hit (a jump or a boost of its own is not).
+    Check(DownWindow(false, true), "blown away is a window");
+    Check(!DownWindow(false, false), "anything else is not, in the air or not");
+    Check(!DownWindow(true, true), "dead never is");
 
     ForceInput in{true, true, true, true, true, 6, 6, 0};
     Check(ShouldForceSend(in), "a host's flying enemy, 6 frames on: send");
@@ -115,17 +114,20 @@ void PureParts() {
     guests[0].keepingAt = t + 50;
     Check(!GuestSideActive(true, guests, t), "a clock that went backwards does not count");
 
-    // The word: 00 00 'M' 'S', version 1, type 2, flags. The hand aim reader (type 1) passes it by.
+    // The word: 00 00 'M' 'S', version 1, type 3, flags. The hand aim reader (type 1) passes it by, and so does
+    // this build 1.6.11's type 2 (anything in the air counted then).
     std::uint8_t word[16]{};
     Check(BuildDownSyncPacket(word, 4, 3) == 0, "no room, no word");
     Check(BuildDownSyncPacket(word, sizeof(word), kDownSyncSwitchOn | kDownSyncKeeping) == kDownSyncPacketSize, "eight bytes");
-    const std::uint8_t expected[8] = {0, 0, 'M', 'S', 1, 2, 3, 0};
+    const std::uint8_t expected[8] = {0, 0, 'M', 'S', 1, 3, 3, 0};
     Check(std::memcmp(word, expected, 8) == 0, "the bytes on the wire");
     Check(ReadDownSyncPacket(word, kDownSyncPacketSize) == 3, "read back");
     Check(ReadDownSyncPacket(word, 7) == -1, "too short");
     std::uint8_t handAim[16] = {0, 0, 'M', 'S', 1, 1, 0, 0, 0};
     Check(ReadDownSyncPacket(handAim, 9) == -1, "a hand aim packet is not this");
-    std::uint8_t later[8] = {0, 0, 'M', 'S', 2, 2, 3, 0};
+    std::uint8_t older[8] = {0, 0, 'M', 'S', 1, 2, 3, 0};
+    Check(ReadDownSyncPacket(older, 8) == -1, "1.6.11's word (type 2) is not this build's");
+    std::uint8_t later[8] = {0, 0, 'M', 'S', 2, 3, 3, 0};
     Check(ReadDownSyncPacket(later, 8) == -1, "a later version is left alone");
 
     // The newest of five queued entries, as 77D610 finds it.
@@ -136,10 +138,8 @@ void Tables(const Image& image) {
     const std::uint64_t base = image.nt->OptionalHeader.ImageBase;
     // The gates: each run as read, the flipped byte inside it, and the flip a one-byte change.
     const auto gates = DownSyncGates();
-    Check(gates.size() == 5, "five gates (ant host and guest, spider, Dango, robot)");
-    unsigned guestGates = 0;
-    for (const auto& g : gates) guestGates += g.guestSide ? 1u : 0u;
-    Check(guestGates == 1 && gates[1].guestSide && gates[1].rva == 0x409CE0, "one guest gate: the ant's blow reaction");
+    Check(gates.size() == 1 && gates[0].guestSide && gates[0].rva == 0x409CE0,
+          "one gate, a guest's: the ant's blow reaction (the host side changes no code)");
     for (const auto& g : gates) {
         const auto* at = image.At(g.rva, g.original.size());
         Check(at && std::memcmp(at, g.original.data(), g.original.size()) == 0, g.name, g.rva);
@@ -149,6 +149,26 @@ void Tables(const Image& image) {
         const bool displacement = g.patched == 0x00 && (g.original[g.flip - 1] == 0x74 || g.original[g.flip - 1] == 0x75);
         const bool opcode = g.patched == 0xEB && (g.original[g.flip] == 0x74 || g.original[g.flip] == 0x75);
         Check(displacement || opcode, "the flip is a short branch made never / always to the on side", g.rva);
+    }
+    // The "blown away" tests (downsync.cpp BlownAway): the insects' "is in state" functions, each with its own
+    // class's wrapper, and the robot's state holder (344D70 stores at agent+0x18; the agent is +0x1890).
+    {
+        const std::uint8_t prologue[] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89,
+                                         0x74, 0x24, 0x18, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x40,
+                                         0x4C, 0x8B, 0xF9, 0x48, 0x8B, 0x41, 0x28, 0x48, 0x8D, 0x0D};
+        const struct { std::uint32_t rva; std::uint8_t disp[4]; } tests[] = {
+            {0x409370, {0x6A, 0x2C, 0x3B, 0x01}}, {0x437400, {0x7A, 0x72, 0x38, 0x01}}, {0x42BB10, {0xA2, 0x24, 0x39, 0x01}}};
+        for (const auto& t : tests) {
+            const auto* at = image.At(t.rva, sizeof(prologue) + 4);
+            Check(at && std::memcmp(at, prologue, sizeof(prologue)) == 0 && std::memcmp(at + sizeof(prologue), t.disp, 4) == 0,
+                  "an insect's is-in-state function, with its own wrapper", t.rva);
+        }
+        const std::uint8_t setterStore[] = {0x0F, 0x11, 0x47, 0x18};            // movups [rdi+18],xmm0
+        const std::uint8_t agent[] = {0x48, 0x8D, 0x8F, 0x90, 0x18, 0x00, 0x00};  // lea rcx,[rdi+1890]
+        const auto* store = image.At(0x344DD4, sizeof(setterStore));
+        const auto* lea = image.At(0x345C5D, sizeof(agent));
+        Check(store && std::memcmp(store, setterStore, sizeof(setterStore)) == 0, "the robot's state lands at agent+0x18", 0x344DD4);
+        Check(lea && std::memcmp(lea, agent, sizeof(agent)) == 0, "the robot's agent is +0x1890", 0x345C5D);
     }
     // The class update slots and the sync object's two slots point where the tables say.
     const auto slots = DownSyncSlots();

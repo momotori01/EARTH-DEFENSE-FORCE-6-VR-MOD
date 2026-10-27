@@ -15,7 +15,7 @@ namespace multislot {
 
 // ---- Pure parts ----
 
-bool DownWindow(bool dead, bool grounded, bool blow) { return !dead && (!grounded || blow); }
+bool DownWindow(bool dead, bool blown) { return !dead && blown; }
 
 bool ShouldForceSend(const ForceInput& in) {
     return in.on && in.host && in.alive && in.active && in.window && in.sendFrames > 0 &&
@@ -133,13 +133,11 @@ constexpr std::uint32_t kSyncSend = 0x77D500;     // its slot 0: serialise
 constexpr std::uint32_t kSyncReceive = 0x77C2C0;  // its slot 1: receive
 constexpr std::uint32_t kSnap = 0x77D610;         // jump to the newest snapshot
 constexpr std::uint32_t kSendNow = 0x77D5C0;      // (object, 1): flags a send now
-constexpr std::uint32_t kStateIs = 0x409370;      // (state machine, &{state, 0}): in that state
-constexpr std::uint32_t kAntBlowState = 0x40E440; // the ant's blow reaction
 constexpr std::uint32_t kAntUpdate = 0x409740, kSpiderUpdate = 0x437760, kDangoUpdate = 0x42BC90,
                         kRobotUpdate = 0x53DEC0;
 constexpr std::uint32_t kInsectSlot = 0x1C8, kRobotSlot = 0x220;  // vtable slots 57 and 68
 
-constexpr std::size_t kReplica = 0x128, kDead = 0x2E8, kPosition = 0x90, kAntStates = 0x1EA0;
+constexpr std::size_t kReplica = 0x128, kDead = 0x2E8, kPosition = 0x90;
 constexpr std::size_t kActive = 0x1B0, kFlags = 0x180, kSequence = 0x1B1, kQueueWrite = 0x20, kQueueCount = 0x30,
                       kEntries = 0x40, kEntrySize = 0x30, kEntryPosition = 0x10;
 
@@ -183,17 +181,11 @@ const std::vector<DownSyncClass>& DownSyncClasses() {
 }
 
 std::vector<DownSyncGate> DownSyncGates() {
+    // The host side needs no gate of its own: its blown enemies read as on the ground for their own sync update
+    // (Observe). The ant's guest switches its sync off for the whole blow reaction, which a guest cannot see past
+    // without changing the code: call 409370 (blow state 40E440) ; test al,al ; je +5 -> jmp +5 (skips "sync off").
     return {
-        // ant host 409740: cmp byte [rbx+E70],0 ; je +68 (to 77C590 when in the air) -> je +0
-        {"DownSync ant host: in the air", 0x409797, {0x80, 0xBB, 0x70, 0x0E, 0x00, 0x00, 0x00, 0x74, 0x68}, 8, 0x00, false},
-        // ant guest 409C20: call 409370 (blow state 40E440) ; test al,al ; je +5 -> jmp +5 (skips "sync off")
         {"DownSync ant guest: blow reaction", 0x409CE0, {0xE8, 0x8B, 0xF6, 0xFF, 0xFF, 0x84, 0xC0, 0x74, 0x05}, 7, 0xEB, true},
-        // spider host 437760: cmp byte [rbx+E70],0 ; je +34 -> je +0
-        {"DownSync spider host: in the air", 0x4377AA, {0x80, 0xBB, 0x70, 0x0E, 0x00, 0x00, 0x00, 0x74, 0x34}, 8, 0x00, false},
-        // Dango host 42BC90: cmp [rbx+E70],al (al = 0) ; je +1C -> je +0
-        {"DownSync Dango host: in the air", 0x42BCF2, {0x38, 0x83, 0x70, 0x0E, 0x00, 0x00, 0x74, 0x1C}, 7, 0x00, false},
-        // robot host 53DEC0: cmp byte [rbx+11D0],0 ; jne +13 (on the ground: on) -> jmp +13
-        {"DownSync robot host: in the air", 0x53DF6C, {0x80, 0xBB, 0xD0, 0x11, 0x00, 0x00, 0x00, 0x75, 0x13}, 7, 0xEB, false},
     };
 }
 
@@ -277,13 +269,79 @@ bool ReadSample(void* self, DownKind kind, Sample& out) {
     }
 }
 
-bool AntInBlow(void* self) {
+// The grounded byte, from `from` to `to` (only when it holds `from`, so a value the game wrote is never undone).
+bool SetGrounded(void* self, DownKind kind, std::uint8_t from, std::uint8_t to) {
     __try {
-        alignas(16) std::uint64_t state[2] = {reinterpret_cast<std::uint64_t>(game + kAntBlowState), 0};
-        return At<StateIsFn>(kStateIs)(static_cast<unsigned char*>(self) + kAntStates, state);
+        auto* byte = static_cast<unsigned char*>(self) + GroundOffset(kind);
+        if (*byte != from) return false;
+        *byte = to;
+        return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+
+std::uint64_t lifts = 0;  // sync updates run "on the ground" for a blown enemy (update thread)
+
+// Blown away or knocked down by a hit: the family's own reaction states, never a jump or a boost of its own.
+// Insects ask their state machine with the class's own "is in state" (each class has its instance of the
+// template; the ant's at 409370 is what the ant's guest asks for its blow, 409CE0): {state, 0} on the stack.
+//   ant     409370(+0x1EA0): 40E440 blow (flight and landing, until 0.1 s on the ground; no wake-up state)
+//   spider  437400(+0x1CF0): 43BC10 blow (ragdoll; the controller rides it), 43CCC0 wake-up
+//   Dango   42BB10(+0x1A70): 431410 blow (ragdoll), 431750 blow
+// Robots keep their current state in a plain holder (344D70 stores it at agent+0x18; the agent is +0x1890):
+//   +0x18A8 == 3458E0 blow (DownRagdollBodies; the controller rides the ragdoll node) or 345CA0 wake-up
+// Not counted: the spider's jump states (43CAF0 / 43CA50 / 43CBF0), attacks and captures, the Dango's rolling,
+// the robots' boost and jump flights - the first room's "in the air" was mostly those (2026-10-27).
+struct InsectBlow {
+    DownKind kind;
+    std::uint32_t test;      // the class's "is in state"
+    std::size_t machine;     // its state machine
+    std::uint32_t states[2]; // 0 = none
+};
+constexpr InsectBlow kInsectBlows[] = {
+    {DownKind::Ant, 0x409370, 0x1EA0, {0x40E440, 0}},
+    {DownKind::Spider, 0x437400, 0x1CF0, {0x43BC10, 0x43CCC0}},
+    {DownKind::Dango, 0x42BB10, 0x1A70, {0x431410, 0x431750}},
+};
+constexpr std::size_t kRobotState = 0x18A8;
+constexpr std::uint32_t kRobotBlowStates[2] = {0x3458E0, 0x345CA0};
+// The test functions as read (the 24-byte prologue, then mov r15,rcx / mov rax,[rcx+28] / lea rcx,[rip+d] with
+// the class's own wrapper): a family whose function is not this is left as the game has it.
+bool insectTestReady[3] = {false, false, false};
+
+bool InState(std::uint32_t test, void* machine, std::uint32_t state) {
+    __try {
+        alignas(16) std::uint64_t s[2] = {reinterpret_cast<std::uint64_t>(game + state), 0};
+        return At<StateIsFn>(test)(machine, s);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool RobotInBlow(void* self) {
+    __try {
+        const std::uint64_t state = *reinterpret_cast<const std::uint64_t*>(static_cast<unsigned char*>(self) + kRobotState);
+        for (const std::uint32_t s : kRobotBlowStates)
+            if (state == reinterpret_cast<std::uint64_t>(game + s)) return true;
+        return false;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool BlownAway(void* self, DownKind kind) {
+    if (kind == DownKind::Robot) return RobotInBlow(self);
+    for (std::size_t i = 0; i < sizeof(kInsectBlows) / sizeof(kInsectBlows[0]); ++i) {
+        const InsectBlow& b = kInsectBlows[i];
+        if (b.kind != kind) continue;
+        if (!insectTestReady[i]) return false;
+        void* machine = static_cast<unsigned char*>(self) + b.machine;
+        for (const std::uint32_t state : b.states)
+            if (state && InState(b.test, machine, state)) return true;
+        return false;
+    }
+    return false;
 }
 
 bool SendNow(unsigned char* sync) {
@@ -426,12 +484,12 @@ void FlushMinute(std::uint64_t now, const char* why) {
         const std::string label = key.substr(0, bar), role = key.substr(bar + 1, bar2 - bar - 1),
                           mode = key.substr(bar2 + 1);
         if (role == "host") {
-            Log("DOWNSYNC %s %s host mode=%s: in the air or knocked down %u times (air %u, blow %u), %.2fs avg %.2fs max; "
+            Log("DOWNSYNC %s %s host mode=%s: blown away or knocked down %u times (in the air %u, on the ground %u), %.2fs avg %.2fs max; "
                 "positions sent %u of %u sends (forced %u), one every %.2fs median",
                 why, label.c_str(), mode.c_str(), b.windows, b.air, b.blow, b.seconds.Mean(), b.seconds.Max(),
                 b.positionSends, b.sends, b.forced, b.interval.Percentile(0.5f));
         } else {
-            Log("DOWNSYNC %s %s guest mode=%s: in the air or knocked down %u times (air %u, blow %u), %.2fs avg %.2fs max; "
+            Log("DOWNSYNC %s %s guest mode=%s: blown away or knocked down %u times (in the air %u, on the ground %u), %.2fs avg %.2fs max; "
                 "in it: %u positions in (during %u of them), queue max %llu, farthest from the host's copy %.1f m median %.1f p90 %.1f max, "
                 "jumps %s/%s/%s=%u/%u/%u; first position after it: %zu arrived, %.1f m median %.1f p90 %.1f max away, "
                 "%u none in 3 s, jumps after %u/%u/%u",
@@ -442,15 +500,16 @@ void FlushMinute(std::uint64_t now, const char* why) {
                 b.postJumps[0], b.postJumps[1], b.postJumps[2]);
         }
     }
-    if (forcedTotal || budget.refused() || jumpsOutside)
-        Log("DOWNSYNC %s totals: DownSync %s, forced sends %llu (refused by the %d/s cap %llu), jumps of watched enemies "
-            "outside a flight %llu, enemies tracked %zu",
+    if (forcedTotal || budget.refused() || jumpsOutside || lifts)
+        Log("DOWNSYNC %s totals: DownSync %s, forced sends %llu (refused by the %d/s cap %llu), sync updates run on the "
+            "ground for a blown enemy %llu, jumps of watched enemies outside a flight %llu, enemies tracked %zu",
             why, hostActive.load() ? "on" : "off", static_cast<unsigned long long>(forcedTotal), settings.sendCap,
-            static_cast<unsigned long long>(budget.refused()), static_cast<unsigned long long>(jumpsOutside),
-            enemies.size());
+            static_cast<unsigned long long>(budget.refused()), static_cast<unsigned long long>(lifts),
+            static_cast<unsigned long long>(jumpsOutside), enemies.size());
     buckets.clear();
     forcedTotal = 0;
     jumpsOutside = 0;
+    lifts = 0;
     detailLines = 0;
     minuteStartMs = now;
 }
@@ -478,10 +537,10 @@ void EndWindow(Enemy& e, std::uint64_t now) {
     if (detailLines < kDetailLinesPerMinute) {
         ++detailLines;
         if (!e.replica)
-            Log("DOWNSYNC flight %s host mode=%s: %.2fs (air %d, blow %d), positions sent %u (forced %u)", e.label,
+            Log("DOWNSYNC flight %s host mode=%s: %.2fs (in the air %d, on the ground %d), positions sent %u (forced %u)", e.label,
                 e.mode ? "on" : "off", seconds, e.air ? 1 : 0, e.blow ? 1 : 0, e.positionSends, e.forced);
         else
-            Log("DOWNSYNC flight %s guest mode=%s: %.2fs (air %d, blow %d), positions in %u, queue max %llu, farthest "
+            Log("DOWNSYNC flight %s guest mode=%s: %.2fs (in the air %d, on the ground %d), positions in %u, queue max %llu, farthest "
                 "from the host's copy %.1f m, jumps %u/%u/%u",
                 e.label, e.mode ? "on" : "off", seconds, e.air ? 1 : 0, e.blow ? 1 : 0, e.receipts,
                 static_cast<unsigned long long>(e.maxQueue), e.awayMax, e.jumps[0], e.jumps[1], e.jumps[2]);
@@ -551,7 +610,7 @@ void RefreshGates(std::uint64_t now, bool force) {
         hostActive = host;
         if (host)
             Log("DOWNSYNC host side ON: all %u other members accept it; the insects and robots this machine owns are "
-                "sent while they fly or lie in their blow", members);
+                "sent while a hit has them flying or down", members);
         else
             Log("DOWNSYNC host side OFF (%s): enemies as the game has them", !on ? "this machine's switch is off"
                 : !members ? "no other members" : "a member without this build or with its switch off");
@@ -577,15 +636,32 @@ void PollKey(std::uint64_t now) {
 }
 
 void Observe(void* self, DownKind kind, UpdateFn original) {
-    if (game) RefreshGates(GetTickCount64(), false);
-    original(self);
-    if (!game || !self) return;
+    if (!game || !self) {
+        original(self);
+        return;
+    }
+    RefreshGates(GetTickCount64(), false);
     Sample s{};
-    if (!ReadSample(self, kind, s)) return;
-    const DownSyncClass* c = ClassOf(s.vtable);
-    if (!c || c->kind != kind) return;
-    const bool blow = kind == DownKind::Ant && !s.dead && s.grounded && AntInBlow(self);
-    const bool window = DownWindow(s.dead, s.grounded, blow);
+    const DownSyncClass* c = ReadSample(self, kind, s) ? ClassOf(s.vtable) : nullptr;
+    if (!c || c->kind != kind) {
+        original(self);
+        return;
+    }
+    // Blown away or knocked down by a hit (BlownAway), never a jump or a boost of its own.
+    const bool blown = !s.dead && BlownAway(self, kind);
+    // The host side: an enemy this machine owns that a hit sent flying keeps its sync running. The class's own
+    // update switches it off while the enemy is off the ground, so for the length of that one call the enemy
+    // reads as on the ground, and the class goes down its own "on" branch. Nothing else in that call reads the
+    // byte for an enemy this machine owns (the guest part returns at once); it is put back right after.
+    const bool lift = hostActive.load() && !s.replica && blown && !s.grounded;
+    if (lift && SetGrounded(self, kind, 0, 1)) {
+        original(self);
+        SetGrounded(self, kind, 1, 0);
+        ++lifts;
+    } else {
+        original(self);
+    }
+    const bool window = DownWindow(s.dead, blown);
     const std::uint64_t now = GetTickCount64();
     PollKey(now);
     bool sendNow = false;
@@ -613,7 +689,7 @@ void Observe(void* self, DownKind kind, UpdateFn original) {
     }
     if (e.window) {
         e.air = e.air || !s.grounded;
-        e.blow = e.blow || blow;
+        e.blow = e.blow || s.grounded;
         ++e.framesSince;
         const ForceInput in{hostActive.load(), !s.replica, !s.dead, s.active, true, e.framesSince, settings.sendFrames,
                             s.flags};
@@ -757,6 +833,16 @@ void InitDownSync(unsigned char* gameBase, const DownSyncSettings& s) {
 
 bool StartDownSync(unsigned char* gameBase, const DownSyncSettings& s) {
     if (!game) InitDownSync(gameBase, s);
+    // The insects' "is in state" functions, each as read (downsync_test checks the same bytes).
+    static const std::uint8_t prologue[] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89,
+                                            0x74, 0x24, 0x18, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x40,
+                                            0x4C, 0x8B, 0xF9, 0x48, 0x8B, 0x41, 0x28, 0x48, 0x8D, 0x0D};
+    for (std::size_t i = 0; i < sizeof(kInsectBlows) / sizeof(kInsectBlows[0]); ++i) {
+        insectTestReady[i] = SameBytes(game + kInsectBlows[i].test, prologue, sizeof(prologue));
+        if (!insectTestReady[i])
+            Log("DOWNSYNC: the state test EDF+%X is not the expected code; that family stays as the game has it",
+                kInsectBlows[i].test);
+    }
     gates = DownSyncGates();
     for (const auto& g : gates) {
         if (!SameBytes(game + g.rva, g.original.data(), g.original.size())) {

@@ -26,11 +26,16 @@ namespace multislot {
 // flies, each machine flies it by its own copy of the blow, and the position sent when it lands is where the
 // guest's copy slides or jumps to.
 //
-// While this is on, one byte at each of those gates sends the class down its own "on" branch instead
-// (DownSyncGates), so the game's own code keeps the object running, and the host forces a send every
-// `sendFrames` frames for an enemy in the air or in its blow (77D5C0), at most `sendCap` a second in all.
-// The bytes are written back when it is switched off (F9 by default, for an A/B in one session).
-// Bees use a separate flying sync and are not included.
+// 1.6.11 kept the object on for anything in the air. The first room that had it (2026-10-27, five players)
+// showed that "in the air" is mostly the enemies' own movement - a spider's every jump (1000-1500 a minute),
+// a Berserker's boost flights - so the host forced ~7000 sends a minute and its traffic doubled (600 kbps). The
+// user: "ダウン同期を吹き飛びだけにして". So 1.6.12 asks the family's own reaction states whether a hit has the
+// enemy blown away or knocked down (BlownAway); only then, and only while it is off the ground, the host's
+// enemy reads as on the ground for the length of its own sync update (Observe), so the class goes down its own
+// "on" branch, and the host forces a send every `sendFrames` frames (77D5C0), at most `sendCap` a second in
+// all. The host side writes no code. The ant's guest switches its sync off for its whole blow reaction, which
+// only a code change gets past: one byte (DownSyncGates), written while the host says it keeps them in sync
+// and back otherwise. Bees use a separate flying sync and are not included.
 //
 // Who needs it: everyone in the room (see "Who in the room has it" below). With anyone missing it, or with
 // its switch off, every machine leaves its enemies as the game has them - the user, 2026-10-27: "ホストがバニラ
@@ -77,7 +82,7 @@ void* DownSyncSnapHandler(std::uint32_t rva);
 struct DownSyncSettings {
     bool on = true;           // this machine's switch at start (the room still has to agree)
     int sendFrames = 6;       // forced send interval per enemy, frames
-    int sendCap = 120;        // forced sends per second, all enemies
+    int sendCap = 60;         // forced sends per second, all enemies
     int key = 0x78;           // VK_F9; 0 = no key
 };
 // Before the slots and calls are written (they call into the game through `gameBase`).
@@ -93,13 +98,15 @@ void SetDownSync(bool on, const char* why);
 // ---- Who in the room has it (a word between the players who run this build) ----
 //
 // Nothing changes for anyone unless everyone agrees: every machine with this build (and its switch on) tells
-// every other member so once a second, in a MultiSlot packet (00 00 'M' 'S', version 1, type 2) that the game
-// of a player without it drops unread and an older MultiSlot passes by. The machine that owns the enemies (the
+// every other member so once a second, in a MultiSlot packet (00 00 'M' 'S', version 1, type 3) that the game
+// of a player without it drops unread and an older MultiSlot passes by. Type 2 was 1.6.11's word, when anything
+// in the air counted; 1.6.12 neither sends nor reads it, so a room mixing the two leaves everything as the game
+// has it rather than letting a 1.6.11 host send every spider's jump. The machine that owns the enemies (the
 // host) keeps its downed ones in sync only while every member it plays with has said so in the last few
 // seconds, and then says that too; a guest follows them only while the host says it. A member without this
 // build, or with the switch off, or a host that never says it: everyone's enemies stay exactly as the game has
 // them. Alone (no members), nothing changes either.
-constexpr std::uint8_t kDownSyncPacketType = 2;
+constexpr std::uint8_t kDownSyncPacketType = 3;  // 1.6.11 used 2
 constexpr std::size_t kDownSyncPacketSize = 8;      // magic 4, version 1, type 1, flags 1, reserved 1
 constexpr std::uint8_t kDownSyncSwitchOn = 1;       // flags: this machine's switch is on (it accepts them)
 constexpr std::uint8_t kDownSyncKeeping = 2;        // flags: this machine owns enemies and keeps them in sync
@@ -117,11 +124,11 @@ bool HostSideActive(bool switchOn, const std::vector<DownPeer>& peers, std::uint
 // The guest side: the switch on and some member (the host) saying it keeps its downed enemies in sync.
 bool GuestSideActive(bool switchOn, const std::vector<DownPeer>& peers, std::uint64_t nowMs);
 std::size_t BuildDownSyncPacket(std::uint8_t* out, std::size_t size, std::uint8_t flags);
-// The flags of a type-2 packet, or -1 when it is not one this build reads.
+// The flags of a type-3 packet, or -1 when it is not one this build reads (1.6.11 type 2 included).
 int ReadDownSyncPacket(const void* data, std::uint32_t size);
 
 // For the packet hooks (netlog.cpp): the game just sent `peer` (ProductUserId text) its data; the word for
-// that member, when one is due (0 = nothing to send); and a received MultiSlot packet (false: not type 2).
+// that member, when one is due (0 = nothing to send); and a received MultiSlot packet (false: not this build's word).
 bool DownSyncInstalled();
 void NoteDownSyncPeer(const char* peer, std::uint64_t nowMs);
 std::size_t DownSyncWordFor(const char* peer, std::uint8_t* out, std::size_t size, std::uint64_t nowMs);
@@ -129,8 +136,8 @@ bool ReceiveDownSyncPacket(const char* peer, const void* data, std::uint32_t siz
 
 // ---- Pure parts (tests/downsync_test.cpp) ----
 
-// Whether an enemy is in a window this frame: alive and either in the air or (ant) in its blow reaction.
-bool DownWindow(bool dead, bool grounded, bool blow);
+// Whether an enemy is in a window this frame: alive and blown away or knocked down by a hit.
+bool DownWindow(bool dead, bool blown);
 
 // The host's forced send for one enemy this frame.
 struct ForceInput {

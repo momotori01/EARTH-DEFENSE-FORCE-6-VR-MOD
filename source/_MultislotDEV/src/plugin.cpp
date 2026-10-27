@@ -43,7 +43,7 @@
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.6.11";
+constexpr const char* kVersion = "1.6.12";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -658,9 +658,9 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     DownSyncSettings downSettings;
     downSettings.on = GetPrivateProfileIntW(L"Sync", L"DownSync", kDownSyncDefault, iniPath) != 0;
     downSettings.sendFrames = static_cast<int>(GetPrivateProfileIntW(L"Sync", L"DownSyncSendFrames", 6, iniPath));
-    downSettings.sendCap = static_cast<int>(GetPrivateProfileIntW(L"Sync", L"DownSyncSendCap", 120, iniPath));
+    downSettings.sendCap = static_cast<int>(GetPrivateProfileIntW(L"Sync", L"DownSyncSendCap", 60, iniPath));
     if (downSettings.sendFrames < 1 || downSettings.sendFrames > 120) downSettings.sendFrames = 6;
-    if (downSettings.sendCap < 1 || downSettings.sendCap > 1000) downSettings.sendCap = 120;
+    if (downSettings.sendCap < 1 || downSettings.sendCap > 1000) downSettings.sendCap = 60;
     {
         const auto downKeyText = IniText(iniPath, L"Sync", L"DownSyncKey", L"F9");
         const int downKey = downKeyText.empty() || downKeyText == L"0" ? 0 : VirtualKey(downKeyText.c_str());

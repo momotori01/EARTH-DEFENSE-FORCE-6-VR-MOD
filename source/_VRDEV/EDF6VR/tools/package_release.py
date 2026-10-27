@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.12'
+VERSION = '3.2.13'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.11.zip'
-MULTISLOT_SHA = '609D2ED0C195E12B104137F7C3E641DDBE3769EDCC0810DFE97427B23360B26B'
-MULTISLOT_DLL_SHA = '409BDFB2825333F1F73B91AFB9193D3C51E1B1A5E9B61AE6F69BF0205BF53B5C'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.12.zip'
+MULTISLOT_SHA = 'A404E08586443FEF446590D4D9888266CB7F1E3AF0E13CB38B967383CFA25EA0'
+MULTISLOT_DLL_SHA = '7A68C8E13A3E16253DB6C84C56E13FE8004397C2400B87B0441A967EC7E4901D'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -142,6 +142,10 @@ MULTISLOT_DLL_SHA = '409BDFB2825333F1F73B91AFB9193D3C51E1B1A5E9B61AE6F69BF0205BF
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.13 (the user: "アップして"; +0.0.1): EDF6MultiSlot 1.6.12 - downed insects and robots kept in sync only while
+# a hit has them blown away or knocked down (their own reaction states), never their own jumps or boosts; 1.6.11's
+# "anything in the air" had a host send every spider's jump and doubled its traffic (the 2026-10-27 room). EDF6VR
+# itself is 3.2.12's but for its version.
 # 3.2.12 (the user: "それじゃあ全員揃えの方式でアップして"; +0.0.1): a Fencer's straight shoulder weapon (the mortars)
 # sends its muzzle along the hand's aim, the one its shell is turned onto here, so the others see it land where
 # this player does (hand_aim_sync.h 6; the barrel's post-shot dip had sent it 10-16 deg off); a reflector's
@@ -193,8 +197,8 @@ MULTISLOT_DLL_SHA = '409BDFB2825333F1F73B91AFB9193D3C51E1B1A5E9B61AE6F69BF0205BF
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = 'D94255C5208BC6C94631779DE302791CE8E8CE9372AD0F452AEE66A2A883B9BA'
-VERIFIED_SETTINGS_SHA = '962AF014060808F8C806692CE2325A0EAB4CAF6046505C14C5D8BA895ED916D5'
+VERIFIED_VR_SHA = 'D50AA3F7DE3EBF6726C3FB40F510A089A52E96BD45BE54FD536362B5567D2861'
+VERIFIED_SETTINGS_SHA = '2A766F9472FED50C17A3E0626914D6839E84153BEF4533669184CCEDEA432FE9'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()
