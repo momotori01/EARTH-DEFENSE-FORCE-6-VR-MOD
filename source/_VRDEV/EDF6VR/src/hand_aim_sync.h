@@ -59,9 +59,11 @@
 //     are left as the game builds them (shot_origin.h), so the others see the
 //     game's swing too: no direction goes for them, or EDF6MultiSlot would turn
 //     their matrix-less hits onto the hand. A shield strikes both in its tick
-//     (its state 6AB1C0) and on the event, and keeps its direction; in the tick
-//     that is its reflect field turned onto the shield's aim (fencer_dual.h
-//     FencerShieldBashTurn), and HandAimFinalPose gives the others the same.
+//     (its state 6AB1C0, a reflector's field) and on the event (a bash), and
+//     both leave turned onto that shield's aim (fencer_dual.h
+//     FencerShieldBashTurn; the event's call is made to look like the
+//     shield's tick by HookShieldEventFire since 2026-11-01), and
+//     HandAimFinalPose gives the others the same.
 //  5. The Ranger's left gun out of its tick is held back by HookDualFire; its
 //     send is dropped with it, or the others would see a shot this player never
 //     fired, from the gun hanging on the back (an animation-fired weapon there:

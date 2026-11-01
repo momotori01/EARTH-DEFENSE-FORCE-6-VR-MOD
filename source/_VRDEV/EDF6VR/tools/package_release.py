@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.13'
+VERSION = '3.2.14'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.12.zip'
@@ -142,6 +142,13 @@ MULTISLOT_DLL_SHA = '7A68C8E13A3E16253DB6C84C56E13FE8004397C2400B87B0441A967EC7E
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.14 (the user: "v001上げてアップして"; +0.0.1): the Fencer's two shields each guard on their own hand with their own
+# width, and only the shield that catches a hit cuts it and pays for it (fencer_dual.h FencerGuardTest, HookGuardDamage,
+# HookShieldDrain; vanilla made one cone of summed angles ahead and drained both shields by the full damage). Shield
+# bashes fired on the animation event leave from their own hand (HookShieldEventFire, 6AAD10). The drawn shield keeps
+# its guard's aim and turn speed, carried round the chest (FencerShieldPlace / FencerShieldUp); the left aim survives
+# a reset (no more warps onto the right hand), and a hand miss of up to 200 ms is held (FencerHandsOff). Run on
+# hardware 11-01. EDF6MultiSlot stays 1.6.12.
 # 3.2.13 (the user: "アップして"; +0.0.1): EDF6MultiSlot 1.6.12 - downed insects and robots kept in sync only while
 # a hit has them blown away or knocked down (their own reaction states), never their own jumps or boosts; 1.6.11's
 # "anything in the air" had a host send every spider's jump and doubled its traffic (the 2026-10-27 room). EDF6VR
@@ -197,8 +204,8 @@ MULTISLOT_DLL_SHA = '7A68C8E13A3E16253DB6C84C56E13FE8004397C2400B87B0441A967EC7E
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
 # VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
 # strings).
-VERIFIED_VR_SHA = 'D50AA3F7DE3EBF6726C3FB40F510A089A52E96BD45BE54FD536362B5567D2861'
-VERIFIED_SETTINGS_SHA = '2A766F9472FED50C17A3E0626914D6839E84153BEF4533669184CCEDEA432FE9'
+VERIFIED_VR_SHA = '6BCC6271A709C270B36C62157664C08799E34B772C66A316058B3E6328436AA9'
+VERIFIED_SETTINGS_SHA = '5846F94E2B1ADB8C1AC45A094E3CC1052DAA7B8FD7E67D80660932957ACFF200'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

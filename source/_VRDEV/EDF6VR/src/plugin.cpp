@@ -5700,10 +5700,19 @@ void AfterUpdate(void* camera) noexcept {
         for(unsigned i=0;i<2;++i) g_fencerStereoModels[i].store(g_fencerStereo.models[i],std::memory_order_release);
         ProbeFencerWeapons(supportedSoldier && valid?g_vrSoldier:nullptr,fpsApplied);
         g_muzzleWantValid=false;
-        if(g_weaponFollowsHand && fpsApplied && g_eyeWorldValid && pose.body && FencerOwnsWeaponPose(g_vrSoldier)
-           && g_vrEnabled && !g_faulted && g_handAiming)
+        // The Fencer's hands are dropped when this player stops being a VR
+        // Fencer, and held through a moment's miss (FencerHandsOff): a frame
+        // without the right controller's pose, the first-person view or the
+        // eye used to drop them, and for that frame both weapons were drawn
+        // where the game's arms hold them (the user, 2026-11-01: "稀に両手が
+        // ワープする"; the log: 37 drops in 8 minutes, all of them this one).
+        const bool fencerHere=g_weaponFollowsHand && g_vrEnabled && !g_faulted && FencerOwnsWeaponPose(g_vrSoldier);
+        if(fencerHere && fpsApplied && g_eyeWorldValid && pose.body && g_handAiming) {
+            g_fencerHandsOffSince=0;
             BuildFencerHands(static_cast<unsigned char*>(pose.body)-edf6vr::kBodyModelOffset,pose);
-        else if(g_fencerActive.load()) ResetFencerDual();
+        } else if(g_fencerActive.load()) {
+            if(!fencerHere || !FencerHandsOff(!fpsApplied,!g_eyeWorldValid,!pose.body,!g_handAiming)) ResetFencerDual(7);
+        }
         if(g_weaponFollowsHand && fpsApplied && g_eyeWorldValid && pose.body
            && !FencerOwnsWeaponPose(g_vrSoldier)) {
             auto soldier=static_cast<unsigned char*>(pose.body)-edf6vr::kBodyModelOffset;
@@ -7658,7 +7667,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.13 cockpit loading, with EDF6MultiSlot 1.6.12. A Fencer's shoulder mortar sends its shell along the aim (hand_aim_sync.h 6), a reflector's field leaves along the shield's aim (FencerShieldBashTurn), a left weapon's dash or jump on the game's own aim (HookFencerSecondary).");
+    Log("EDF6VR 3.2.14 cockpit loading, with EDF6MultiSlot 1.6.12. A Fencer's two shields each guard on their own hand and only the one that catches a hit pays for it (FencerGuardTest), shield bashes leave from their own hand (HookShieldEventFire), a drawn shield rides its guard's aim (FencerShieldPlace).");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7962,7 +7971,8 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         if(changed && !outputOK)g_faulted=true;
         Log("CLASSEFFECT hooks ready=%d booster=2CBDF0 marker=6A3D0E/6A3DFB/684271",InstallClassEffects());
         Log("FENCERGUIDE hooks ready=%d guide=17E2498/688C30 laser=17E2458/6890A0",InstallFencerAttachmentHooks());
-        Log("FENCERGUARD block test 5957C0 on the shield's own aim: %u/4 sites",InstallFencerGuardHooks());
+        Log("FENCERGUARD each shield guards on its own hand (5957C0, cut 599650, toll 6AAD60): %u/6 sites",InstallFencerGuardHooks());
+        Log("FENCERBASH a shield's bash on the animation event (6AAD10 -> 690BB0) from its own hand: %s",InstallShieldEventFire()?"installed":"REFUSED (code differs)");
         Log("FENCERSECONDARY a left weapon's dash or jump (698570) on the game's own aim: %u/3 sites",InstallFencerSecondaryHook());
         Log("FENCERLUNGE root motion taken at 5758C0 (1166ED0): %s",InstallFencerLunge()?"installed":"REFUSED (call differs)");
         {

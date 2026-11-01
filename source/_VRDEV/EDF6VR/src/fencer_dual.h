@@ -320,9 +320,11 @@ void FencerRestPose(unsigned hand,void* weapon,float c[3][3],int model=-1,float 
     const float x[3]={y[1]*z[2]-y[2]*z[1],y[2]*z[0]-y[0]*z[2],y[0]*z[1]-y[1]*z[0]};
     for(int k=0;k<3;++k) { c[0][k]=x[k]*length[0]; c[1][k]=y[k]*length[1]; c[2][k]=z[k]*length[2]; }
 }
-// The block test (HookGuardTest): every call, the ones run on the left aim, and
-// of those the hits it blocked; and how many of its four entries were redirected.
-std::atomic<unsigned long long> g_fencerGuardTests{0},g_fencerGuardLeft{0},g_fencerGuardLeftBlocked{0};
+// The block test (FencerGuardTest): every call, the ones put to each shield's
+// own fan, what held the hit (left shield, right shield, the rest of the
+// guard), each shield's blocked hits it did not pay for, and how many of its
+// six sites were taken.
+std::atomic<unsigned long long> g_fencerGuardTests{0},g_fencerGuardSplit{0},g_fencerGuardCaught[3]{},g_fencerGuardSpared[2]{};
 unsigned g_fencerGuardSites=0;
 // Rows squared back to a rotation, each its own length from `length`.
 bool FencerSquareRows(const float in[3][3],const float length[3],float out[3][3]) noexcept {
@@ -360,6 +362,8 @@ FencerShieldMemo g_fencerShield[4]{};
 unsigned g_fencerShieldNext=0;
 constexpr float kFencerShieldSwingSec=0.05f;      // the swing between lowered and raised
 std::atomic<unsigned long long> g_fencerShieldShown[2]{};
+std::atomic<unsigned long long> g_fencerShieldRolled[2]{};   // shield commands whose up is the wrist's roll on the aim (FencerShieldUp), L/R
+std::atomic<unsigned long long> g_fencerShieldPlaced[2]{};   // shield commands placed round the chest along the aim (FencerShieldPlace), L/R
 void FencerShieldPose(unsigned hand,void* weapon,float c[3][3]) noexcept {
     if(hand>1) return;
     FencerShieldMemo* m=nullptr;
@@ -713,6 +717,54 @@ bool FencerShieldBashTurn(void* weapon,unsigned hand,void* soldier,unsigned char
     if(deg>g_fencerBashTurnMax[hand].load(std::memory_order_relaxed)) g_fencerBashTurnMax[hand].store(deg,std::memory_order_relaxed);
     return true;
 }
+// A shield's bash on the body's animation event, as if in its tick.
+//
+// The deflection, tower and ion mirror shields bash on their secondary while
+// guarding (state 6AB570, the shield_bash clip). The field leaves on the clip's
+// event "発射": the soldier's animation (590880) calls the shield's slot 0xB8
+// (6AACD0), which on that name jumps to 690BB0 (6AAD10) -> slot 0x80 (6AAB20)
+// -> 690CC0, which sends the muzzle (694910) and fires (696FD0). That is the
+// soldier's update, not the shield's tick, so HookShotSend and HookDualFire
+// left it as the game built it: off the arm the body animates on its one
+// (right-hand) aim, wherever the left shield pointed (hand_aim_sync.h 4). The
+// user asked for a reflector's and a deflector's field to leave from each
+// shield on its own (2026-11-01, "ディフレクターやリフレクターを使った時の向きも、
+// 左右の盾別々に出るように"). The reflector's own field already leaves in its
+// tick, turned (FencerShieldBashTurn). For the event's call the shield's hand
+// command stands in as its tick would have it, so the send and the field both
+// come out of the carried muzzle turned onto that shield's aim, as the
+// reflector's do.
+using ShieldEventFire=void(__fastcall*)(void* shield);
+ShieldEventFire g_shieldEventFireOriginal=nullptr;
+std::atomic<unsigned long long> g_fencerShieldEventBashes[2]{};
+void __fastcall HookShieldEventFire(void* shield) {
+    WeaponHoldCommand command{};
+    unsigned hand=2;
+    if(FencerWeaponActive(shield) && !(g_dualTick.active && g_dualTick.weapon==shield)
+       && edf6vr::HasType(g_image,shield,".?AVWeapon_Shield@@")) {
+        hand=shield==g_fencerWeapons[0].load(std::memory_order_relaxed)?0u:1u;
+        AcquireSRWLockShared(&g_fencerHandLock); command=hand==0?g_fencerLeft:g_fencerRight; ReleaseSRWLockShared(&g_fencerHandLock);
+        if(command.weapon!=shield || !command.tracked || !ValidateHoldCommand(command,command.model)) hand=2;
+    }
+    if(hand>1) { g_shieldEventFireOriginal(shield); return; }
+    FencerFollowSoldier(command);
+    const auto previous=g_dualTick;
+    g_dualTick={command,shield,true};
+    __try { g_shieldEventFireOriginal(shield); }
+    __finally { g_dualTick=previous; }
+    g_fencerShieldEventBashes[hand].fetch_add(1,std::memory_order_relaxed);
+}
+bool InstallShieldEventFire() noexcept {
+    __try {
+        auto* base=g_image.base;
+        // 6AACD0 as read: cmp word [rdx],767A ("発") at +22, then the tail jump to 690BB0 at 6AAD10.
+        static const unsigned char name[]={0x66,0x81,0x3A,0x7A,0x76};
+        if(!edf6vr::Readable(base+0x6AACD0,0x48) || std::memcmp(base+0x6AACF2,name,sizeof(name))) return false;
+        g_shieldEventFireOriginal=reinterpret_cast<ShieldEventFire>(base+0x690BB0);
+        bool changed=false;
+        return edf6vr::RedirectJump(base+0x6AAD10,base+0x690BB0,reinterpret_cast<void*>(&HookShieldEventFire),changed);
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 
 // The hand's up at the aim: the grip frame turned by the shortest arc from its
 // own forward onto the aim, which is how the Ranger's weapon frame is built.
@@ -734,7 +786,38 @@ bool FencerHandUp(const edf6vr::Quat& grip,const float want[3],float up[3]) noex
     for(int j=0;j<3;++j) up[j]/=size;
     return true;
 }
-void ResetFencerDual() noexcept {
+// Why the Fencer's hands were dropped, for the log: 1 not two weapons or split
+// aim off, 2 the soldier's aim unreadable, 3 the left controller untracked, 4
+// the weapons unreadable, 5 the smoothed aim unreadable, 6 a command refused,
+// 7 the hands off from the camera update (plugin.cpp: no first person, no eye,
+// VR off, or the right hand not aiming).
+std::atomic<unsigned long long> g_fencerResets[8]{};
+// The left aim as it was when the hands were dropped, and whose it was, so a
+// moment's drop picks it up where it was instead of starting over.
+struct FencerShadowKept { void* soldier=nullptr; FencerShadow shadow{}; ULONGLONG at=0; };
+FencerShadowKept g_fencerShadowKept{};      // under g_fencerShadowLock
+void* g_fencerShadowSoldier=nullptr;        // under g_fencerShadowLock: the soldier g_fencerShadow is of
+std::atomic<unsigned long long> g_fencerShadowResumed{0},g_fencerShadowFromHand{0},g_fencerTickLeaks{0};
+constexpr float kFencerTickLeak=0.2f;   // radians: more than the left aim moves in a tick of its own
+// A moment's miss in the camera update (plugin.cpp): the hands are held, as the
+// last update left them, for up to kFencerHandsOffGraceMs -- inside the
+// 250 ms ValidateHoldCommand gives a command -- and dropped only after that.
+// What was missing, for the log: the first-person view, the eye, the body, the
+// right controller's aim.
+constexpr ULONGLONG kFencerHandsOffGraceMs=200;
+ULONGLONG g_fencerHandsOffSince=0;
+std::atomic<unsigned long long> g_fencerHandsHeld{0},g_fencerHandsOffWhy[4]{};
+bool FencerHandsOff(bool noView,bool noEye,bool noBody,bool notAiming) noexcept {
+    const bool why[4]={noView,noEye,noBody,notAiming};
+    for(unsigned i=0;i<4;++i) if(why[i]) g_fencerHandsOffWhy[i].fetch_add(1,std::memory_order_relaxed);
+    const ULONGLONG now=GetTickCount64();
+    if(!g_fencerHandsOffSince) g_fencerHandsOffSince=now;
+    if(now-g_fencerHandsOffSince>kFencerHandsOffGraceMs) return false;
+    g_fencerHandsHeld.fetch_add(1,std::memory_order_relaxed);
+    return true;
+}
+void ResetFencerDual(unsigned reason=0) noexcept {
+    g_fencerResets[reason<8?reason:0].fetch_add(1,std::memory_order_relaxed);
     g_fencerActive.store(false);
     g_fencerMoveSoldier.store(nullptr);
     for(auto& w:g_fencerWeapons) w.store(nullptr);
@@ -757,7 +840,10 @@ void ResetFencerDual() noexcept {
     g_fencerAxisMap[0]=g_fencerAxisMap[1]=FencerAxisMap{};
     g_fencerPoseMemo[0]=g_fencerPoseMemo[1]=FencerPoseMemo{};
     AcquireSRWLockExclusive(&g_fencerHandLock); g_fencerLeft={}; g_fencerRight={}; ReleaseSRWLockExclusive(&g_fencerHandLock);
-    AcquireSRWLockExclusive(&g_fencerShadowLock); g_fencerShadow={}; ReleaseSRWLockExclusive(&g_fencerShadowLock);
+    AcquireSRWLockExclusive(&g_fencerShadowLock);
+    if(g_fencerShadow.valid) g_fencerShadowKept={g_fencerShadowSoldier,g_fencerShadow,GetTickCount64()};
+    g_fencerShadow={};
+    ReleaseSRWLockExclusive(&g_fencerShadowLock);
 }
 bool FencerDrawnBarrel(unsigned hand,const void* weapon,float out[3]) noexcept {
     if(hand>1 || !weapon) return false;
@@ -841,6 +927,80 @@ void FencerAimFrameYaw(const float fwd[3],float yaw,float frame[3][3]) noexcept 
     // however far the aim has swung from the yaw it was named by.
     const float right[3]={u[1]*fwd[2]-u[2]*fwd[1],u[2]*fwd[0]-u[0]*fwd[2],u[0]*fwd[1]-u[1]*fwd[0]};
     for(int j=0;j<3;++j) { frame[0][j]=right[j]; frame[1][j]=u[j]; frame[2][j]=fwd[j]; }
+}
+// The hand-to-aim turn a shield is carried by (FencerShieldUp/Place), as a
+// blend of two ways of turning, both of which take the hand's ray onto the aim.
+// One takes the ray's upright frame onto the aim's, named by their yaws: it
+// never goes the long way round, which the shortest arc does once the aim
+// trails far behind (the shield turned over). But near the vertical a yaw says
+// almost nothing about where a ray points: point up, turn the wrist a little or
+// go past the top, and the hand's yaw swings round while the aim's chases it at
+// the Fencer's turn, two rays both pointing up named half a turn apart, and the
+// shield went round the chest and upside down (the user, 2026-11-01: "上に向けたら
+// 少し変な挙動になった"; the log: the left roll at 170 to 179 degrees with the
+// left aim 64 to 83 degrees up). There the shortest arc is used: the rays are
+// close, and it cannot go the long way. It is the hand's yaw that cannot be
+// trusted there: the aim's is the aim's own state, the way the soldier faces,
+// and an aim far behind and steep is still carried round the right way. The
+// hand's yaw is trusted fully up to 60 degrees off the horizontal, not at all
+// past 75.
+float FencerYawTrust(const float hand[3]) noexcept {
+    const float flat=std::sqrt(hand[0]*hand[0]+hand[2]*hand[2]);
+    if(!std::isfinite(flat)) return 1;
+    return std::clamp((flat-0.2588f)/(0.5f-0.2588f),0.0f,1.0f);   // cos 75 .. cos 60 degrees
+}
+// `v` carried from the hand's ray onto the aim: by the upright frames (`own` at
+// the ray, `aim` at the aim, rows left, up, forward) where the yaws are trusted,
+// by the shortest arc where they are not, blended between.
+bool FencerShieldCarry(const float v[3],const float hand[3],const float own[3][3],const float aim[3][3],float out[3]) noexcept {
+    float byYaw[3]{};
+    for(int k=0;k<3;++k) {
+        const float along=v[0]*own[k][0]+v[1]*own[k][1]+v[2]*own[k][2];
+        for(int j=0;j<3;++j) byYaw[j]+=along*aim[k][j];
+    }
+    const float trust=FencerYawTrust(hand);
+    float rows[3][4]={{v[0],v[1],v[2],0}};
+    if(trust>=1.0f || !FencerTurnRows(rows,hand,aim[2])) { for(int j=0;j<3;++j) out[j]=byYaw[j]; }
+    else {
+        const float size=std::sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+        float mix[3]{},length=0;
+        for(int j=0;j<3;++j) { mix[j]=byYaw[j]*trust+rows[0][j]*(1-trust); length+=mix[j]*mix[j]; }
+        length=std::sqrt(length);
+        if(!(length>1e-4f)) { for(int j=0;j<3;++j) out[j]=rows[0][j]; }
+        else for(int j=0;j<3;++j) out[j]=mix[j]*size/length;
+    }
+    return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
+}
+// A shield's up on the aim (MakeFencerCommand): the wrist's up on the
+// controller's own ray (`hand`, named by `handYaw`) carried onto the aim
+// (`aim`, its upright frame) by FencerShieldCarry, then squared to the aim.
+// Unlike the controller's up turned straight onto the aim (FencerHandUp), a
+// trailing aim never turns it over.
+bool FencerShieldUp(const edf6vr::Quat& grip,const float hand[3],float handYaw,const float aim[3][3],float up[3]) noexcept {
+    float wrist[3]{},own[3][3]{},carried[3]{};
+    if(!FencerHandUp(grip,hand,wrist)) return false;
+    FencerAimFrameYaw(hand,handYaw,own);
+    if(!FencerShieldCarry(wrist,hand,own,aim,carried)) return false;
+    const float along=carried[0]*aim[2][0]+carried[1]*aim[2][1]+carried[2]*aim[2][2];
+    for(int j=0;j<3;++j) up[j]=carried[j]-aim[2][j]*along;
+    const float size=std::sqrt(up[0]*up[0]+up[1]*up[1]+up[2]*up[2]);
+    if(!std::isfinite(size) || size<0.2f) return false;
+    for(int j=0;j<3;++j) up[j]/=size;
+    return true;
+}
+// A shield's place on a trailing aim (MakeFencerCommand): the hand's place
+// turned about the chest (the eye, kFencerShieldPivotDrop lower) by the turn
+// that takes the hand's ray onto the aim (FencerShieldCarry). With the aim on
+// the ray it is the hand's place itself.
+constexpr float kFencerShieldPivotDrop=0.25f;
+bool FencerShieldPlace(const float grip[3],const float hand[3],float handYaw,const float aim[3][3],float out[3]) noexcept {
+    float own[3][3]{},carried[3]{};
+    FencerAimFrameYaw(hand,handYaw,own);
+    const float pivot[3]={g_eyeWorld[0],g_eyeWorld[1]-kFencerShieldPivotDrop,g_eyeWorld[2]};
+    const float rel[3]={grip[0]-pivot[0],grip[1]-pivot[1],grip[2]-pivot[2]};
+    if(!FencerShieldCarry(rel,hand,own,aim,carried)) return false;
+    for(int j=0;j<3;++j) out[j]=pivot[j]+carried[j];
+    return true;
 }
 // The weapon's rows re-expressed exactly from one aim frame to another: the
 // coordinates of each row in the native aim's frame, put back on the wanted
@@ -1528,7 +1688,7 @@ edf6vr::Quat FencerQuatMul(const edf6vr::Quat& a,const edf6vr::Quat& b) noexcept
 // point, in the root's frame, for the flash and the bullet origin.
 bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pose,const edf6vr::WeaponPose& wp,
                        const float nativeDir[3],float nativeYaw,const float wantDir[3],float wantYaw,WeaponHoldCommand& out,
-                       const float* posedDir=nullptr) noexcept {
+                       const float* posedDir=nullptr,const float* handDir=nullptr,float handYaw=0) noexcept {
     // Which aim the game actually posed this weapon along. For the right it
     // is the game's own. For the left the shadow is swapped into the aim
     // field for the duration of its tick, so the left weapon comes out of the
@@ -1648,6 +1808,22 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         const float grip[3]={g_eyeWorld[0]+offset.x,g_eyeWorld[1]+offset.y,g_eyeWorld[2]+offset.z};
         // The wanted frame: the aim's, with the controller's own up when the
         // weapon rolls with the hand (FencerHandRoll), upright otherwise.
+        //
+        // A shield keeps the aim's direction -- it shows where its guard is,
+        // and the guard turns at the Fencer's own speed (the user, 2026-11-01:
+        // "速度は合わせない。フェンサーの旋回のまま。そっちの速度に盾の移動も
+        // 合わせられない？") -- but not the controller's up turned onto it. A
+        // Fencer's aim chases the hand at his own slow turn, so swing the hand
+        // round or turn and the aim trails it by tens of degrees, and the up
+        // turned that long way onto it came out upside down ("左手の盾が攻撃を
+        // 受けたとき？旋回したとき？... めくれるような回転をしている"; the log:
+        // the left roll at 101, 178, 132 and -140 degrees, each while the left
+        // aim's chase was flat out). Its up is the wrist's roll instead,
+        // measured on the controller's own ray (`handDir`, the one the aim
+        // chases) against that ray's upright and laid against the aim's
+        // upright (FencerShieldUp): however far the aim trails, the shield
+        // turns with it the way the Fencer turns, never over.
+        const bool laidShield=handDir && hand<2 && edf6vr::HasType(g_image,wp.weapon,".?AVWeapon_Shield@@");
         float frame[3][3]{}; FencerAimFrameYaw(wantDir,wantYaw,frame);
         const float upright[2][3]={{frame[0][0],frame[0][1],frame[0][2]},{frame[1][0],frame[1][1],frame[1][2]}};
         if(g_fencerHandRoll && hand<2) {
@@ -1659,7 +1835,13 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
             // on the sum alone and drifted: the slow roll at the sky. Nothing
             // about a controller's up is undefined at any angle.
             float up[3]{};
-            if(FencerHandUp({q[0],q[1],q[2],q[3]},wantDir,up)) {
+            bool haveUp=false;
+            if(laidShield) {
+                haveUp=FencerShieldUp({q[0],q[1],q[2],q[3]},handDir,handYaw,frame,up);
+                if(haveUp) g_fencerShieldRolled[hand].fetch_add(1,std::memory_order_relaxed);
+            }
+            if(!haveUp) haveUp=FencerHandUp({q[0],q[1],q[2],q[3]},wantDir,up);
+            if(haveUp) {
                 for(int j=0;j<3;++j) frame[1][j]=up[j];
                 // right = up x forward (the frame's own convention)
                 frame[0][0]=frame[1][1]*wantDir[2]-frame[1][2]*wantDir[1];
@@ -1787,7 +1969,20 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
         // is the body's LEFT (v6 moved the hands inward), so the right hand
         // goes along -frame[0].
         const float side=hand==1?-g_fencerHandOutward:g_fencerHandOutward;
-        for(unsigned j=0;j<3;++j) palm[j]=grip[j]+frame[2][j]*g_fencerHandAhead+upright[0][j]*side+upright[1][j]*g_fencerHandUp+swingShift[j];
+        // A shield stands where the hand would be if it pointed down the aim
+        // (FencerShieldPlace), so it goes round with the aim at the Fencer's
+        // own turn, the way the game's shield does, and the guard it shows is
+        // the guard it has (the user, 2026-11-01, of the choices offered:
+        // "盾ごと照準に沿って動く"). Laid at the hand with only its face on the
+        // aim, it twisted on the wrist whenever the hand outran the aim. With
+        // the aim caught up it is at the hand.
+        float place[3]{grip[0],grip[1],grip[2]};
+        if(laidShield) {
+            const float aimUpright[3][3]={{upright[0][0],upright[0][1],upright[0][2]},{upright[1][0],upright[1][1],upright[1][2]},
+                                          {wantDir[0],wantDir[1],wantDir[2]}};
+            if(FencerShieldPlace(grip,handDir,handYaw,aimUpright,place)) g_fencerShieldPlaced[hand].fetch_add(1,std::memory_order_relaxed);
+        }
+        for(unsigned j=0;j<3;++j) palm[j]=place[j]+frame[2][j]*g_fencerHandAhead+upright[0][j]*side+upright[1][j]*g_fencerHandUp+swingShift[j];
         // The Arm Hound's root is not in the hand: the palm goes into the box's
         // open end, where the game's arm has it. Nor does it lie along the aim,
         // in the game (its bone is the forearm's, some 30 degrees under the
@@ -1888,9 +2083,9 @@ bool MakeFencerCommand(unsigned hand,void* soldier,const edf6vr::PlayerPose& pos
 // tick the way the game advances the right, and builds the left weapon's
 // draw command on its mount.
 void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
-    if(!g_fencerSplitAim || edf6vr::WeaponSlotCount(soldier)!=2) { ResetFencerDual(); return; }
+    if(!g_fencerSplitAim || edf6vr::WeaponSlotCount(soldier)!=2) { ResetFencerDual(1); return; }
     edf6vr::SoldierAim aim{};
-    if(!edf6vr::ReadSoldierAim(soldier,aim)) { ResetFencerDual(); return; }
+    if(!edf6vr::ReadSoldierAim(soldier,aim)) { ResetFencerDual(2); return; }
     {
         // How fast he is going across the ground, for the shield's dash hold.
         LARGE_INTEGER ticks{},rate{};
@@ -1971,7 +2166,7 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
     float at[3]{},q[4]{};
     edf6vr::HeadBasis hand{};
     if(!edf6vr::g_openxr.HandPose(0,at,q)
-       || !edf6vr::HeadBasisFromXr(edf6vr::TrimAimRotation({q[0],q[1],q[2],q[3]},g_weaponYaw,g_weaponPitch),hand)) { ResetFencerDual(); return; }
+       || !edf6vr::HeadBasisFromXr(edf6vr::TrimAimRotation({q[0],q[1],q[2],q[3]},g_weaponYaw,g_weaponPitch),hand)) { ResetFencerDual(3); return; }
     const float leftYaw=std::remainder(hand.yaw+g_yawOffset,6.28318530718f);
     const float leftPitch=static_cast<float>(g_pitchSign)*hand.pitchUp;
     float coefficient=0.3f;
@@ -1981,10 +2176,26 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
         g_fencerRollCoefficient=coefficient;
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
     FencerShadow shadow{};
-    AcquireSRWLockShared(&g_fencerShadowLock); shadow=g_fencerShadow; ReleaseSRWLockShared(&g_fencerShadowLock);
+    FencerShadowKept kept{};
+    AcquireSRWLockShared(&g_fencerShadowLock); shadow=g_fencerShadow; kept=g_fencerShadowKept; ReleaseSRWLockShared(&g_fencerShadowLock);
     if(!shadow.valid) {
-        shadow.target[0]=aim.pitch; shadow.target[1]=aim.yaw; shadow.target[2]=aim.third; shadow.target[3]=1;
-        for(int l=0;l<4;++l) shadow.smooth[l]=shadow.target[l];
+        // Where the left aim starts. It used to be the right's aim, every
+        // time the hands were dropped and built again, and they are dropped
+        // for a frame now and then (g_fencerResets): the left aim jumped to
+        // where the right hand pointed and came back at the Fencer's turn
+        // (the 2026-11-01 logs: the left aim back on the right's yaw every two
+        // seconds or so, its chase flat out) -- the shield turning over, then,
+        // once it went round with its aim, "時々右手の位置に左手の盾がワープ
+        // してる". A drop of under three seconds picks the left aim up where it
+        // was; otherwise it starts on the left controller.
+        if(kept.shadow.valid && kept.soldier==soldier && GetTickCount64()-kept.at<3000) {
+            shadow=kept.shadow;
+            g_fencerShadowResumed.fetch_add(1,std::memory_order_relaxed);
+        } else {
+            shadow.target[0]=FencerClampPitch(leftPitch,aim.pitchLimit); shadow.target[1]=leftYaw; shadow.target[2]=aim.third; shadow.target[3]=1;
+            for(int l=0;l<4;++l) shadow.smooth[l]=shadow.target[l];
+            g_fencerShadowFromHand.fetch_add(1,std::memory_order_relaxed);
+        }
         shadow.valid=true;
     }
     if(g_fencerHeavyAim) {
@@ -2006,7 +2217,7 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
         shadow.target[0]=FencerClampPitch(leftPitch,aim.pitchLimit); shadow.target[1]=leftYaw;
         for(int l=0;l<3;++l) shadow.smooth[l]=shadow.target[l];
     }
-    AcquireSRWLockExclusive(&g_fencerShadowLock); g_fencerShadow=shadow; ReleaseSRWLockExclusive(&g_fencerShadowLock);
+    AcquireSRWLockExclusive(&g_fencerShadowLock); g_fencerShadow=shadow; g_fencerShadowSoldier=soldier; ReleaseSRWLockExclusive(&g_fencerShadowLock);
 
     // Slot 1 is the weapon the left trigger fires (hardware-confirmed: slot 0
     // is the right). Both weapons get a command: the right's direction is the
@@ -2014,14 +2225,14 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
     const unsigned leftSlot=g_fencerSwapHands?0u:1u;
     edf6vr::WeaponPose left{},right{};
     if(!edf6vr::ReadWeaponPose(soldier,leftSlot,left) || !edf6vr::ReadWeaponPose(soldier,1u-leftSlot,right)
-       || left.weapon==right.weapon) { ResetFencerDual(); g_fencerRefused.fetch_add(1,std::memory_order_relaxed); return; }
+       || left.weapon==right.weapon) { ResetFencerDual(4); g_fencerRefused.fetch_add(1,std::memory_order_relaxed); return; }
     if(g_fencerGainPair[0]!=left.weapon || g_fencerGainPair[1]!=right.weapon) {
         g_fencerGainPair[0]=left.weapon; g_fencerGainPair[1]=right.weapon;
         FencerResetGain(); g_fencerPairChanges.fetch_add(1,std::memory_order_relaxed);
     }
     float smoothAim[4]{};
     __try { std::memcpy(smoothAim,static_cast<const unsigned char*>(soldier)+0x1240,16); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { ResetFencerDual(); return; }
+    __except(EXCEPTION_EXECUTE_HANDLER) { ResetFencerDual(5); return; }
     float nativeDir[3]{},shadowDir[3]{};
     FencerAimForward(smoothAim[0],smoothAim[1],nativeDir);
     FencerAimForward(shadow.smooth[0],shadow.smooth[1],shadowDir);
@@ -2043,9 +2254,29 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
         if(!g_fencerBodyYawValid) { g_fencerBodyYaw=headYaw; g_fencerBodyYawValid=true; }
         else g_fencerBodyYaw=std::remainder(g_fencerBodyYaw+std::remainder(headYaw-g_fencerBodyYaw,6.28318530718f)*0.05f,6.28318530718f);
     }
-    if(!MakeFencerCommand(0,soldier,pose,left,nativeDir,smoothAim[1],shadowDir,shadow.smooth[1],leftCommand,shadowDir)
-       || !MakeFencerCommand(1,soldier,pose,right,nativeDir,smoothAim[1],nativeDir,smoothAim[1],rightCommand)) {
-        ResetFencerDual(); g_fencerRefused.fetch_add(1,std::memory_order_relaxed); return;
+    // Where each controller points, the ray its aim chases (trim and all), for
+    // a shield laid on the hand (MakeFencerCommand).
+    float handDir[2][3]{},handYaw[2]{};
+    bool haveHandDir[2]{};
+    {
+        edf6vr::HeadBasis basis[2]{hand,{}};
+        float rat[3]{},rq[4]{};
+        haveHandDir[0]=true;
+        haveHandDir[1]=edf6vr::g_openxr.HandPose(1,rat,rq)
+            && edf6vr::HeadBasisFromXr(edf6vr::TrimAimRotation({rq[0],rq[1],rq[2],rq[3]},g_weaponYaw,g_weaponPitch),basis[1]);
+        for(unsigned h=0;h<2;++h) if(haveHandDir[h]) {
+            const auto f=edf6vr::RotateY(basis[h].forward,g_yawOffset);
+            const float size=std::sqrt(f.x*f.x+f.y*f.y+f.z*f.z);
+            if(!std::isfinite(size) || size<0.5f) { haveHandDir[h]=false; continue; }
+            handDir[h][0]=f.x/size; handDir[h][1]=f.y/size; handDir[h][2]=f.z/size;
+            handYaw[h]=std::remainder(basis[h].yaw+g_yawOffset,6.28318530718f);
+        }
+    }
+    if(!MakeFencerCommand(0,soldier,pose,left,nativeDir,smoothAim[1],shadowDir,shadow.smooth[1],leftCommand,shadowDir,
+                          haveHandDir[0]?handDir[0]:nullptr,handYaw[0])
+       || !MakeFencerCommand(1,soldier,pose,right,nativeDir,smoothAim[1],nativeDir,smoothAim[1],rightCommand,nullptr,
+                             haveHandDir[1]?handDir[1]:nullptr,handYaw[1])) {
+        ResetFencerDual(6); g_fencerRefused.fetch_add(1,std::memory_order_relaxed); return;
     }
     g_leftHoldCommand=leftCommand; g_holdCommand=rightCommand;
     AcquireSRWLockExclusive(&g_fencerHandLock); g_fencerLeft=leftCommand; g_fencerRight=rightCommand; ReleaseSRWLockExclusive(&g_fencerHandLock);
@@ -2100,14 +2331,24 @@ void BuildFencerHands(void* soldier,const edf6vr::PlayerPose& pose) noexcept {
             g_fencerShoulderGuides[0].load(),g_fencerShoulderGuides[1].load(),g_fencerShoulderGuideDeg[0].load(),g_fencerShoulderGuideDeg[1].load(),
             g_fencerShoulderArcs[0].load(),g_fencerShoulderArcs[1].load());
         for(auto& w:g_fencerGuideWatch) { w.worst[0]=w.worst[1]=0; }
-        Log("SHIELDSTATE shown lowered/guard=%llu/%llu offAnchor=%llu downs=%llu trigger L/R=%.2f/%.2f"
-            " guard tests=%llu on the left aim=%llu blocked there=%llu sites=%u/4"
-            " reflect fields onto the aim L/R=%llu/%llu turned last %.1f/%.1f max %.1f/%.1f deg",
-            g_fencerShieldShown[0].load(),g_fencerShieldShown[1].load(),
+        Log("SHIELDSTATE shown lowered/guard=%llu/%llu wrist roll on the aim L/R=%llu/%llu placed along the aim L/R=%llu/%llu offAnchor=%llu downs=%llu trigger L/R=%.2f/%.2f"
+            " guard tests=%llu per shield=%llu held by L/R/rest=%llu/%llu/%llu unpaid L/R=%llu/%llu sites=%u/6"
+            " reflect fields onto the aim L/R=%llu/%llu (bashes on the event %llu/%llu) turned last %.1f/%.1f max %.1f/%.1f deg",
+            g_fencerShieldShown[0].load(),g_fencerShieldShown[1].load(),g_fencerShieldRolled[0].load(),g_fencerShieldRolled[1].load(),
+            g_fencerShieldPlaced[0].load(),g_fencerShieldPlaced[1].load(),
             g_fencerRestOffAnchor.load(),g_fencerDowns.load(),g_handTrigger[0].load(),g_handTrigger[1].load(),
-            g_fencerGuardTests.load(),g_fencerGuardLeft.load(),g_fencerGuardLeftBlocked.load(),g_fencerGuardSites,
-            g_fencerBashTurns[0].load(),g_fencerBashTurns[1].load(),g_fencerBashTurnDeg[0].load(),g_fencerBashTurnDeg[1].load(),
+            g_fencerGuardTests.load(),g_fencerGuardSplit.load(),g_fencerGuardCaught[0].load(),g_fencerGuardCaught[1].load(),
+            g_fencerGuardCaught[2].load(),g_fencerGuardSpared[0].load(),g_fencerGuardSpared[1].load(),g_fencerGuardSites,
+            g_fencerBashTurns[0].load(),g_fencerBashTurns[1].load(),g_fencerShieldEventBashes[0].load(),g_fencerShieldEventBashes[1].load(),
+            g_fencerBashTurnDeg[0].load(),g_fencerBashTurnDeg[1].load(),
             g_fencerBashTurnMax[0].load(),g_fencerBashTurnMax[1].load());
+        Log("FENCERRESET hands dropped by: other=%llu weapons/split=%llu soldierAim=%llu leftController=%llu weaponPose=%llu smoothAim=%llu refused=%llu handsOff=%llu;"
+            " left aim picked up=%llu started on the left hand=%llu; left ticks whose aim came back far off (not taken)=%llu;"
+            " updates held through a miss=%llu (missing view/eye/body/right aim=%llu/%llu/%llu/%llu)",
+            g_fencerResets[0].load(),g_fencerResets[1].load(),g_fencerResets[2].load(),g_fencerResets[3].load(),g_fencerResets[4].load(),
+            g_fencerResets[5].load(),g_fencerResets[6].load(),g_fencerResets[7].load(),
+            g_fencerShadowResumed.load(),g_fencerShadowFromHand.load(),g_fencerTickLeaks.load(),
+            g_fencerHandsHeld.load(),g_fencerHandsOffWhy[0].load(),g_fencerHandsOffWhy[1].load(),g_fencerHandsOffWhy[2].load(),g_fencerHandsOffWhy[3].load());
         for(unsigned h=0;h<2;++h) if(g_fencerShieldSeen[h]) {
             const auto& c=g_fencerShieldNative[h];
             Log("SHIELDPOSE %s native rows in the aim frame (left,up,forward): x=(%.2f,%.2f,%.2f) y=(%.2f,%.2f,%.2f) z=(%.2f,%.2f,%.2f)",
@@ -2387,66 +2628,204 @@ bool InstallFencerAttachmentHooks() noexcept {
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-// The guard, on the shield's own aim.
+// The guard, each shield on its own hand.
 //
 // Whether a hit is blocked is 5957C0(soldier, the hit's direction, a limit): it
 // takes the guard value (+0x1A38; zero or less blocks nothing), turns the
 // direction into the frame of the soldier's aim yaw (+0x1244) and blocks inside
-// limit * guard. It never looks at the shield. In VR +0x1244 is the right
-// hand's aim, so a left shield guarded wherever the RIGHT hand pointed: turned
-// left and back to the front, the front was not covered (hardware 2026-10-01).
-// The shield is drawn square in front of its controller since 2026-09-30, so
-// the guard now goes the same way. With a shield in the left hand, the test
-// runs on the left aim (the shadow, as the left weapon's tick has it). With
-// shields in both hands it runs on the hand whose trigger is held further.
+// limit * guard. It never looks at a shield. The soldier's update (59ABB0)
+// makes that one guard out of every weapon that guards (weapon+0xEE0 bit 8, set
+// by 696210 when a shield's guard state 6AB1C0 starts): their angles
+// (weapon+0xEF4, custom_parameter[1], plus soldier+0x1AA4 each) added up, their
+// cuts (weapon+0xEF0) multiplied into +0x1A3C. A blocked hit is cut by +0x1A3C
+// (599650, the soldier's slot 0x80), and in the same dispatch (547C30) slot 0x90
+// (5985C0) tells every weapon the uncut damage (vtable +0xC0); a shield in its
+// guard state takes all of it off its durability (6AAD60). So two shields were
+// one wide fan round a single aim, and both lost every blocked hit in full.
 //
-// Called from 599650 (damage), 59576A and 598459, and jumped to from 5957BA
-// (595780 tail-calls it). All four are redirected.
+// In VR each hand points its own way. A left shield first guarded where the
+// right hand pointed (hardware 2026-10-01); then the one fan went on the hand
+// whose trigger was held further, and arms spread apart left one side open.
+// The user asked for each shield to guard its own way (2026-11-01,
+// "それぞれの盾が自分の手の向きを守る形にして"): each guarding shield is now a
+// fan of its own angle on its own hand -- the left on the shadow (the left aim
+// as its tick has it), the right on +0x1244 -- and whatever else is in +0x1A38
+// keeps the soldier's aim. A hit is blocked when any fan holds it. Only the
+// shields that hold it cut it (+0x1A3C taken back to theirs for that hit) and
+// pay for it (6AAD60 is skipped for the others); a hit both fans hold is cut
+// by both and costs both, as the game had it. An explosion (hit+0x58) is
+// blocked from any side without asking 5957C0 and stays the game's: every
+// guarding shield, all of their cuts.
+//
+// 5957C0 is called from 599650 (the damage, 5996A9), 59576A and 598459, and
+// jumped to from 5957BA (595780 tail-calls it); all four are redirected. The
+// HeavyArmor's slot 0x80 and the shield's slot 0xC0 are taken too: six sites.
 using GuardTest=bool(*)(void* soldier,const float* from,float limit);
 GuardTest g_guardOriginal=nullptr;
-bool FencerLeftGuardYaw(void* soldier,float& yaw) noexcept {
+using GuardDamage=std::uintptr_t(__fastcall*)(void* soldier,void* hit);
+GuardDamage g_guardDamageOriginal=nullptr;
+using ShieldDrain=void(__fastcall*)(void* shield,float damage);
+ShieldDrain g_shieldDrainOriginal=nullptr;
+struct FencerGuardFan { float yaw=0,angle=0,cut=1; bool guarding=false,held=false; };
+// The VR Fencer's two shields as the soldier's update counts them: guarding
+// (bit 8), the angle as it adds it, the cut as it multiplies it. A shield's
+// guard (696210 with r8 = 1) also sets bit 16 (`held`): its cut goes into the
+// product the soldier's +0x1AA0 scales, once that product is under 0.99. The
+// first build asked for bit 8 without 16 and so never saw a shield at all
+// (the 2026-11-01 log: guard tests 414, per shield 0).
+bool FencerGuardFans(void* soldier,FencerGuardFan fans[2]) noexcept {
+    fans[0]=fans[1]=FencerGuardFan{};
     if(!soldier || !g_fencerActive.load(std::memory_order_relaxed)) return false;
-    void* const leftWeapon=g_fencerWeapons[0].load(std::memory_order_relaxed);
-    void* const rightWeapon=g_fencerWeapons[1].load(std::memory_order_relaxed);
-    WeaponHoldCommand command{};
-    AcquireSRWLockShared(&g_fencerHandLock); command=g_fencerLeft; ReleaseSRWLockShared(&g_fencerHandLock);
-    if(command.soldier!=soldier || command.weapon!=leftWeapon || !leftWeapon) return false;
-    if(!edf6vr::HasType(g_image,leftWeapon,".?AVWeapon_Shield@@")) return false;
-    if(rightWeapon && edf6vr::HasType(g_image,rightWeapon,".?AVWeapon_Shield@@")
-       && g_handTrigger[0].load(std::memory_order_relaxed)<=g_handTrigger[1].load(std::memory_order_relaxed)) return false;
+    auto* const body=static_cast<unsigned char*>(soldier);
+    if(!edf6vr::Readable(body+0x1240,8,true) || !edf6vr::Readable(body+0x1A38,0x70,true)) return false;
+    WeaponHoldCommand command[2]{};
+    AcquireSRWLockShared(&g_fencerHandLock); command[0]=g_fencerLeft; command[1]=g_fencerRight; ReleaseSRWLockShared(&g_fencerHandLock);
     FencerShadow shadow{};
     AcquireSRWLockShared(&g_fencerShadowLock); shadow=g_fencerShadow; ReleaseSRWLockShared(&g_fencerShadowLock);
-    if(!shadow.valid || !std::isfinite(shadow.smooth[1])) return false;
-    yaw=shadow.smooth[1];
-    return true;
+    const float bonus=*reinterpret_cast<const float*>(body+0x1AA4);
+    bool any=false;
+    for(unsigned h=0;h<2;++h) {
+        void* const weapon=g_fencerWeapons[h].load(std::memory_order_relaxed);
+        if(!weapon || command[h].soldier!=soldier || command[h].weapon!=weapon) continue;
+        if(!edf6vr::HasType(g_image,weapon,".?AVWeapon_Shield@@")) continue;
+        auto* const w=static_cast<const unsigned char*>(weapon);
+        if(!edf6vr::Readable(w+0xEE0,0x18,true)) continue;
+        const unsigned flags=*reinterpret_cast<const unsigned*>(w+0xEE0);
+        if(!(flags&0x8u)) continue;
+        if(h==0 && !shadow.valid) continue;
+        const float yaw=h?*reinterpret_cast<const float*>(body+0x1244):shadow.smooth[1];
+        const float angle=*reinterpret_cast<const float*>(w+0xEF4),cut=*reinterpret_cast<const float*>(w+0xEF0);
+        if(!std::isfinite(yaw) || !std::isfinite(angle) || !std::isfinite(cut) || !std::isfinite(bonus)) continue;
+        fans[h].guarding=true; fans[h].held=(flags&0x10u)!=0; fans[h].yaw=yaw; fans[h].cut=cut;
+        fans[h].angle=angle>0.01f?angle+bonus:0.0f;
+        any=true;
+    }
+    return any;
 }
-bool HookGuardTest(void* soldier,const float* from,float limit) noexcept {
+// Each fan put to the game's own test in turn. Bit 0: the left shield holds
+// the hit, bit 1 the right, bit 2 the rest of the soldier's guard.
+constexpr unsigned kFencerGuardRest=4,kFencerGuardEvery=7;
+unsigned FencerGuardCatch(void* soldier,const float* from,float limit,const FencerGuardFan fans[2]) noexcept {
+    auto* const body=static_cast<unsigned char*>(soldier);
+    float* const guard=reinterpret_cast<float*>(body+0x1A38);
+    float* const aim=reinterpret_cast<float*>(body+0x1244);
+    const float total=*guard,yaw=*aim;
+    float rest=total;
+    for(unsigned h=0;h<2;++h) rest-=fans[h].angle;
+    unsigned caught=0;
+    __try {
+        for(unsigned h=0;h<2;++h) if(fans[h].angle>0) {
+            *guard=fans[h].angle; *aim=fans[h].yaw;
+            if(g_guardOriginal(soldier,from,limit)) caught|=1u<<h;
+        }
+        if(rest>0.01f) {
+            *guard=rest; *aim=yaw;
+            if(g_guardOriginal(soldier,from,limit)) caught|=kFencerGuardRest;
+        }
+    } __finally { *guard=total; *aim=yaw; }
+    return caught;
+}
+// The hit being dealt to the VR Fencer, on the game thread: who held it, and
+// the cut put in +0x1A3C for it with the game's value it replaced.
+struct FencerGuardHit { void* soldier=nullptr; unsigned caught=kFencerGuardEvery; float written=0,original=1; bool cutWritten=false; };
+FencerGuardHit g_fencerGuardHit{};
+void FencerGuardCount(unsigned caught) noexcept {
+    g_fencerGuardSplit.fetch_add(1,std::memory_order_relaxed);
+    for(unsigned b=0;b<3;++b) if(caught&(1u<<b)) g_fencerGuardCaught[b].fetch_add(1,std::memory_order_relaxed);
+}
+bool FencerGuardTest(void* soldier,const float* from,float limit,bool damage) noexcept {
     g_fencerGuardTests.fetch_add(1,std::memory_order_relaxed);
-    float yaw=0;
-    if(!FencerLeftGuardYaw(soldier,yaw) || !edf6vr::Readable(static_cast<unsigned char*>(soldier)+0x1244,4,true))
-        return g_guardOriginal(soldier,from,limit);
-    auto* field=reinterpret_cast<float*>(static_cast<unsigned char*>(soldier)+0x1244);
-    const float saved=*field;
-    bool blocked=false;
-    *field=yaw;
-    __try { blocked=g_guardOriginal(soldier,from,limit); }
-    __finally { *field=saved; }
-    g_fencerGuardLeft.fetch_add(1,std::memory_order_relaxed);
-    if(blocked) g_fencerGuardLeftBlocked.fetch_add(1,std::memory_order_relaxed);
-    return blocked;
+    FencerGuardFan fans[2];
+    if(!FencerGuardFans(soldier,fans)) return g_guardOriginal(soldier,from,limit);
+    auto* const body=static_cast<unsigned char*>(soldier);
+    if(!(*reinterpret_cast<const float*>(body+0x1A38)>0)) return g_guardOriginal(soldier,from,limit);
+    const unsigned caught=FencerGuardCatch(soldier,from,limit,fans);
+    FencerGuardCount(caught);
+    if(damage) {
+        auto& hit=g_fencerGuardHit;
+        float* const cut=reinterpret_cast<float*>(body+0x1A3C);
+        const float base=hit.cutWritten && hit.soldier==soldier && *cut==hit.written?hit.original:*cut;
+        // 59ABB0: +0x1A3C = the cuts without bit 16 * the cuts with it * +0x1AA0
+        // once those with it come under 0.99. Every guarding shield's share
+        // out of it, the holders' back in.
+        float scale=*reinterpret_cast<const float*>(body+0x1AA0);
+        if(!std::isfinite(scale) || scale<=0) scale=1;
+        float plain[2]={1,1},kept[2]={1,1};   // [0] every guarding shield, [1] those that hold the hit
+        for(unsigned h=0;h<2;++h) if(fans[h].guarding) {
+            float* const group=fans[h].held?kept:plain;
+            group[0]*=fans[h].cut;
+            if(caught&(1u<<h)) group[1]*=fans[h].cut;
+        }
+        const float before=plain[0]*kept[0]*(kept[0]<0.99f?scale:1.0f);
+        const float after=plain[1]*kept[1]*(kept[1]<0.99f?scale:1.0f);
+        const float value=caught && before>1e-4f && base>=0 && base<=1?std::clamp(base*after/before,0.0f,1.0f):base;
+        *cut=value;
+        hit.soldier=soldier; hit.caught=caught; hit.written=value; hit.original=base; hit.cutWritten=true;
+    }
+    return caught!=0;
+}
+bool HookGuardTest(void* soldier,const float* from,float limit) noexcept { return FencerGuardTest(soldier,from,limit,false); }
+bool HookGuardTestDamage(void* soldier,const float* from,float limit) noexcept { return FencerGuardTest(soldier,from,limit,true); }
+// Before each hit on the VR Fencer: the game's cut back, and every shield
+// paying unless this hit's test says otherwise. A hit marked 0x40 repeats the
+// last one's block (599650 keeps +0x1A48), so it keeps who held it too.
+std::uintptr_t __fastcall HookGuardDamage(void* soldier,void* hitInfo) {
+    auto& hit=g_fencerGuardHit;
+    if(soldier && soldier==hit.soldier) {
+        __try {
+            float* const cut=reinterpret_cast<float*>(static_cast<unsigned char*>(soldier)+0x1A3C);
+            if(hit.cutWritten && *cut==hit.written) *cut=hit.original;
+            hit.cutWritten=false;
+            if(!hitInfo || !(static_cast<const unsigned char*>(hitInfo)[0x60]&0x40)) hit.caught=kFencerGuardEvery;
+        } __except(EXCEPTION_EXECUTE_HANDLER) { hit.cutWritten=false; hit.caught=kFencerGuardEvery; }
+    }
+    return g_guardDamageOriginal(soldier,hitInfo);
+}
+// A blocked hit's toll: only on the VR Fencer's shields that held it.
+void __fastcall HookShieldDrain(void* shield,float damage) {
+    const auto& hit=g_fencerGuardHit;
+    if(shield && hit.soldier && hit.caught!=kFencerGuardEvery) {
+        for(unsigned h=0;h<2;++h) {
+            if(shield!=g_fencerWeapons[h].load(std::memory_order_relaxed) || (hit.caught&(1u<<h))) continue;
+            void* owner=nullptr;
+            __try { owner=*reinterpret_cast<void* const*>(static_cast<const unsigned char*>(shield)+0x120); }
+            __except(EXCEPTION_EXECUTE_HANDLER) { owner=nullptr; }
+            if(owner!=hit.soldier) break;
+            g_fencerGuardSpared[h].fetch_add(1,std::memory_order_relaxed);
+            return;
+        }
+    }
+    g_shieldDrainOriginal(shield,damage);
 }
 unsigned InstallFencerGuardHooks() noexcept {
     __try {
         auto* base=g_image.base;
-        // The test as read: movss xmm0,[rcx+1A38] at +27 and movss xmm1,[rcx+1244] at +49.
+        // The test as read: movss xmm0,[rcx+1A38] at +27 and movss xmm1,[rcx+1244] at +49;
+        // the cut, mulss xmm0,[rbx+1A3C] at 5996E2; the toll, call [rax+0C0] at 598BD1.
         static const unsigned char guard[]={0xF3,0x0F,0x10,0x81,0x38,0x1A,0x00,0x00};
         static const unsigned char yaw[]={0xF3,0x0F,0x10,0x89,0x44,0x12,0x00,0x00};
+        static const unsigned char cut[]={0xF3,0x0F,0x59,0x83,0x3C,0x1A,0x00,0x00};
+        static const unsigned char toll[]={0xFF,0x90,0xC0,0x00,0x00,0x00};
         if(!edf6vr::Readable(base+0x5957C0,0x60) || std::memcmp(base+0x5957E7,guard,sizeof(guard))
-           || std::memcmp(base+0x595809,yaw,sizeof(yaw))) return 0;
+           || std::memcmp(base+0x595809,yaw,sizeof(yaw)) || !edf6vr::Readable(base+0x5996E2,8)
+           || std::memcmp(base+0x5996E2,cut,sizeof(cut)) || !edf6vr::Readable(base+0x598BD1,6)
+           || std::memcmp(base+0x598BD1,toll,sizeof(toll))) return 0;
+        auto** const damageSlot=reinterpret_cast<void**>(base+0x17CF5B8+0x80);   // HeavyArmor
+        auto** const tollSlot=reinterpret_cast<void**>(base+0x17E51A0+0xC0);     // Weapon_Shield
+        if(!edf6vr::Readable(damageSlot,8) || !edf6vr::Readable(tollSlot,8)
+           || *damageSlot!=base+0x599650 || *tollSlot!=base+0x6AAD60) return 0;
         g_guardOriginal=reinterpret_cast<GuardTest>(base+0x5957C0);
+        g_guardDamageOriginal=reinterpret_cast<GuardDamage>(base+0x599650);
+        g_shieldDrainOriginal=reinterpret_cast<ShieldDrain>(base+0x6AAD60);
         unsigned sites=0; bool changed=false;
-        for(const std::uint32_t call:{0x59576Au,0x598459u,0x5996A9u})
+        // The slots first: the cut put back before every hit is what lets the
+        // damage's test change it.
+        if(!edf6vr::ReplacePointer(damageSlot,base+0x599650,reinterpret_cast<void*>(&HookGuardDamage),changed)) return 0;
+        ++sites;
+        if(edf6vr::ReplacePointer(tollSlot,base+0x6AAD60,reinterpret_cast<void*>(&HookShieldDrain),changed)) ++sites;
+        for(const std::uint32_t call:{0x59576Au,0x598459u})
             if(edf6vr::RedirectCall(base+call,base+0x5957C0,reinterpret_cast<void*>(&HookGuardTest),changed)) ++sites;
+        if(edf6vr::RedirectCall(base+0x5996A9,base+0x5957C0,reinterpret_cast<void*>(&HookGuardTestDamage),changed)) ++sites;
         if(edf6vr::RedirectJump(base+0x5957BA,base+0x5957C0,reinterpret_cast<void*>(&HookGuardTest),changed)) ++sites;
         g_fencerGuardSites=sites;
         return sites;
@@ -2575,10 +2954,22 @@ void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept {
                 std::memcpy(after.smooth,soldier+0x1240,16);
                 after.valid=true;
                 std::memcpy(soldier+0x1230,saved,32);
+                // Only this tick had the left aim in the soldier's fields, and a
+                // weapon's tick does not turn him: a jump of more than
+                // kFencerTickLeak came from somewhere else writing his own aim
+                // meanwhile, so the left aim is left as it was rather than
+                // taking the right's (g_fencerTickLeaks; with g_fencerResets,
+                // the two ways the left aim was seen to land on the right's).
+                auto apart=[](const float* a,const float* b) {
+                    return std::max(std::fabs(a[0]-b[0]),std::fabs(std::remainder(a[1]-b[1],6.28318530718f)));
+                };
+                const bool leaked=!(apart(after.target,shadow.target)<=kFencerTickLeak)
+                    || !(apart(after.smooth,shadow.smooth)<=kFencerTickLeak);
+                if(leaked) g_fencerTickLeaks.fetch_add(1,std::memory_order_relaxed);
                 // 59B070..: the loop would add weapon+F00 * soldier+1AAC to the
                 // soldier's two aims next tick. It is the left weapon's kick, so it
                 // goes to the left aim instead, and the loop finds nothing.
-                if(edf6vr::Readable(bytes+0xEE0,0x30,true) && (*reinterpret_cast<unsigned*>(bytes+0xEE0)&0x20u)) {
+                else if(edf6vr::Readable(bytes+0xEE0,0x30,true) && (*reinterpret_cast<unsigned*>(bytes+0xEE0)&0x20u)) {
                     auto* kick=reinterpret_cast<float*>(bytes+0xF00);
                     const float scale=*reinterpret_cast<const float*>(soldier+0x1AAC);
                     const float size=std::fabs(kick[0])+std::fabs(kick[1])+std::fabs(kick[2]);
@@ -2595,7 +2986,7 @@ void FencerWeaponTick(void* weapon,void* context,DualTick original) noexcept {
                         g_fencerKicks.fetch_add(1,std::memory_order_relaxed);
                     }
                 }
-                AcquireSRWLockExclusive(&g_fencerShadowLock); g_fencerShadow=after; ReleaseSRWLockExclusive(&g_fencerShadowLock);
+                if(!leaked) { AcquireSRWLockExclusive(&g_fencerShadowLock); g_fencerShadow=after; ReleaseSRWLockExclusive(&g_fencerShadowLock); }
             } __except(EXCEPTION_EXECUTE_HANDLER) { g_fencerInvalid.fetch_add(1,std::memory_order_relaxed); }
         }
         g_dualTick=previous;
