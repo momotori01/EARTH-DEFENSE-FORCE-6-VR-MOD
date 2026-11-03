@@ -57,6 +57,12 @@ constexpr VrMenuItem kVrMenuItems[]={
     {VrMenuKind::OnOff,L"Render",L"OcclusionLeafOnly",L"1",nullptr,nullptr,2,2,{
         {L"1",nullptr,L"On (lighter)",L"オン（軽い）"},{L"0",nullptr,L"Off (the game's own)",L"オフ（ゲーム本来）"}}},
     EDF6VR_MENU_ONOFF(L"VR",L"RightStickButtons",L"1"),
+    // snap_turn.h: off unless chosen; each press 45 degrees more, and from 180 back to off.
+    // "度" and "degrees": the game's menu font is not known to have the degree sign.
+    {VrMenuKind::Number,L"VR",L"SnapTurn",L"0",nullptr,nullptr,5,5,{
+        {L"0",nullptr,L"Off (smooth turning)",L"オフ（なめらかに旋回）"},
+        {L"45",nullptr,L"45 degrees",L"45度"},{L"90",nullptr,L"90 degrees",L"90度"},
+        {L"135",nullptr,L"135 degrees",L"135度"},{L"180",nullptr,L"180 degrees",L"180度"}}},
     EDF6VR_MENU_ONOFF(L"VR",L"RecoilKick",L"1"),
     {VrMenuKind::Number,L"VR",L"ShotBuzz",L"1",nullptr,nullptr,5,5,{
         {L"0",nullptr,L"0 (off)",L"0（オフ）"},{L"0.25"},{L"0.5"},{L"0.75"},

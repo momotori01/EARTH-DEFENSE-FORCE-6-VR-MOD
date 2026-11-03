@@ -132,10 +132,51 @@ int main() {
         edf6vr::UpdateStickButtons(s,std::nanf(""),1,edge,angle,down); CHECK(!s.up && !s.down);
     }
     {
+        // Snap turning (snap_turn.h): one step a sideways push past 0.6, none
+        // again until the stick is back under 0.3; nothing near upright, where
+        // the stick's buttons are; and after a gap a push already held waits.
+        using edf6vr::UpdateSnapTurn;
+        edf6vr::SnapTurn s{};
+        unsigned long long t=1000;
+        CHECK(UpdateSnapTurn(s,0,0,t)==0);                                   // the first tick only looks
+        CHECK(UpdateSnapTurn(s,0.5f,0,t+=10)==0);                            // not far enough
+        CHECK(UpdateSnapTurn(s,0.9f,0,t+=10)==1);                            // right
+        for(int i=0;i<50;++i) CHECK(UpdateSnapTurn(s,1.0f,0,t+=10)==0);       // held: one step only
+        CHECK(UpdateSnapTurn(s,0.4f,0,t+=10)==0 && s.held);                  // not back far enough
+        CHECK(UpdateSnapTurn(s,0.9f,0,t+=10)==0);
+        CHECK(UpdateSnapTurn(s,0.2f,0,t+=10)==0 && !s.held);                 // let go
+        CHECK(UpdateSnapTurn(s,-0.9f,0.3f,t+=10)==-1);                       // left, a little up
+        CHECK(UpdateSnapTurn(s,0.1f,0,t+=10)==0);
+        CHECK(UpdateSnapTurn(s,-0.9f,0,t+=10)==-1);                          // a fresh push turns again
+        s={}; t=5000; UpdateSnapTurn(s,0,0,t);
+        CHECK(UpdateSnapTurn(s,0.9f,0,t+=10)==1);
+        CHECK(UpdateSnapTurn(s,-0.9f,0,t+=10)==0);                           // through the middle in one tick: held until it rests
+        // Near upright (the Y and L3 buttons): no turn, at any push.
+        s={}; t=9000; UpdateSnapTurn(s,0,0,t);
+        CHECK(UpdateSnapTurn(s,0.65f,0.76f,t+=10)==0);                       // 40 degrees off up
+        CHECK(UpdateSnapTurn(s,0.7f,-0.71f,t+=10)==0);                       // 45 degrees and a hair, off down
+        CHECK(UpdateSnapTurn(s,0.0f,0.0f,t+=10)==0);
+        CHECK(UpdateSnapTurn(s,0.71f,0.70f,t+=10)==1);                       // just nearer level
+        // A gap (a seat, a menu): a stick still held over does not turn on return.
+        CHECK(UpdateSnapTurn(s,0.9f,0,t+=1000)==0 && s.held);
+        CHECK(UpdateSnapTurn(s,0.9f,0,t+=10)==0);
+        CHECK(UpdateSnapTurn(s,0,0,t+=10)==0);
+        CHECK(UpdateSnapTurn(s,-0.9f,0,t+=10)==-1);
+        // Centred after a gap: the next push turns at once.
+        CHECK(UpdateSnapTurn(s,0,0,t+=1000)==0 && !s.held);
+        CHECK(UpdateSnapTurn(s,0.9f,0,t+=10)==1);
+        // Not a number: no turn, and held until the stick reads centred again.
+        CHECK(UpdateSnapTurn(s,0,0,t+=10)==0);
+        CHECK(UpdateSnapTurn(s,std::nanf(""),0,t+=10)==0 && s.held);
+        CHECK(UpdateSnapTurn(s,0.9f,0,t+=10)==0);
+        // The clock going backwards counts as a gap.
+        CHECK(UpdateSnapTurn(s,0,0,t-=500)==0 && !s.held);
+    }
+    {
         // The Start menu's "VR setting" rows (vr_menu_items.h): the state the INI
         // is in, the state a press goes to, and what the row shows.
         using namespace edf6vr;
-        static_assert(kVrMenuItemCount==20,"the rows of the VR setting menu");
+        static_assert(kVrMenuItemCount==21,"the rows of the VR setting menu");
         const auto& scope=kVrMenuItems[0];
         CHECK(VrMenuStateOf(scope,L"1",nullptr)==0 && VrMenuNext(scope,0,L"1")==1);                          // Native -> Digital
         CHECK(!wcscmp(scope.states[VrMenuNext(scope,VrMenuStateOf(scope,L"2",nullptr),L"2")].value,L"0"));   // Digital -> Off
@@ -150,13 +191,19 @@ int main() {
         const auto& stick=kVrMenuItems[3];
         CHECK(VrMenuStateOf(stick,L"1",nullptr)==0 && VrMenuStateOf(stick,L"0",nullptr)==1 && VrMenuStateOf(stick,L"7",nullptr)==0);
         CHECK(!wcscmp(stick.states[VrMenuNext(stick,0,L"1")].value,L"0") && !wcscmp(stick.states[VrMenuNext(stick,1,L"0")].value,L"1"));
-        const auto& buzz=kVrMenuItems[5];
+        const auto& snap=kVrMenuItems[4];   // snap_turn.h: off, then 45 degrees a press, from 180 back to off
+        CHECK(!wcscmp(snap.key,L"SnapTurn") && VrMenuStateOf(snap,snap.fallback,nullptr)==0 && snap.cycle==5);
+        CHECK(VrMenuNext(snap,0,L"0")==1 && !wcscmp(snap.states[1].value,L"45") && !wcscmp(snap.states[4].value,L"180"));
+        CHECK(VrMenuNext(snap,4,L"180")==0);
+        CHECK(VrMenuStateOf(snap,L"60",nullptr)==-1 && !wcscmp(snap.states[VrMenuNext(snap,-1,L"60")].value,L"90"));   // typed by hand
+        CHECK(!wcscmp(VrMenuLabel(snap,3,true,L"135"),L"135度") && !wcscmp(VrMenuLabel(snap,0,false,L"0"),L"Off (smooth turning)"));
+        const auto& buzz=kVrMenuItems[6];
         CHECK(VrMenuStateOf(buzz,L"0.5",nullptr)==2 && VrMenuStateOf(buzz,L"0.5000",nullptr)==2 && VrMenuStateOf(buzz,L"0.6",nullptr)==-1);
         CHECK(VrMenuNext(buzz,-1,L"0.6")==3);                                   // between two steps: the step above
         CHECK(VrMenuNext(buzz,4,L"1")==0);                                      // and round again
         CHECK(VrMenuNext(buzz,-1,L"3")==0 && VrMenuNext(buzz,-1,L"abc")==0);
         CHECK(!wcscmp(VrMenuLabel(buzz,-1,false,L"0.6"),L"0.6") && !wcscmp(VrMenuLabel(buzz,1,true,L"0.25"),L"0.25"));
-        const auto& hud=kVrMenuItems[7];
+        const auto& hud=kVrMenuItems[8];
         CHECK(hud.key2 && !wcscmp(hud.key2,L"UiClusterPlace"));
         CHECK(VrMenuStateOf(hud,L"1",L"0")==0 && VrMenuStateOf(hud,L"1",L"2")==2 && VrMenuStateOf(hud,L"0",L"2")==3);
         CHECK(VrMenuNext(hud,2,L"1")==3 && hud.states[3].value2==nullptr);      // off leaves the place as it is

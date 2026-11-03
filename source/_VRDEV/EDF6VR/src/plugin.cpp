@@ -37,6 +37,7 @@
 #include "body_tumble.h"
 #include "gesture_input.h"
 #include "stick_buttons.h"
+#include "snap_turn.h"
 #include "vr_menu_items.h"
 #include "ranger_holster.h"
 #include "ranger_recoil.h"
@@ -749,6 +750,14 @@ bool VehiclePadActive() noexcept {
     return g_vehicleMounted.load() && at && GetTickCount64()-at<250;
 }
 bool g_stickButtons=true;        // right stick up = Y, down = L3
+float g_snapTurnDegrees=0;       // [VR] SnapTurn: on foot, the stick turns in steps of this much; 0 turns smoothly
+edf6vr::SnapTurn g_snapTurn{};
+ULONGLONG g_snapTurns=0;         // steps taken, for the VR line
+// How far a draw may be turned onto the stick turn of the camera it is drawn
+// with (RetimeHoldYaw, HandControllerFrame): a few degrees an update while the
+// stick turns smoothly, a whole step for a snap turn. Further is a camera from
+// elsewhere -- the log's refusals were at getting into a Nix (2026-11-01).
+float MaxDrawYawTurn() noexcept { return 0.8f+g_snapTurnDegrees*0.01745329252f; }
 // An Index grip reads well above zero from resting a hand on it, so one
 // threshold turns a touch into a press. Press high, release low.
 float g_gripPress=0.75f, g_gripRelease=0.45f;
@@ -1138,7 +1147,9 @@ bool Adjusting(const edf6vr::ControllerState& controls,bool handTracked,
 // on the headset produces which button, which is a question about hands.
 SRWLOCK g_fencerPadLock=SRWLOCK_INIT;
 edf6vr::FencerPadCommand g_fencerPad{};
-std::atomic<float> g_fencerTurn{0};
+// The turning stick as it is now, off the temple d-pad: the Fencer's turn, and
+// every class's snap turn ([VR] SnapTurn, snap_turn.h), which also needs its up.
+std::atomic<float> g_fencerTurn{0},g_turnStickUp{0};
 // A big push one way straight after a big push the other: the aim going past
 // and being pushed back. The FENCER line counts them per axis (x yaw, y pitch).
 std::atomic<unsigned> g_fencerPadFlips[2]{};
@@ -1208,6 +1219,7 @@ void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
     if((g_dualActive.load() || shoulder.toggle) && controls.trigger[0]>.4f) g_dualTriggerCaptured=true;
     if(controls.trigger[0]<=.25f) g_dualTriggerCaptured=false;
     g_fencerTurn.store(0,std::memory_order_relaxed); // disconnect/adjustment must not retain a turn
+    g_turnStickUp.store(0,std::memory_order_relaxed);
     edf6vr::PadState pad{};
     if(g_padMode==0) {
         if((g_heightHold.active && !g_heightHold.fired) || (g_adjustHold.active && !g_adjustHold.fired))
@@ -1402,6 +1414,7 @@ void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
     // separate target offset; feeding this synthetic look back to yawOffset
     // would create a self-chasing target and perpetual rotation.
     g_fencerTurn.store(g_gestureOn?0.0f:controls.stick[1][0],std::memory_order_relaxed);
+    g_turnStickUp.store(g_gestureOn?0.0f:controls.stick[1][1],std::memory_order_relaxed);
     // The aim goes on following the hand while it is at the temple, as every
     // other class's does (their aim is written outright): the stick's d-pad
     // there is buttons, and the right stick's axes are free for the pursuit (the
@@ -2421,6 +2434,7 @@ void Settings() noexcept {
     g_gestureFrontLeave=ReadFloat(path,L"GestureFrontLeaveMetres",0.09f,-1.0f,1.0f,L"VR");
     g_testRequestPoints=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Diagnostics",L"MissionRequestPoints",0,path)),0,1000000);
     g_stickButtons=GetPrivateProfileIntW(L"VR",L"RightStickButtons",1,path)!=0;
+    g_snapTurnDegrees=ReadFloat(path,L"SnapTurn",0.0f,0.0f,180.0f,L"VR");
     g_stickButtonEdge=ReadFloat(path,L"RightStickButtonEdge",0.6f,0.2f,0.95f,L"VR");
     g_stickButtonAngle=ReadFloat(path,L"RightStickButtonAngle",40.0f,10.0f,60.0f,L"VR");
     g_stickButtonDownAngle=ReadFloat(path,L"RightStickButtonDownAngle",37.0f,10.0f,60.0f,L"VR");
@@ -3132,7 +3146,15 @@ void ApplyVrInput(void* soldier) noexcept {
                 g_yawOffset,head.yaw,aim.yaw,headXr.x,headXr.y,headXr.z);
         }
         const bool fencer=FencerOwnsWeaponPose(soldier);
-        if(fencer) {
+        if(g_vrMouseYaw && g_vrRotation && g_snapTurnDegrees>0) {
+            // Snap turning (snap_turn.h), every class: the stick turns the view
+            // only in steps. Outside the Fencer the game's look input is still
+            // written back as zero below, and still marks the "turned" event;
+            // the Fencer's pursuit chases the stepped aim at the game's own
+            // turning speed, as it chases the hand.
+            const int step=edf6vr::UpdateSnapTurn(g_snapTurn,g_fencerTurn.load(),g_turnStickUp.load(),GetTickCount64());
+            if(step) { g_yawOffset-=static_cast<float>(step)*g_snapTurnDegrees*0.01745329252f; ++g_snapTurns; }
+        } else if(fencer) {
             // Physical stick only, 90 degrees/sec reference turning. Native weapon
             // turn speed is still determined by the ordinary pad path below.
             if(g_vrMouseYaw) g_yawOffset-=std::clamp(g_fencerTurn.load(),-1.0f,1.0f)*dt*1.57079633f;
@@ -4369,9 +4391,10 @@ void ReloadTunables() noexcept {
     // Umbra's leaf-only occlusion queries for the main views (umbra_properties.h): taken by the next
     // Camera::setProperties the game makes, so it can be switched in one scene.
     g_occlusionLeafOnly=GetPrivateProfileIntW(L"Render",L"OcclusionLeafOnly",1,g_iniPath)!=0;
-    // The Start menu's "VR setting" changes these two in play (vr_menu.h): a
-    // flag each, with nothing built on it at start-up.
+    // The Start menu's "VR setting" changes these three in play (vr_menu.h),
+    // with nothing built on them at start-up.
     g_stickButtons=GetPrivateProfileIntW(L"VR",L"RightStickButtons",1,g_iniPath)!=0;
+    g_snapTurnDegrees=ReadFloat(g_iniPath,L"SnapTurn",0.0f,0.0f,180.0f,L"VR");
     edf6vr::g_openxr.SetDesktopMirror(GetPrivateProfileIntW(L"Render",L"DesktopMirror",1,g_iniPath)!=0);
     g_vehicleBobSeconds=ReadFloat(g_iniPath,L"VehicleBobSmoothSeconds",0.35f,0.0f,2.0f,L"VR");
     g_bargaBobSeconds=ReadFloat(g_iniPath,L"BargaBobSmoothSeconds",4.0f,0.0f,20.0f,L"VR");
@@ -6240,11 +6263,12 @@ void AfterUpdate(void* camera) noexcept {
             edf6vr::HmdSample sample{};
             const bool haveSample=edf6vr::g_openxr.Sample(sample);
             Log("VR ready=%d on=%d xrRunning=%d xrFrames=%llu stage=%d sample=%d posValid=%d "
-                "headYaw=%.4f headPitch=%.4f yawOffset=%.4f pitchSign=%+d locked=%d wroteAim=%llu wroteMove=%llu inputCalls=%llu turnEvents=%llu",
+                "headYaw=%.4f headPitch=%.4f yawOffset=%.4f pitchSign=%+d locked=%d wroteAim=%llu wroteMove=%llu inputCalls=%llu turnEvents=%llu "
+                "snapTurn=%.0fdeg snaps=%llu",
                 g_vrReady,g_vrEnabled,edf6vr::g_openxr.Running(),edf6vr::g_openxr.Frames(),
                 edf6vr::g_openxr.StageSpace(),haveSample,sample.positionValid,
                 g_lastHeadYaw,g_lastHeadPitch,g_yawOffset,g_pitchSign,g_pitchLocked,
-                g_vrAimWrites,g_vrMoveWrites,g_vrInputCalls,g_vrTurnEvents);
+                g_vrAimWrites,g_vrMoveWrites,g_vrInputCalls,g_vrTurnEvents,g_snapTurnDegrees,g_snapTurns);
             Log("AIMFIELDS soldierYaw=%.4f soldierPitch=%.4f cameraYaw=%.4f cameraPitchUp=%.4f "
                 "yawDelta=%.4f wroteYaw=%.4f wrotePitch=%.4f move=(%.3f,%.3f) look=(%.4f,%.4f) limits=(%.3f,%.3f) pos=(%.2f,%.2f,%.2f)",
                 g_lastAim.yaw,g_lastAim.pitch,g_lastCameraYaw,g_lastCameraPitchUp,
@@ -6864,13 +6888,14 @@ bool ResolveHoldPalette(void* model,int pass,edf6vr::Matrix*& palette,std::size_
 // stick, never while turning the body or the hand. The drawn camera is already
 // matched back to its update (for the pose the frame is declared with,
 // render_pose.cpp); the weapon is turned onto that update's yaw offset here.
-// Without a turn the two are the same number and nothing moves.
+// Without a turn the two are the same number and nothing moves. A snap turn
+// (snap_turn.h) moves it a whole step in one update (MaxDrawYawTurn).
 void RetimeHoldYaw(WeaponHoldCommand& command) noexcept {
     g_yawRetimeDraws.fetch_add(1,std::memory_order_relaxed);
     float rendered=0;
     if(!edf6vr::NativeRenderYaw(rendered)) { g_yawRetimeUnknown.fetch_add(1,std::memory_order_relaxed); return; }
     const float delta=std::remainder(rendered-command.yawOffset,6.28318530718f);
-    if(!std::isfinite(delta) || std::fabs(delta)>0.8f) { g_yawRetimeRefused.fetch_add(1,std::memory_order_relaxed); return; }
+    if(!std::isfinite(delta) || std::fabs(delta)>MaxDrawYawTurn()) { g_yawRetimeRefused.fetch_add(1,std::memory_order_relaxed); return; }
     if(delta==0) return;
     edf6vr::TurnAboutVertical(command.hand.axes,command.hand.palm,command.eyeWorld,delta);
     edf6vr::TurnAboutVertical(command.handAxes,command.handPos,command.eyeWorld,delta);
@@ -7667,7 +7692,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.14 cockpit loading, with EDF6MultiSlot 1.6.12. A Fencer's two shields each guard on their own hand and only the one that catches a hit pays for it (FencerGuardTest), shield bashes leave from their own hand (HookShieldEventFire), a drawn shield rides its guard's aim (FencerShieldPlace).");
+    Log("EDF6VR 3.2.15 cockpit loading, with EDF6MultiSlot 1.6.12. Snap turn ([VR] SnapTurn, snap_turn.h), a Nix / Eiren arm's per-shot guns sent along the arm's turn (hand_aim_sync.h 7).");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');

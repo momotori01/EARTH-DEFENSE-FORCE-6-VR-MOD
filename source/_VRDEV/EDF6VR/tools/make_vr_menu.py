@@ -46,6 +46,7 @@ ROWS = [
     ('Air-strike camera', '空爆カメラ'),
     ('Faster visibility checks (trial)', '描画判定の高速化（試験）'),
     ('Stick up / down buttons', '右スティック上下をYとL3に置き換え'),
+    ('Snap turn', 'スナップターン（右スティック左右）'),
     ('Recoil', '射撃の反動（見た目のみ影響）'),
     ('Shot vibration', '射撃時の振動'),
     ('Aim mark size', '照準マークの大きさ'),
@@ -65,7 +66,8 @@ ROWS = [
 ]
 
 # The window, in the game's 1920 x 1080 menu space. A row is its height and the gap above it.
-ROW_HEIGHT, ROW_GAP = 36.0, 6.0
+# The gap was 6 for 20 rows (window 40..1048); 5 keeps 21 inside the screen (40..1067; 6 ran to 1090).
+ROW_HEIGHT, ROW_GAP = 36.0, 5.0
 LEFT, TOP = 170.0, 120.0
 # The buttons are as wide as the line under the rows needs (the Japanese one is 670 wide at this size and
 # starts 65 in from the bar's edge). All the same width: the column scrolls, so one wider child put a

@@ -68,6 +68,15 @@
 //     send is dropped with it, or the others would see a shot this player never
 //     fired, from the gun hanging on the back (an animation-fired weapon there:
 //     the planet sniper cannons, the Prominence missiles).
+//  6. A Fencer shoulder weapon that fires straight ahead (below).
+//  7. A gun of the boarded Nix or Eiren (below).
+// Every other weapon this player fires leaves along the game's own muzzle, the
+// one 694910 sends: nothing here turns it, and only its start is moved onto the
+// drawn muzzle (shot_origin.h; 0.3 to 0.4 m on hardware). A recoil animation
+// (6956C0, called after 690CC0 by Weapon_BasicShoot 69AA10 and
+// Weapon_ChargeShoot 69C260) moves that muzzle on both ends alike (the user,
+// 2026-11-03, after a Wing Diver's Plasma Great Cannon killed them: "他の兵科の
+// 反動モーションも全てチェックして").
 #pragma once
 
 bool g_handAimSync=true;   // [VR] HandAimSync
@@ -258,6 +267,17 @@ bool HandAimShoulderDirection(void* weapon,float dir[3]) noexcept {
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     return soldier && FencerHandAimForward(hand,soldier,dir);
 }
+// 7. A gun of the boarded Nix or Eiren (nix_arm_aim.h): its arm leads the body
+// onto the hand's pointing by up to NixArmAimDegrees, and NixArmFire turns the
+// shot by the arm's turn at 696FD0, after this send. Every one of their
+// Weapon_VehicleShoot fires through 690CC0 (6B3640 jumps there), so a shot
+// synced shot by shot (the cannons, grenades, rockets, missiles, the Eiren's
+// laser cannons: mode 0 or 1 in their data) went to the others along the
+// game's barrel, as much as 20 degrees off. The send now takes the same turn
+// about the same pivot. The machine guns, gatlings and flamers send only a
+// count: the others fire those along their copy of the vehicle's own aim,
+// which this end cannot change.
+std::atomic<unsigned long long> g_handAimNixSends{0};
 
 // 2. From the two-hand weapon ticks (HookDualWeaponTick for the Ranger's pair,
 // FencerWeaponTick), once g_dualTick is this weapon's: which way its shots go
@@ -310,6 +330,22 @@ void __fastcall HookShotSend(void* weapon,int index,unsigned a,unsigned b) {
     if(g_handAimSync && !inTick && g_dualActive.load() && weapon && weapon==ReadRangerDual().weapons[0]) {
         g_handAimHeldSends.fetch_add(1,std::memory_order_relaxed);
         return;
+    }
+    // 7: a Nix's or Eiren's gun goes out turned as NixArmFire will fire it.
+    if(g_handAimSync) {
+        unsigned char* nixEntry=nullptr;
+        float turn[3][3]{},pivot[3]{};
+        if(NixArmShotTurn(weapon,static_cast<unsigned>(index),nixEntry,turn,pivot)) {
+            unsigned char held[0xF0];
+            std::memcpy(held,nixEntry,sizeof(held));
+            bool turned=false;
+            __try {
+                turned=NixArmTurnEntry(nixEntry,turn,pivot);
+                g_shotSendOriginal(weapon,index,a,b);
+            } __finally { std::memcpy(nixEntry,held,sizeof(held)); }
+            if(turned) g_handAimNixSends.fetch_add(1,std::memory_order_relaxed);
+            return;
+        }
     }
     // 6: a straight shoulder weapon's muzzle goes out on the aim its shell is
     // turned onto here, in the tick or out of it; its point stays.
@@ -391,11 +427,11 @@ void HandAimReport() noexcept {
     const unsigned long long notes=g_handAimNotes.load(),sends=g_handAimSendTurns.load();
     static unsigned long long last=~0ull;
     const unsigned long long sum=notes+sends+g_handAimFailures.load()+g_handAimHeldSends.load()+g_handAimSwingTicks.load()
-        +g_handAimShoulderSends.load();
+        +g_handAimShoulderSends.load()+g_handAimNixSends.load();
     if(sum==last) return;
     last=sum;
-    Log("HANDAIM sync=%d multislot=%d (api %d) directions given=%llu shot sends on the hand=%llu (away from the tick %llu; count only %llu, per shot mode0 %llu mode1 %llu other %llu; last flags %02X mode %u) left-gun sends held back=%llu swing ticks without a direction=%llu shoulder sends onto the aim=%llu failures=%llu (others' shots: EDF6MultiSlot turns them)",
+    Log("HANDAIM sync=%d multislot=%d (api %d) directions given=%llu shot sends on the hand=%llu (away from the tick %llu; count only %llu, per shot mode0 %llu mode1 %llu other %llu; last flags %02X mode %u) left-gun sends held back=%llu swing ticks without a direction=%llu shoulder sends onto the aim=%llu Nix arm sends turned=%llu failures=%llu (others' shots: EDF6MultiSlot turns them)",
         g_handAimSync?1:0,g_handAimSet.load()?1:0,g_handAimApi.load(),notes,sends,g_handAimAwayTurns.load(),g_handAimCountOnly.load(),g_handAimMode0.load(),
         g_handAimMode1.load(),g_handAimModeOther.load(),g_handAimLastFlags.load(),g_handAimLastMode.load(),g_handAimHeldSends.load(),
-        g_handAimSwingTicks.load(),g_handAimShoulderSends.load(),g_handAimFailures.load());
+        g_handAimSwingTicks.load(),g_handAimShoulderSends.load(),g_handAimNixSends.load(),g_handAimFailures.load());
 }

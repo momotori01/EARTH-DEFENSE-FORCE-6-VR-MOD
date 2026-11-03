@@ -56,6 +56,7 @@ enum : int {
     ID_LIGHT_ON, ID_LIGHT_APPLY,
     ID_SIGHT_APPLY,
     ID_HD_USE,
+    ID_SNAP_SLIDER, ID_SNAP_APPLY,
 };
 // The hand aim's switches, one a kind of seat, as the mod reads them ([VR]),
 // with their defaults (on in the Nix only).
@@ -298,12 +299,13 @@ std::vector<std::pair<HWND,COLORREF>> g_colours;
 std::vector<HWND> g_actions;               // disabled while the game runs or a task works
 int g_y=0,g_tab=0,g_shownTab=0;
 constexpr int kLeft=24,kRight=332,kApplyX=656,kRowHeight=78,kTop=46,kWidth=760;
-constexpr int kRows=11;  // the longer tab's rows: Extra VR settings
+constexpr int kRows=11;  // the longer tab's rows: both tabs have 11 (Snap turn made Main as long)
 
 HWND g_stUpdate,g_btUpdate,g_stMode,g_rbVr,g_rbFlat,g_stSize,g_rbLow,g_rbNormal,g_rbHigh,g_rbCustom,g_edSize,
      g_stHd,g_pbHd,g_btHdMake,g_btHdDelete,g_cbHdUse,g_stCrew,g_pbCrew,g_btCrewMake,g_btCrewDelete,g_stHand,g_cbRight,g_cbLeft,g_stStick,g_cbStick,g_stStrike,g_rbStrike2D,g_rbStrikeVr,g_stLogs,g_btLogs,
      g_stCockpit,g_cbCockpit,g_stHandAim,g_cbHandAim[8],g_stHud,g_cbHud,g_rbCorner,g_rbRWrist,g_rbLWrist,g_stReticle,g_edReticle,g_stScope,g_rbScopeView,g_rbScopeDigital,g_rbScopeOff,
-     g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stLight,g_cbLight,g_btLight,g_stSight,g_edSight[3],g_stReset,g_stFast,g_cbFast;
+     g_stRecoil,g_cbRecoil,g_stBuzz,g_edBuzz,g_stMirror,g_cbMirror,g_stLight,g_cbLight,g_btLight,g_stSight,g_edSight[3],g_stReset,g_stFast,g_cbFast,
+     g_stSnap,g_tbSnap,g_lbSnap;
 
 int g_strikeMode=0;   // [VR] AirStrikeCamera as last read
 void Colour(HWND h,COLORREF c) {
@@ -571,6 +573,13 @@ void SyncLight() {
     if(command.empty()) { ShowLight(); return; }
     std::thread([command]() { RunLight(command); }).detach();
 }
+// The snap turn slider: 0 off, then 45 degrees a stop up to 180.
+constexpr int kSnapStep=45,kSnapStops=4;
+int SnapChoice() { return static_cast<int>(SendMessageW(g_tbSnap,TBM_GETPOS,0,0))*kSnapStep; }
+void ShowSnapChoice() {
+    const int degrees=SnapChoice();
+    SetWindowTextW(g_lbSnap,degrees?(std::to_wstring(degrees)+L"°").c_str():L"Off");
+}
 void LoadAll() {
     const auto ini=LoadIni();
     g_installed=InstalledVersion();
@@ -595,6 +604,16 @@ void LoadAll() {
     Say(g_stHand,left?L"Now: Left hand":L"Now: Right hand");
     const bool stick=IniOn(ini,"VR","RightStickButtons",true);
     Say(g_stStick,stick?L"Now: On":L"Now: Off"); SetCheck(g_cbStick,stick);
+    {
+        // [VR] SnapTurn, degrees a step (0 off): the slider stops every 45 degrees; a
+        // number typed into the INI by hand is shown as it is and the slider sits nearest it.
+        double degrees=0;
+        if(!ParseNumber(IniValue(ini,"VR","SnapTurn","0"),degrees) || degrees<0) degrees=0;
+        if(degrees>180) degrees=180;
+        Say(g_stSnap,degrees>0?L"Now: "+Wide(Number(degrees))+L"° a step":std::wstring(L"Now: Off (smooth turning)"));
+        SendMessageW(g_tbSnap,TBM_SETPOS,TRUE,static_cast<LPARAM>(degrees/kSnapStep+0.5));
+        ShowSnapChoice();
+    }
     Pick({g_cbRight,g_cbLeft},left?g_cbLeft:g_cbRight);
 
     const bool cockpit=IniOn(ini,"VR","VehicleCockpit",true);
@@ -934,6 +953,13 @@ void Build() {
     g_stStick=BeginRow(L"Stick up / down buttons",L"On foot, the turning stick pushed up is Y" L"\nand pushed down is L3 (the stick click)." L"\n旋回スティックの上=Y、下=L3（徒歩時）");
     g_cbStick=Check(L"On",ID_STICK_ON,kRight,60,true); Button(L"Apply",ID_STICK_APPLY); EndRow();
 
+    g_stSnap=BeginRow(L"Snap turn",L"Turns you in steps when you push the turning\nstick sideways, instead of smoothly. On foot.\nスナップターン（右スティック左右・徒歩時）");
+    g_tbSnap=Part(TRACKBAR_CLASSW,L"",TBS_HORZ|TBS_AUTOTICKS|TBS_BOTTOM|WS_TABSTOP,kRight-4,g_y+22,236,30,ID_SNAP_SLIDER);
+    SendMessageW(g_tbSnap,TBM_SETRANGE,FALSE,MAKELPARAM(0,kSnapStops));
+    SendMessageW(g_tbSnap,TBM_SETLINESIZE,0,1); SendMessageW(g_tbSnap,TBM_SETPAGESIZE,0,1);
+    g_lbSnap=Part(L"STATIC",L"Off",SS_LEFT,kRight+240,g_y+29,60,20);
+    Button(L"Apply",ID_SNAP_APPLY); EndRow();
+
     g_stLogs=BeginRow(L"Problem report",L"Puts the logs into one zip for a bug report.\nSaved in the game folder, next to this program.\n報告用zip。このexeと同じフォルダに出ます",2,300);
     g_btLogs=Button(L"Make zip",ID_LOGS); EndRow();
 
@@ -1003,6 +1029,7 @@ void OnCommand(int id) {
     case ID_HAND_RIGHT: case ID_HAND_LEFT: Pick({g_cbRight,g_cbLeft},GetDlgItem(g_window,id)); break;
     case ID_HAND_APPLY: Save(g_stHand,{{"LeftHanded","LeftHanded",Checked(g_cbLeft)?"1":"0"}}); break;
     case ID_STICK_APPLY: Save(g_stStick,{{"VR","RightStickButtons",Checked(g_cbStick)?"1":"0"}}); break;
+    case ID_SNAP_APPLY: Save(g_stSnap,{{"VR","SnapTurn",std::to_string(SnapChoice())}}); break;
     case ID_LOGS: StartZip(); break;
     case ID_COCKPIT_APPLY: Save(g_stCockpit,{{"VR","VehicleCockpit",Checked(g_cbCockpit)?"1":"0"}}); break;
     case ID_HANDAIM_APPLY: {
@@ -1080,6 +1107,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam) 
     case WM_COMMAND:
         if(HIWORD(wParam)==BN_CLICKED) OnCommand(LOWORD(wParam));
         else if(HIWORD(wParam)==EN_SETFOCUS && reinterpret_cast<HWND>(lParam)==g_edSize) Pick({g_rbLow,g_rbNormal,g_rbHigh,g_rbCustom},g_rbCustom);
+        return 0;
+    case WM_HSCROLL:
+        if(reinterpret_cast<HWND>(lParam)==g_tbSnap) ShowSnapChoice();
         return 0;
     case WM_CTLCOLORSTATIC: {
         HDC dc=reinterpret_cast<HDC>(wParam);
@@ -1222,7 +1252,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         SetInformationJobObject(g_job,JobObjectExtendedLimitInformation,&limits,sizeof(limits));
     }
-    INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_TAB_CLASSES|ICC_PROGRESS_CLASS|ICC_STANDARD_CLASSES};
+    INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_TAB_CLASSES|ICC_PROGRESS_CLASS|ICC_STANDARD_CLASSES|ICC_BAR_CLASSES};
     InitCommonControlsEx(&controls);
     HDC screen=GetDC(nullptr);
     g_dpi=GetDeviceCaps(screen,LOGPIXELSY);

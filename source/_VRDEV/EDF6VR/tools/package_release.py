@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.14'
+VERSION = '3.2.15'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.12.zip'
@@ -142,6 +142,10 @@ MULTISLOT_DLL_SHA = '7A68C8E13A3E16253DB6C84C56E13FE8004397C2400B87B0441A967EC7E
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.15 (the user: "v001上げてアップして"; +0.0.1): snap turn ([VR] SnapTurn, off by default; snap_turn.h, a row of the
+# Start menu's VR setting stepping 45 degrees, a slider in the settings exe), and a Nix / Eiren arm's per-shot guns
+# sent along the arm's turn (hand_aim_sync.h 7, nix_arm_aim.h NixArmShotTurn). Not run on hardware. The build scripts
+# take VS2019 + Windows SDK 10.0.19041.0 (tools/toolchain/msvc-x64-env.cmd). EDF6MultiSlot stays 1.6.12.
 # 3.2.14 (the user: "v001上げてアップして"; +0.0.1): the Fencer's two shields each guard on their own hand with their own
 # width, and only the shield that catches a hit cuts it and pays for it (fencer_dual.h FencerGuardTest, HookGuardDamage,
 # HookShieldDrain; vanilla made one cone of summed angles ahead and drained both shields by the full damage). Shield
@@ -202,10 +206,9 @@ MULTISLOT_DLL_SHA = '7A68C8E13A3E16253DB6C84C56E13FE8004397C2400B87B0441A967EC7E
 # its rows on a row's own background, and [VR] ShotBuzz 1 as the default ("射撃振動１を規定にして"); "修正したらこちらへの
 # 確認無しでアップして".
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
-# VERIFIED_* below: the 3.1.13 build (the hardware-tested 87E3179A code plus the 37-degree down cone and version
-# strings).
-VERIFIED_VR_SHA = '6BCC6271A709C270B36C62157664C08799E34B772C66A316058B3E6328436AA9'
-VERIFIED_SETTINGS_SHA = '5846F94E2B1ADB8C1AC45A094E3CC1052DAA7B8FD7E67D80660932957ACFF200'
+# VERIFIED_* below: the 3.2.15 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
+VERIFIED_VR_SHA = '7EE8524C9A9DD693F05880766631921B5853AA2C70AB0345CC935F872536504C'
+VERIFIED_SETTINGS_SHA = 'B1F62D34B380C222442502470AE1A40559E3B28543977FBB426548EB06D3AC9F'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

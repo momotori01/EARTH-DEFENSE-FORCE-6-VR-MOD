@@ -1,5 +1,18 @@
-﻿EDF6VR 3.2.14
+﻿EDF6VR 3.2.15
 =============================
+
+CHANGES IN 3.2.15
+New:
+- Snap turn (off unless you turn it on): on foot, pushing the right stick
+  sideways turns you 45, 90, 135 or 180 degrees at once instead of
+  smoothly. Choose it under "VR setting" in the Start menu, where it
+  applies at once, or with the slider in EDF6 VR setting.exe.
+Online:
+- Nix and Eiren with vehicle hand aim: other players now see your cannon,
+  grenade, rocket, missile and laser cannon shots leave the way your arm
+  points. Before, they left along the machine's own aim, up to 20 degrees
+  off. Machine guns, gatlings and flame throwers are not changed yet.
+- Still bundles EDF6MultiSlot 1.6.12.
 
 CHANGES IN 3.2.14
 Fencer, two shields:
@@ -788,6 +801,10 @@ Main tab:
   Stick up / down buttons
                   On or Off. On foot, the turning stick pushed up is the Y
                   button and pushed down is L3. Off: up and down do nothing.
+  Snap turn       Off (smooth turning), or 45 to 180 degrees in steps of 45.
+                  On foot, pushing the turning stick sideways turns you that
+                  far at once; push again for the next step. Also in VR
+                  setting in the game, where it applies at once.
   Problem report  Puts the logs and settings into one zip, saved in the game
                   folder next to EDF6 VR setting.exe as
                   EDF6VR-logs-<date>-<time>.zip. Send it with a bug report.
@@ -805,9 +822,9 @@ Extra VR settings tab:
 In the game:
   The Start (pause) menu has "VR setting". It changes, without leaving the
   game, the settings that can change while you play: scope zoom, air-strike
-  camera, faster visibility checks, stick up / down buttons, recoil, shot
-  vibration, aim mark size, compact HUD, desktop mirror, sight line thickness
-  and vehicle hand aim.
+  camera, faster visibility checks, stick up / down buttons, snap turn,
+  recoil, shot vibration, aim mark size, compact HUD, desktop mirror, sight
+  line thickness and vehicle hand aim.
   Press a row to step to its next value; it applies at once and is saved.
   The menu is in Japanese when the game is in Japanese, and in English
   otherwise. Everything else stays in EDF6 VR setting.exe.
@@ -891,7 +908,7 @@ its own button assignments; the table below describes the emitted buttons.
 
 Physical control                         Gamepad input / special action
 Left stick                               Move (HMD horizontal heading basis)
-Right stick left/right                   Turn
+Right stick left/right                   Turn (smoothly, or in steps: Snap turn)
 Right stick UP, on foot                  Y button
 Right stick DOWN, on foot                L3 / left-stick click
                                          (both can be switched off: "Stick up /

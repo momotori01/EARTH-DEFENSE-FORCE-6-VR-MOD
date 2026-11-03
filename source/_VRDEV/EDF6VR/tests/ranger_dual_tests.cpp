@@ -639,6 +639,84 @@ static void CheckShoulderAndShieldSends() {
     g_fencerShoulder[0]=shoulder0;g_fencerShoulder[1]=shoulder1;g_fencerActive=active;g_fencerWeapons[0].store(was0);g_fencerWeapons[1].store(was1);
     AcquireSRWLockExclusive(&g_fencerShadowLock);g_fencerShadow=savedShadow;ReleaseSRWLockExclusive(&g_fencerShadowLock);
 }
+// hand_aim_sync.h 7 (2026-11-03): a gun of the boarded Nix goes out to the
+// others turned by its arm's turn about the shoulder, exactly as NixArmFire
+// then fires it here; the muzzle is the game's again after. A stale turn,
+// another weapon, HandAimSync=0 or NixArmAim=0 send the game's own muzzle.
+static float g_nixFiredDir[3]{},g_nixFiredAt[3]{};
+static int g_nixFires=0;
+static void __fastcall FakeNixFire(void* weapon,unsigned index,void*,void*,bool) {
+    ++g_nixFires;
+    unsigned char* entry=DualAt<unsigned char*>(weapon,0x1D0)+index*0xF0;
+    for(int j=0;j<3;++j) { g_nixFiredDir[j]=reinterpret_cast<const float*>(entry+0x70)[j]; g_nixFiredAt[j]=reinterpret_cast<const float*>(entry+0x80)[j]; }
+}
+static void CheckNixArmSend() {
+    alignas(16) static unsigned char gun[0x1000]{},entries[2*0xF0]{},other[0x1000]{},otherEntries[0xF0]{},nodes[4*0x110]{};
+    const bool armOn=g_nixArmAimOn,sync=g_handAimSync;
+    const auto sendWas=g_shotSendOriginal;const auto fireWas=g_dualFire;const auto tickWas=g_dualTick;
+    NixArmShared savedShared{};AcquireSRWLockShared(&g_nixArmLock);savedShared=g_nixArmShared;ReleaseSRWLockShared(&g_nixArmLock);
+    NixArmMemo savedMemo[kVehicleRecoilWeapons]{};
+    AcquireSRWLockExclusive(&g_nixArmMemoLock);
+    for(unsigned i=0;i<kVehicleRecoilWeapons;++i) { savedMemo[i]=g_nixArmMemo[i];g_nixArmMemo[i]={}; }
+    ReleaseSRWLockExclusive(&g_nixArmMemoLock);
+    // A two-barrel gun firing its second barrel: the barrel straight ahead (+Z), its muzzle at (2,1,5).
+    const float ahead[4]={0,0,1,0},identity[3][4]={{1,0,0,0},{0,1,0,0},{0,0,1,0}},at[4]={2,1,5,1};
+    for(auto* w:{gun,other}) std::memcpy(w+0x350,ahead,16);
+    DualAt<unsigned char*>(gun,0x1D0)=entries;DualAt<std::uint64_t>(gun,0x1E0)=2;
+    DualAt<unsigned char*>(other,0x1D0)=otherEntries;DualAt<std::uint64_t>(other,0x1E0)=1;
+    for(unsigned char* e:{entries,entries+0xF0,otherEntries}) for(int m=0;m<2;++m) {
+        std::memcpy(e+0x50+m*0x40,identity,sizeof identity);std::memcpy(e+0x80+m*0x40,at,16);
+    }
+    // The shoulder (node 2) at (1,1,0); the arm turned 15 degrees to the right (row vectors, v M).
+    const float pivotAt[4]={1,1,0,1};std::memcpy(nodes+2*0x110+0xB0+48,pivotAt,16);
+    const float t=15*0.01745329f,c=std::cos(t),s=std::sin(t);
+    const float M[3][3]={{c,0,-s},{0,1,0},{s,0,c}};
+    NixArmShared shared{};shared.nodes=nodes;shared.nodeCount=4;shared.weapons[0]=gun;shared.part[0]=0;shared.weaponCount=1;
+    shared.pivot[0]=2;shared.at=GetTickCount64();
+    AcquireSRWLockExclusive(&g_nixArmLock);g_nixArmShared=shared;ReleaseSRWLockExclusive(&g_nixArmLock);
+    auto memo=[&](ULONGLONG when){
+        AcquireSRWLockExclusive(&g_nixArmMemoLock);
+        g_nixArmMemo[0]={};g_nixArmMemo[0].weapon=gun;std::memcpy(g_nixArmMemo[0].turn,M,sizeof M);
+        g_nixArmMemo[0].turnAt=when;g_nixArmMemo[0].turnValid=true;
+        ReleaseSRWLockExclusive(&g_nixArmMemoLock);
+    };
+    memo(GetTickCount64());
+    g_nixArmAimOn=true;g_handAimSync=true;g_dualTick={};
+    g_shotSendOriginal=FakeShotSend;g_dualFire=FakeNixFire;
+    unsigned char before[2*0xF0];std::memcpy(before,entries,sizeof before);
+    const float wantDir[3]={s,0,c};
+    const float wantAt[3]={1+(1*c+5*s),1,0+(-1*s+5*c)};
+    auto near3=[](const float* a,const float* b){return std::fabs(a[0]-b[0])<1e-4f && std::fabs(a[1]-b[1])<1e-4f && std::fabs(a[2]-b[2])<1e-4f;};
+    const auto sendsBefore=g_handAimNixSends.load();
+    g_sends=0;HookShotSend(gun,1,0,0);
+    CHECK(g_sends==1 && near3(g_sentDir,wantDir) && near3(g_sentAt,wantAt));     // turned about the shoulder
+    CHECK(!std::memcmp(before,entries,sizeof before));                           // the game's muzzle again after
+    CHECK(g_handAimNixSends.load()==sendsBefore+1);
+    // The shot fired here takes the very same turn.
+    g_nixFires=0;
+    CHECK(NixArmFire(gun,1,nullptr,nullptr,true));
+    CHECK(g_nixFires==1 && near3(g_nixFiredDir,g_sentDir) && near3(g_nixFiredAt,g_sentAt));
+    CHECK(!std::memcmp(before,entries,sizeof before));
+    // Sent as the game has it: a stale turn, a weapon of no machine, HandAimSync=0, NixArmAim=0.
+    const float plainDir[3]={0,0,1};
+    memo(GetTickCount64()-1000);
+    g_sends=0;HookShotSend(gun,1,0,0);
+    CHECK(g_sends==1 && near3(g_sentDir,plainDir) && near3(g_sentAt,at));
+    memo(GetTickCount64());
+    g_sends=0;HookShotSend(other,0,0,0);
+    CHECK(g_sends==1 && near3(g_sentDir,plainDir));
+    g_handAimSync=false;g_sends=0;HookShotSend(gun,1,0,0);
+    CHECK(g_sends==1 && near3(g_sentDir,plainDir));
+    g_handAimSync=true;g_nixArmAimOn=false;g_sends=0;HookShotSend(gun,1,0,0);
+    CHECK(g_sends==1 && near3(g_sentDir,plainDir) && !NixArmFire(gun,1,nullptr,nullptr,true));
+    CHECK(g_handAimNixSends.load()==sendsBefore+1 && !std::memcmp(before,entries,sizeof before));
+    // Put back.
+    g_nixArmAimOn=armOn;g_handAimSync=sync;g_shotSendOriginal=sendWas;g_dualFire=fireWas;g_dualTick=tickWas;
+    AcquireSRWLockExclusive(&g_nixArmLock);g_nixArmShared=savedShared;ReleaseSRWLockExclusive(&g_nixArmLock);
+    AcquireSRWLockExclusive(&g_nixArmMemoLock);
+    for(unsigned i=0;i<kVehicleRecoilWeapons;++i) g_nixArmMemo[i]=savedMemo[i];
+    ReleaseSRWLockExclusive(&g_nixArmMemoLock);
+}
 // fencer_dual.h HookFencerSecondary (2026-10-27): a left weapon's dash or jump
 // runs with the soldier's own aims, then the shadow goes back; other
 // secondaries and the right hand keep what the tick gave them.
@@ -1467,6 +1545,7 @@ int wmain(int argc,wchar_t** argv) {
     CheckVehicleRecoilStaleState();
     CheckShoulderStraight();
     CheckShoulderAndShieldSends();
+    CheckNixArmSend();
     CheckFencerSecondary();
     CheckShieldEventFire(state);
     CheckFencerGuardFans();

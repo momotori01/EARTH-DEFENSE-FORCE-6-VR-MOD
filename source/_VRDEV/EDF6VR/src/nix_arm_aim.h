@@ -524,8 +524,15 @@ bool InstallNixArmAimLine() noexcept {
 // way), and a weapon has a muzzle entry per barrel (weapon+0x1D0, 0xF0 apart,
 // count +0x1E0; the shot uses index % count). So the tick's last turn is put on
 // the firing entry right there, and the entry put back after the shot.
+// The game told the others about the shot just before (690CC0: the send at
+// 690D3B, from the same rebuilt entry), so the send gets the same turn
+// (hand_aim_sync.h 7, NixArmShotTurn / NixArmTurnEntry).
 std::atomic<unsigned long long> g_nixArmShotTurns{0};
-bool NixArmFire(void* weapon,unsigned index,void* alternate,void* counter,bool consume) noexcept {
+// The firing entry of one of the boarded machine's guns and the arm's last turn
+// for it (the tick's, under 250 ms old) with its part's pivot. False when the
+// arm aim is off, the weapon is not one of the machine's, or no turn is fresh.
+bool NixArmShotTurn(void* weapon,unsigned index,unsigned char*& entry,float M[3][3],float pivot[3]) noexcept {
+    entry=nullptr;
     if(!g_nixArmAimOn || !weapon) return false;
     NixArmShared s{};
     AcquireSRWLockShared(&g_nixArmLock); s=g_nixArmShared; ReleaseSRWLockShared(&g_nixArmLock);
@@ -534,33 +541,44 @@ bool NixArmFire(void* weapon,unsigned index,void* alternate,void* counter,bool c
     for(unsigned i=0;i<s.weaponCount;++i) if(s.weapons[i]==weapon) at=static_cast<int>(i);
     if(at<0 || now-s.at>250) return false;
     const unsigned part=s.part[at];
-    float pivot[3]{};
     if(part>=kVehicleRecoilParts || !s.nodes || s.pivot[part]>=s.nodeCount || !VehicleRecoilNodeAt(s.nodes,s.pivot[part],pivot)) return false;
     auto* w=static_cast<unsigned char*>(weapon);
-    unsigned char* entry=nullptr;
+    unsigned char* found=nullptr;
     __try {
         if(!edf6vr::Readable(w,0x1E8)) return false;
         auto* entries=*reinterpret_cast<unsigned char**>(w+0x1D0);
         const auto count=*reinterpret_cast<const std::uint64_t*>(w+0x1E0);
         if(!entries || !count || count>64 || !edf6vr::Readable(entries,static_cast<std::size_t>(count)*0xF0,true)) return false;
-        entry=entries+(index%count)*0xF0;
+        found=entries+(index%count)*0xF0;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-    float M[3][3]{};
     AcquireSRWLockExclusive(&g_nixArmMemoLock);
     bool fresh=false;
     for(const auto& m:g_nixArmMemo)
-        if(m.weapon==weapon && m.turnValid && now-m.turnAt<250) { std::memcpy(M,m.turn,sizeof(M)); fresh=true; break; }
+        if(m.weapon==weapon && m.turnValid && now-m.turnAt<250) { std::memcpy(M,m.turn,sizeof(m.turn)); fresh=true; break; }
     ReleaseSRWLockExclusive(&g_nixArmMemoLock);
-    if(!fresh) return false;
+    if(fresh) entry=found;
+    return fresh;
+}
+// The entry's two matrices turned by M about the pivot (points included).
+bool NixArmTurnEntry(unsigned char* entry,const float M[3][3],const float pivot[3]) noexcept {
+    __try {
+        edf6vr::Matrix out[2]{*reinterpret_cast<const edf6vr::Matrix*>(entry+0x50),*reinterpret_cast<const edf6vr::Matrix*>(entry+0x90)};
+        for(auto& m:out) NixArmTurnMatrix(m,M,pivot);
+        std::memcpy(entry+0x50,&out[0],sizeof(out[0]));
+        std::memcpy(entry+0x90,&out[1],sizeof(out[1]));
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool NixArmFire(void* weapon,unsigned index,void* alternate,void* counter,bool consume) noexcept {
+    unsigned char* entry=nullptr;
+    float M[3][3]{},pivot[3]{};
+    if(!NixArmShotTurn(weapon,index,entry,M,pivot)) return false;
     edf6vr::Matrix kept[2]{};
     __try {
         kept[0]=*reinterpret_cast<const edf6vr::Matrix*>(entry+0x50);
         kept[1]=*reinterpret_cast<const edf6vr::Matrix*>(entry+0x90);
-        edf6vr::Matrix out[2]{kept[0],kept[1]};
-        for(auto& m:out) NixArmTurnMatrix(m,M,pivot);
-        std::memcpy(entry+0x50,&out[0],sizeof(out[0]));
-        std::memcpy(entry+0x90,&out[1],sizeof(out[1]));
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    if(!NixArmTurnEntry(entry,M,pivot)) return false;
     g_nixArmShotTurns.fetch_add(1,std::memory_order_relaxed);
     __try { g_dualFire(weapon,index,alternate,counter,consume); }
     __finally {

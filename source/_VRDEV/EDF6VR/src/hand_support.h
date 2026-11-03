@@ -272,7 +272,7 @@ bool HandControllerFrame(int hand,float axes[3][3],float palm[3]) noexcept {
     float rendered=0;
     if(edf6vr::NativeRenderYaw(rendered)) {
         const float delta=std::remainder(rendered-yaw,6.28318530718f);
-        if(std::isfinite(delta) && std::fabs(delta)<=0.8f) yaw=rendered;
+        if(std::isfinite(delta) && std::fabs(delta)<=MaxDrawYawTurn()) yaw=rendered;
     }
     const edf6vr::Quat q{rot[0],rot[1],rot[2],rot[3]};
     if(!edf6vr::NormalizedQuat(q)) return false;
