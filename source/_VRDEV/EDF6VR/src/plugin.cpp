@@ -652,8 +652,6 @@ float g_gestureRadius=0.15f, g_gestureRadiusLeave=0.19f;
 float g_gestureFront=0.05f, g_gestureFrontLeave=0.09f;
 bool g_gestureOn=false;
 edf6vr::GestureHold g_heightHold{};
-// Left temple, stick DOWN: where the compact HUD hangs.
-edf6vr::GestureHold g_clusterHold{};
 // The compact HUD (ui_cluster.h): radar, armour and weapons cut out of the
 // panel and drawn smaller, together, at the panel's corner or on a wrist.
 bool g_uiCluster=true; int g_uiClusterPlace=0; int g_uiClusterClass=-1; unsigned g_uiClusterTick=0;
@@ -1254,7 +1252,7 @@ void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
     if(g_vrEnabled && VehiclePadActive()) edf6vr::RebaseVehicleStick(g_vehicleHeadYaw.load(),moveX,moveY);
     pad.leftX=ToAxis(moveX);pad.leftY=ToAxis(moveY);
     // Locomotion passes through temple entry/holds/editing. A holster grip
-    // cancels pending UP/DOWN holds and takes priority over their use of the stick.
+    // cancels a pending UP hold and takes priority over its use of the stick.
     const bool heightHeld=!holsterGrip && g_vrEnabled && g_fpsEnabled && leftTracked && g_adjust!=Adjusting::Active
         && controls.stick[0][1]>.6f && std::fabs(controls.stick[0][0])<.6f
         && edf6vr::NearTemple(headXr,leftHandXr,headYaw,g_gestureRight,g_gestureUp,
@@ -1267,21 +1265,9 @@ void BuildPad(const edf6vr::ControllerState& controlsIn,bool handTracked,
         edf6vr::g_openxr.Buzz(0,.2f,.9f);
         Log("HEIGHT left-temple up held 3 seconds; vertical recenter requested");
     }
-    // Stick DOWN in the same place: move the compact HUD on to the next place.
-    const bool clusterHeld=!holsterGrip && g_vrEnabled && g_fpsEnabled && leftTracked && g_adjust!=Adjusting::Active
-        && controls.stick[0][1]<-.6f && std::fabs(controls.stick[0][0])<.6f
-        && edf6vr::NearTemple(headXr,leftHandXr,headYaw,g_gestureRight,g_gestureUp,
-            g_gestureAhead,g_gestureRadiusLeave,g_gestureFrontLeave);
-    if(!clusterHeld && g_clusterHold.active && !g_clusterHold.fired)edf6vr::g_openxr.StopBuzz(0);
-    if(g_clusterHold.Step(clusterHeld,holdTime)) {
-        g_uiClusterPlace=(g_uiClusterPlace+1)%3;
-        RememberIn(L"Render",L"UiClusterPlace",static_cast<float>(g_uiClusterPlace));
-        PublishUiClusterPlace();
-        edf6vr::g_openxr.Buzz(0,.2f,.9f);
-        Log("UICLUSTER left-temple down held 3 seconds; place=%d (%s)",g_uiClusterPlace,
-            g_uiClusterPlace==0?"panel corner":g_uiClusterPlace==1?"right wrist":"left wrist");
-    }
-    if(g_clusterHold.Pulse(holdTime))edf6vr::g_openxr.Buzz(0,.24f,.65f);
+    // The compact HUD's place has no gesture any more (the user, 2026-11-07: "UIの位置変更、側頭部で
+    // スティック下を３秒入力を廃止。代わりにVR設定で切り替えられるようにして"): the Start menu's VR setting
+    // (its Compact HUD row) and EDF6 VR setting.exe choose it.
     if(Adjusting(controls,leftTracked && !holsterGrip,headXr,leftHandXr,headYaw)) {
         PublishControllerPad(pad,true);
         g_gestureOn=false;
@@ -2073,6 +2059,7 @@ void GamepadWatch() noexcept {
 }
 
 #include "native_cpu_sample.h"
+#include "vram_report.h"
 void ReportPerf(ULONGLONG now) noexcept {
     edf6vr::FlushResourcePathLog();
     if(g_dashStarts) Log("RANGERDASH starts=%llu frames=%llu followHead=%d "
@@ -2106,6 +2093,7 @@ void ReportPerf(ULONGLONG now) noexcept {
                 ms[2][0]+ms[2][1]+ms[2][2]+ms[2][3],n[2][0]+n[2][1]+n[2][2]+n[2][3]);
     }
     if(viewport_gpu::enabled) viewport_gpu::Report();
+    vram_report::Report(Log);
     if(g_shareShadows) Log("SHADOWSHARE skipped batches=%llu clears=%llu (totals)",g_shadowSkippedBatches.load(),g_shadowSkippedClears.load());
     const auto gpu=edf6vr::DrainGpuProfile();
     Log("GPU trialPhase=%d skipped=%llu invalid=%llu scope=VR-only sampleEvery=4 (0 warmup/normal,1 A64,2 B32,3 done,4 abort)",
@@ -6123,6 +6111,10 @@ void AfterUpdate(void* camera) noexcept {
         UpdateMissionFpsLimit((supportedSoldier && valid) || vehicleApplied,GetTickCount64());
         if(!supportedSoldier || !valid) ++g_rejected;
         const auto now=GetTickCount64();
+        if(now-vram_report::g_lastSample>=500) {
+            edf6vr::FrameCapture vramFrame{};
+            if(edf6vr::ReadFrameCapture(vramFrame)) vram_report::Poll(vramFrame.device,now);
+        }
         TraceFiringPresentation(camera,g_vrSoldier,fpsApplied,nativeLive,before,after);
         // The player's own look and colours, 10 s into a mission (the crew
         // figure reads other riders' the same way): the log says what it read.
@@ -7692,7 +7684,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.15 cockpit loading, with EDF6MultiSlot 1.6.12. Snap turn ([VR] SnapTurn, snap_turn.h), a Nix / Eiren arm's per-shot guns sent along the arm's turn (hand_aim_sync.h 7).");
+    Log("EDF6VR 3.2.16 cockpit loading, with EDF6MultiSlot 1.6.12. Reload ends Ranger dual wield (ranger_dual.h), the compact HUD's temple gesture gone, the game's screen MSAA 8 -> 4 ([Render] GameMsaa, resolution_lock.h), VRAM in the 5 s report (vram_report.h).");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -7878,6 +7870,14 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         char chatReason[128]{};
         const bool chatFixed=edf6vr::InstallChatTextScaleFix(g_image,chatReason,sizeof(chatReason));
         Log("RESOLUTION chat text: installed=%d site=EDF.dll+%X (%s)",chatFixed?1:0,edf6vr::kChatTextScaleRva,chatReason);
+    }
+    {
+        // [Render] GameMsaa: the game's screen samples (resolution_lock.h). The RENDER
+        // line's samples= says what the game then made.
+        const unsigned samples=GetPrivateProfileIntW(L"Render",L"GameMsaa",4,g_iniPath);
+        char msaaReason[96]{};
+        const bool msaa=edf6vr::InstallGameMsaa(g_image,samples,msaaReason,sizeof(msaaReason));
+        Log("MSAA [Render] GameMsaa=%u installed=%d site=EDF.dll+%X (%s)",samples,msaa?1:0,edf6vr::kGameMsaaCountRva,msaaReason);
     }
     // From here, not from the in-game report: the menus are drawn long before
     // that report first runs, and they were left square until a mission had been

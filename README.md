@@ -125,8 +125,7 @@ The trigger, grip, buttons and sticks all change sides: you fire with the left t
 | **Recenter view (height)** | Left controller beside the left side of your head, stick **UP** for 3 s |
 | **Adjust weapon position** | Left controller beside your head, stick **RIGHT** for 3 s |
 | **Adjust hand position** | Left controller beside your head, stick **LEFT** for 3 s |
-| **Move the compact HUD** | Left controller beside your head, stick **DOWN** for 3 s: view corner → right wrist → left wrist |
-| **Ranger dual wield** | Left hand behind your left shoulder / back, press grip |
+| **Ranger dual wield** | Left hand behind your left shoulder / back, press grip. The reload button leaves dual wield and reloads. |
 
 In adjust mode: left stick moves, triggers raise/lower, right stick turns, grips roll. **Right A** saves, **Left A/X** cancels, clicking **both sticks** resets. Hand position is saved per controller type (Index, Quest, ...).
 
@@ -141,7 +140,7 @@ In adjust mode: left stick moves, triggers raise/lower, right stick turns, grips
 | **F12** | Recenter (also brings the menu back in front of you) |
 
 ### Compact HUD
-Radar, armour and weapon boxes sit together, smaller, at the bottom-right of your view. Hold the left controller beside your head with the stick **DOWN** for 3 s to move them: view corner → inside of the right wrist → inside of the left wrist. Subtitles and messages stay in front of you. Turning **Compact HUD** off in EDF6 VR setting.exe (Extra VR settings) restores the full-size HUD.
+Radar, armour and weapon boxes sit together, smaller, at the bottom-right of your view. Choose where under **VR setting** in the Start menu (**Compact HUD**) or in EDF6 VR setting.exe (Extra VR settings): the corner of your view, the inside of the right wrist or the inside of the left wrist. Subtitles and messages stay in front of you. Turning **Compact HUD** off there restores the full-size HUD.
 
 ### 8-player co-op
 Press **F2**, or click the left stick, on the menu screen **outside a room** to switch 8-player rooms on or off (shown at the bottom left). A room keeps the setting it was made with.

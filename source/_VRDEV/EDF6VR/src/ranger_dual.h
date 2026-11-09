@@ -237,6 +237,17 @@ bool UpdateRangerDual(void* soldier) noexcept {
             } else Log("RANGERDUAL refused: current Ranger loadout/weapon profile not valid");
         }
     }
+    // The reload button leaves dual wield and reloads (the user, 2026-11-07: "レンジャーの二刀流中、
+    // リロードボタンを押すと二刀流を解除してリロードを開始して"). D75 is the reload action's press (the
+    // input reader 570650 copies the action record's second byte; fire's D70 copies a first byte,
+    // the held state); 59AD9D reads it later in this same update and asks the equipped weapon --
+    // the right gun -- to reload (its vtable +0x98). So the pair goes back to single wield now, the
+    // left gun to its holster as on a toggle, and D75 is left set for the game. A press in the
+    // update that drew the pair still only clears, below.
+    if(g_dualActive.load() && !switched && DualAt<unsigned char>(soldier,0xD75)) {
+        ResetRangerDual();switched=true;
+        Log("RANGERDUAL reload pressed; dual wield off, the game reloads the right gun");
+    }
     if(g_dualActive.load()) {
         // Resolved actions are cleared too, independent of keyboard/pad remaps.
         // 59AE42 reads D72/73 for weapon secondary; 59AD9D reads D75 for reload.

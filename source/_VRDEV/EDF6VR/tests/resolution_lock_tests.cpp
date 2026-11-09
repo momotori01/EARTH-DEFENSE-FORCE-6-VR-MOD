@@ -114,6 +114,31 @@ int wmain(int argc,wchar_t** argv) {
     check(!std::memcmp(chat+42,storeAfter,sizeof(storeAfter)));
     check(edf6vr::InstallChatTextScaleFix(image,reason,sizeof(reason)));
     check(!std::strcmp(reason,"chat text scaling already neutral"));
+    // Game MSAA: the boot's literal 8 (with the standard-pattern quality) is
+    // where the shipped build has it, the screen's description still flows from
+    // there (config +0x28 -> 0x111B420's desc +0x1C -> renderer +0xA8 -> 0x111B220,
+    // which caps the count by D24S8 support and calls IDXGIFactory::CreateSwapChain);
+    // 8 changes nothing, 3 is refused, 4 rewrites only the count, again is a no-op,
+    // and 2 over a 4 is refused.
+    {
+        auto* msaa=image.base+edf6vr::kGameMsaaCountRva;
+        const unsigned char boot[14]={0xC7,0x45,0xE8,0x08,0,0,0,0xC7,0x45,0xEC,0xFF,0xFF,0xFF,0xFF};
+        check(!std::memcmp(msaa,boot,sizeof(boot)));
+        const unsigned char configRead[4]={0x48,0x8B,0x43,0x28}, descRead[4]={0x49,0x8B,0x46,0x10},
+            descStore[4]={0x48,0x89,0x45,0xD3}, rendererDesc[7]={0x0F,0x10,0x81,0xA8,0,0,0},
+            depthFormat[5]={0xBA,0x2D,0,0,0}, checkLevels[6]={0xFF,0x90,0xF0,0,0,0}, createSwapChain[3]={0xFF,0x50,0x50};
+        check(!std::memcmp(image.base+0x11A33C7,configRead,4) && !std::memcmp(image.base+0x111B527,descRead,4)
+            && !std::memcmp(image.base+0x111B52B,descStore,4) && !std::memcmp(image.base+0x111B24F,rendererDesc,7)
+            && !std::memcmp(image.base+0x111B2AF,depthFormat,5) && !std::memcmp(image.base+0x111B2B7,checkLevels,6)
+            && !std::memcmp(image.base+0x111B340,createSwapChain,3));
+        check(edf6vr::InstallGameMsaa(image,8,reason,sizeof(reason)) && !std::memcmp(msaa,boot,sizeof(boot)));
+        check(!edf6vr::InstallGameMsaa(image,3,reason,sizeof(reason)) && !std::memcmp(msaa,boot,sizeof(boot)));
+        check(edf6vr::InstallGameMsaa(image,4,reason,sizeof(reason)));
+        unsigned char four[14]; std::memcpy(four,boot,sizeof(four)); four[3]=4;
+        check(!std::memcmp(msaa,four,sizeof(four)));
+        check(edf6vr::InstallGameMsaa(image,4,reason,sizeof(reason)) && !std::strcmp(reason,"already set"));
+        check(!edf6vr::InstallGameMsaa(image,2,reason,sizeof(reason)) && !std::memcmp(msaa,four,sizeof(four)));
+    }
     // Nameplate size: the two identity immediates and the two glyph constants
     // are what the shipped build has, take a scale, take another, and refuse
     // nonsense without touching anything.

@@ -1447,10 +1447,10 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(draws==2 && !g_insideHoldBorrow);
     CheckTickException();
     g_vrSoldier=soldier;g_vrEnabled=g_fpsEnabled=g_dualReady=true;g_dualEligible=true;g_dualEligibleAt=GetTickCount64();g_adjust=Adjusting::Off;
-    DualAt<unsigned char>(soldier,0xD72)=1;DualAt<unsigned char>(soldier,0xD73)=1;DualAt<unsigned char>(soldier,0xD75)=1;
+    DualAt<unsigned char>(soldier,0xD72)=1;DualAt<unsigned char>(soldier,0xD73)=1;
     DualAt<unsigned char>(weapons[1],0x780)=1;g_dualCancel=false;
     CHECK(!UpdateRangerDual(soldier));CHECK(zoomCalls==0);HookDualWeaponTick(weapons[1],soldier);CHECK(zoomCalls==1);
-    CHECK(!DualAt<unsigned char>(soldier,0xD72) && !DualAt<unsigned char>(soldier,0xD73) && !DualAt<unsigned char>(soldier,0xD75));
+    CHECK(!DualAt<unsigned char>(soldier,0xD72) && !DualAt<unsigned char>(soldier,0xD73) && g_dualActive.load());
     DualAt<unsigned>(soldier,0x5D0)=4;CHECK(!RangerMayFire(soldier));DualAt<unsigned>(soldier,0x5D0)=0;
     DualAt<int>(soldier,0x198C)=1;CHECK(!RangerMayFire(soldier));DualAt<int>(soldier,0x198C)=0;CHECK(RangerMayFire(soldier));
     edf6vr::ControllerState controls{};controls.present[0]=controls.present[1]=true;
@@ -1478,6 +1478,17 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(!ResolveTrackedMuzzle(weapons[0],muzzle,GetTickCount64()));
     g_dualInputAt=GetTickCount64();g_dualEligibleAt=GetTickCount64();
     g_dualToggleSerial.fetch_add(1);CHECK(UpdateRangerDual(soldier));CHECK(g_dualActive.load());
+    CHECK(!UpdateRangerDual(soldier));
+    // The reload button in dual wield (D75; the user, 2026-11-07): single wield again with the
+    // toggle's sound and holster, and the press left for the game's own reload of the right gun.
+    DualAt<unsigned char>(soldier,0xD72)=1;DualAt<unsigned char>(soldier,0xD75)=1;
+    CHECK(UpdateRangerDual(soldier));CHECK(!g_dualActive.load());
+    CHECK(DualAt<unsigned char>(soldier,0xD75)==1 && DualAt<unsigned char>(soldier,0xD72)==1);
+    CHECK(g_dualCleanupWeapon.load()==weapons[0]);
+    CHECK(!UpdateRangerDual(soldier));CHECK(!g_dualActive.load()); // still set next update: no second sound
+    // Pressed in the update that draws the pair: drawn, and the press cleared as before.
+    g_dualToggleSerial.fetch_add(1);CHECK(UpdateRangerDual(soldier));CHECK(g_dualActive.load());
+    CHECK(!DualAt<unsigned char>(soldier,0xD75) && !DualAt<unsigned char>(soldier,0xD72));
     CHECK(!UpdateRangerDual(soldier));
     CheckSwitchSound();
     g_dualCancel=true;CHECK(!UpdateRangerDual(soldier));CHECK(!g_dualActive.load());

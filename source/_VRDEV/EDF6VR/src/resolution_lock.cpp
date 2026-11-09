@@ -76,4 +76,26 @@ bool InstallChatTextScaleFix(const ImageProfile& image,char* reason,std::size_t 
     report("chat text y no longer scaled by height/(width*9/16)");
     return true;
 }
+
+bool InstallGameMsaa(const ImageProfile& image,unsigned samples,char* reason,std::size_t capacity) noexcept {
+    auto report=[&](const char* message) { if(reason && capacity) std::snprintf(reason,capacity,"%s",message); };
+    if(samples==8) { report("8, the game's own; left alone"); return true; }
+    if(samples!=4 && samples!=2) { report("only 2, 4 or 8"); return false; }
+    // mov dword ptr [rbp-0x18],8 ; mov dword ptr [rbp-0x14],0xFFFFFFFF
+    constexpr unsigned char expected[14]={0xC7,0x45,0xE8,0x08,0x00,0x00,0x00, 0xC7,0x45,0xEC,0xFF,0xFF,0xFF,0xFF};
+    unsigned char wanted[14]; std::memcpy(wanted,expected,sizeof(wanted)); wanted[3]=static_cast<unsigned char>(samples);
+    if(!image.base) { report("no image"); return false; }
+    auto* site=image.base+kGameMsaaCountRva;
+    if(!Readable(site,sizeof(expected))) { report("sample count site unreadable"); return false; }
+    if(!std::memcmp(site,wanted,sizeof(wanted))) { report("already set"); return true; }
+    if(std::memcmp(site,expected,sizeof(expected))) { report("sample count signature differs; left alone"); return false; }
+    DWORD old=0;
+    if(!VirtualProtect(site+3,1,PAGE_EXECUTE_READWRITE,&old)) { report("protect failed"); return false; }
+    site[3]=static_cast<unsigned char>(samples);
+    RecordPatch(site+3,1,"game MSAA sample count");
+    FlushInstructionCache(GetCurrentProcess(),site,sizeof(expected));
+    DWORD ignored=0; VirtualProtect(site+3,1,old,&ignored);
+    report(samples==4?"8 -> 4":"8 -> 2");
+    return true;
+}
 }
