@@ -313,6 +313,93 @@ void HandAimTests() {
     SetHandAimPeerNamer(nullptr);
     ResetHandAimForTest();
 }
+
+// A game packet over EOS's limit (bigpacket.h): the game's data send goes out as parts on MultiSlot's channel,
+// and the parts are put back together into the game's receive buffer.
+void BigPacketTests() {
+    ResetHandAimForTest();
+    ResetBigPacketsForTest();
+    SetHandAimPeerNamer(&AddressNamer);
+    originalSendPacket = &FakeAimSend;
+    aimResult = 0;
+    const SocketId socket{1, "game-socket"};
+    std::vector<std::uint8_t> start(1171);
+    for (std::size_t i = 0; i < start.size(); ++i) start[i] = static_cast<std::uint8_t>(i * 13 + 5);
+    start[0] = 1;  // the game's own packets never start with two zero bytes
+    SendPacketOptions game{};
+    game.ApiVersion = 3;
+    game.LocalUserId = Peer(0);
+    game.RemoteUserId = Peer(5);
+    game.Socket = &socket;
+    game.Channel = 0;
+    game.DataLengthBytes = static_cast<std::uint32_t>(start.size());
+    game.Data = start.data();
+    game.AllowDelayedDelivery = 1;
+    game.Reliability = 0;
+    const SendPacketOptions before = game;
+    aimSends.clear();
+    aimData.clear();
+    Check(DispatchSendPacket(expectedHandle, &game, 0x12C8C5A) == 0, "the game hears its packet went");
+    Check(aimSends.size() == 2, "1171 B: two parts and nothing else");
+    bool partsOk = aimSends.size() == 2;
+    for (std::size_t i = 0; i < aimSends.size(); ++i) {
+        const auto& sent = aimSends[i];
+        partsOk = partsOk && sent.Channel == kHandAimChannel && sent.Reliability == 1 && sent.DataLengthBytes <= 1170 &&
+                  sent.Socket == &socket && sent.RemoteUserId == Peer(5) && sent.LocalUserId == Peer(0) &&
+                  sent.AllowDelayedDelivery == 1 && IsBigPacketPart(aimData[i].data(), sent.DataLengthBytes);
+    }
+    Check(partsOk, "parts on MultiSlot's channel, reliable, each within EOS's limit, to the same peer and socket");
+    Check(std::memcmp(&game, &before, sizeof(game)) == 0, "the game's options are not written to");
+    const auto parts = aimData;
+
+    aimSends.clear();
+    aimData.clear();
+    DispatchSendPacket(expectedHandle, &game, 0x12C90F2);
+    Check(aimSends.size() == 1 && aimSends[0].Channel == 0 && aimData[0].size() == 1171,
+          "only the game's data sends are split (a hello goes as it is)");
+    game.DataLengthBytes = 1170;
+    aimSends.clear();
+    aimData.clear();
+    DispatchSendPacket(expectedHandle, &game, 0x12C8C5A);
+    Check(aimSends.size() == 1 && aimSends[0].Channel == 0 && aimData[0].size() == 1170 && aimSends[0].Data == start.data(),
+          "1170 B goes as it is");
+
+    // Receive: the second part first, then the first; the game gets the 1171 bytes on channel 0 from that peer.
+    struct {
+        std::int32_t ApiVersion;
+        const void* LocalUserId;
+        std::uint32_t MaxDataSizeBytes;
+        const std::uint8_t* RequestedChannel;
+    } options{2, Peer(0), 0x1000, nullptr};
+    const std::vector<std::uint8_t> gamePacket = {1, 0, 0, 0, 0x44, 0x33, 0x22, 0x11};
+    originalReceivePacket = &FakeQueueReceive;
+    inbox = {{Peer(3), kHandAimChannel, parts[1]}, {Peer(3), kHandAimChannel, parts[0]}, {Peer(4), 0, gamePacket}};
+    inboxNext = 0;
+    receiveCalls = 0;
+    void* from = nullptr;
+    SocketId fromSocket{};
+    std::uint8_t channel = 77;
+    static std::uint8_t buffer[0x1000]{};
+    std::uint32_t size = 0;
+    Check(HookReceivePacket(expectedHandle, &options, &from, &fromSocket, &channel, buffer, &size) == 0 &&
+              receiveCalls == 2 && from == Peer(3) && channel == 0 && size == 1171 &&
+              std::memcmp(buffer, start.data(), start.size()) == 0,
+          "the joined packet reaches the game whole, from its sender, on the channel the sender's game used");
+    Check(HookReceivePacket(expectedHandle, &options, &from, &fromSocket, &channel, buffer, &size) == 0 &&
+              from == Peer(4) && size == gamePacket.size(),
+          "and the next packet after it");
+    options.MaxDataSizeBytes = 1170;
+    inbox = {{Peer(3), kHandAimChannel, parts[0]}, {Peer(3), kHandAimChannel, parts[1]}, {Peer(4), 0, gamePacket}};
+    inboxNext = 0;
+    Check(HookReceivePacket(expectedHandle, &options, &from, &fromSocket, &channel, buffer, &size) == 0 &&
+              from == Peer(4) && size == gamePacket.size(),
+          "a buffer too small for it: never written past, the game gets its next packet");
+    originalReceivePacket = &FakeReceive;
+    originalSendPacket = &FakeSend;
+    SetHandAimPeerNamer(nullptr);
+    ResetBigPacketsForTest();
+    ResetHandAimForTest();
+}
 }
 int main() {
     originalSendPacket = &FakeSend;
@@ -338,6 +425,7 @@ int main() {
     Check(IsHello(payload, 8) && !IsHello(payload, 3) && !IsHello(nullptr, 8), "hello probe checks minimum length");
     RecoveryTests();
     HandAimTests();
+    BigPacketTests();
     std::printf("network wrapper forwarding: %d failures\n", failures);
     return failures ? 1 : 0;
 }

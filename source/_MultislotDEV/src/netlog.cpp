@@ -13,6 +13,7 @@
 #include "packetsize.h"
 #include "handaim.h"
 #include "downsync.h"
+#include "bigpacket.h"
 
 namespace multislot {
 namespace {
@@ -95,6 +96,13 @@ struct SendPacketOptions {
 static_assert(offsetof(SendPacketOptions, Data) == 0x28);
 static_assert(offsetof(SendPacketOptions, AllowDelayedDelivery) == 0x30);
 static_assert(offsetof(SendPacketOptions, Reliability) == 0x34);
+struct ReceivePacketOptions {
+    std::int32_t ApiVersion;
+    const void* LocalUserId;
+    std::uint32_t MaxDataSizeBytes;
+    const std::uint8_t* RequestedChannel;
+};
+static_assert(offsetof(ReceivePacketOptions, MaxDataSizeBytes) == 0x10);  // 12C8D1D: 0x1000
 using SendPacketFn = EOS_EResult(*)(void*, const SendPacketOptions*);
 using ReceivePacketFn = EOS_EResult(*)(void*, const void*, void**, SocketId*, std::uint8_t*, void*, std::uint32_t*);
 using CloseConnectionFn = EOS_EResult(*)(void*, const CloseConnectionOptions*);
@@ -242,6 +250,90 @@ void SendDownSyncAfter(void* handle, const SendPacketOptions* sent) {
     originalSendPacket(handle, &ours);
 }
 
+// ---- A game packet over EOS's limit, in parts (bigpacket.h) ----
+std::atomic<int> bigPacketLines{0};
+constexpr int kBigPacketLines = 100;
+bool BigPacketBudget() {
+    const int used = bigPacketLines.fetch_add(1, std::memory_order_relaxed);
+    if (used == kBigPacketLines) Log("PACKET parts: line budget spent, no more of these this run");
+    return used < kBigPacketLines;
+}
+bool CopyGameBytes(void* to, const void* from, std::size_t size) {
+    __try {
+        std::memcpy(to, from, size);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+bool ReadSendOptions(const SendPacketOptions* sent, SendPacketOptions& out) {
+    __try {
+        if (!sent) return false;
+        out = *sent;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+// How much the game's receive buffer takes (12C8CC0 asks for 0x1000); 0 when it cannot be read.
+std::uint32_t ReceiveRoom(const void* options) {
+    __try {
+        const auto* o = static_cast<const ReceivePacketOptions*>(options);
+        return o && o->ApiVersion >= 1 ? o->MaxDataSizeBytes : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+// The game's own data to a peer (12C8BC0), over the 1170 bytes EOS carries: sent as parts on MultiSlot's
+// channel, reliable so that every part arrives, with the game's socket, users and delivery otherwise as it
+// asked. The game hears the first failure, if any; it only acts on EOS_NoConnection (1), as before.
+EOS_EResult SendInParts(void* handle, const SendPacketOptions& game) {
+    std::uint8_t packet[kBigPacketMaxTotal];
+    if (!CopyGameBytes(packet, game.Data, game.DataLengthBytes)) return originalSendPacket(handle, &game);
+    const auto parts = SplitBigPacket(packet, game.DataLengthBytes, game.Channel, NextBigPacketId());
+    EOS_EResult result = 0;
+    for (const auto& part : parts) {
+        SendPacketOptions ours = game;
+        ours.Channel = kHandAimChannel;
+        ours.Data = part.data();
+        ours.DataLengthBytes = static_cast<std::uint32_t>(part.size());
+        ours.Reliability = 1;  // EOS_PR_ReliableUnordered
+        const auto sent = originalSendPacket(handle, &ours);
+        if (sent != 0 && result == 0) result = sent;
+    }
+    if (BigPacketBudget()) {
+        char remote[40]{};
+        ProductUserIdText(game.RemoteUserId, remote, sizeof(remote));
+        Log("PACKET sent in parts: %u B (over EOS's %u) to EOS %s as %zu MultiSlot packets on channel %u, result %d; "
+            "a member on 1.6.13 or later puts it back together, an older one loses it as before",
+            game.DataLengthBytes, kBigPacketEosLimit, remote, parts.size(), kHandAimChannel, result);
+    }
+    return result;
+}
+
+// A part arrived: when it completes a packet, the whole packet goes to the game in place of the part, on the
+// channel the sender's game used.
+bool DeliverJoined(const char* peer, const void* options, std::uint8_t* channel, void* data, std::uint32_t* size,
+                   std::uint64_t nowMs) {
+    std::vector<std::uint8_t> joined;
+    std::uint8_t sentOn = 0;
+    if (!JoinBigPacketPart(peer, data, *size, nowMs, joined, sentOn)) return false;
+    const std::uint32_t room = ReceiveRoom(options);
+    const bool fits = channel && joined.size() <= room;
+    if (fits && CopyGameBytes(data, joined.data(), joined.size())) {
+        *channel = sentOn;
+        *size = static_cast<std::uint32_t>(joined.size());
+        if (BigPacketBudget())
+            Log("PACKET put back together: %u B from EOS %s, handed to the game on channel %u", *size, peer, sentOn);
+        return true;
+    }
+    if (BigPacketBudget())
+        Log("PACKET put back together but not handed on: %zu B from EOS %s, the game takes %u", joined.size(), peer,
+            room);
+    return false;
+}
+
 // Keep the import wrapper itself small so its return address is always the real game caller.
 EOS_EResult DispatchSendPacket(void* handle, const SendPacketOptions* options, std::uintptr_t caller) {
     const bool finalHello = MatchFinalHello(handle, options, caller);
@@ -275,7 +367,10 @@ EOS_EResult DispatchSendPacket(void* handle, const SendPacketOptions* options, s
         meterBytes = 0;
     }
     if (meterBytes) RecordSent(meterPeer, meterChannel, meterBytes, GetTickCount64());
-    const auto result = originalSendPacket(handle, effective);
+    SendPacketOptions big{};
+    const bool split = caller == 0x12C8C5A && ReadSendOptions(effective, big) && big.ApiVersion >= 3 &&
+                       big.DataLengthBytes > kBigPacketEosLimit && big.DataLengthBytes <= kBigPacketMaxTotal;
+    const auto result = split ? SendInParts(handle, big) : originalSendPacket(handle, effective);
     // A send EOS refused is a message lost for good: 12C8BC0 only reacts to EOS_NoConnection (1). The one
     // expected to show up is a packet over EOS's 1170 bytes (packetsize.h).
     std::uint32_t sentBytes = 0;
@@ -291,7 +386,7 @@ EOS_EResult DispatchSendPacket(void* handle, const SendPacketOptions* options, s
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
-    if (sentRead && (sentBytes > kEosMaxPacket || (result != 0 && result != 1)))
+    if (!split && sentRead && (sentBytes > kEosMaxPacket || (result != 0 && result != 1)))
         NoteSendRefused(sentBytes, sentChannel, sentReliability, static_cast<int>(result), caller);
     // The game's own data to this peer just went out (12C8BC0), so the connection is up and this is the
     // thread the game drives EOS from: the right moment for the hand directions (handaim.h).
@@ -331,7 +426,11 @@ EOS_EResult HookReceivePacket(void* handle, const void* options, void** peer, So
         if (TrafficMeterOn()) RecordReceived(from, channel ? *channel : 0, *size, now);
         char text[40]{};
         HandAimPeerText(from, text, sizeof(text));
-        if (!ReceiveDownSyncPacket(text, data, *size, now)) ReceiveHandAimPacket(text, data, *size, now);
+        if (IsBigPacketPart(data, *size)) {
+            if (DeliverJoined(text, options, channel, data, size, now)) break;  // the game reads the whole packet
+        } else if (!ReceiveDownSyncPacket(text, data, *size, now)) {
+            ReceiveHandAimPacket(text, data, *size, now);
+        }
         result = originalReceivePacket(handle, options, peer, socket, channel, data, size);
     }
     if (result == 0 && size && *size && TrafficMeterOn())

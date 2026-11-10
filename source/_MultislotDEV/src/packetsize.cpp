@@ -82,7 +82,8 @@ const char* FitText(MessageFit fit) {
         case MessageFit::Shares: return "fits";
         case MessageFit::OwnPacket: return "needs a packet of its own, still fits";
         case MessageFit::Dropped:
-            return "OVER EOS's limit: EOS refuses the packet and EDF6 drops it without a word";
+            return "OVER EOS's limit in one packet: MultiSlot sends that packet in parts (put back together by "
+                   "members on 1.6.13 or later; an older member or a player without the mod loses it)";
     }
     return "?";
 }

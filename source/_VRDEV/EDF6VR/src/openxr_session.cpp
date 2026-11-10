@@ -425,6 +425,10 @@ std::atomic<bool> g_running{false};
 std::atomic<bool> g_stage{false};
 std::atomic<unsigned long long> g_frames{0};
 std::thread g_thread;
+// Stop() joins the TrackingOnly thread; at game exit nothing has, and a joinable
+// std::thread destroyed then calls std::terminate -> abort(). ExitProcess has
+// already ended the thread itself by the time this runs.
+struct ThreadExitDetach { ~ThreadExitDetach() { if(g_thread.joinable()) g_thread.detach(); } } g_threadExitDetach;
 SRWLOCK g_sampleLock=SRWLOCK_INIT;
 HmdSample g_sample{};
 char g_status[256]="not started";

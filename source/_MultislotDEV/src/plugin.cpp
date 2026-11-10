@@ -43,7 +43,7 @@
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.6.12";
+constexpr const char* kVersion = "1.6.13";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of

@@ -127,6 +127,8 @@ void PureParts() {
     Check(ReadDownSyncPacket(handAim, 9) == -1, "a hand aim packet is not this");
     std::uint8_t older[8] = {0, 0, 'M', 'S', 1, 2, 3, 0};
     Check(ReadDownSyncPacket(older, 8) == -1, "1.6.11's word (type 2) is not this build's");
+    const std::uint8_t splitPart[8] = {0, 0, 'M', 'S', 1, 4, 0, 0};
+    Check(ReadDownSyncPacket(splitPart, 8) == -1, "a part of a split packet (type 4) is not the down-sync word");
     std::uint8_t later[8] = {0, 0, 'M', 'S', 2, 3, 3, 0};
     Check(ReadDownSyncPacket(later, 8) == -1, "a later version is left alone");
 

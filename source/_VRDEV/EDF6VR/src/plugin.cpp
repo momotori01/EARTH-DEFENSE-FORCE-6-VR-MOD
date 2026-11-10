@@ -1582,7 +1582,6 @@ ULONGLONG g_fovWrites=0;
 unsigned long long g_lastEyeFlipPresent=0;
 bool g_logGamepad=true;
 std::atomic<bool> g_padStop{false};
-std::thread g_padThread;
 std::atomic<bool> g_captureRequested{false};
 int g_limiterState=0;   // 0 unknown, 1 stock 60, 2 internal wait removed
 bool g_allowLimiterToggle=true;
@@ -7684,7 +7683,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.16 cockpit loading, with EDF6MultiSlot 1.6.12. Reload ends Ranger dual wield (ranger_dual.h), the compact HUD's temple gesture gone, the game's screen MSAA 8 -> 4 ([Render] GameMsaa, resolution_lock.h), VRAM in the 5 s report (vram_report.h).");
+    Log("EDF6VR 3.2.17 cockpit loading, with EDF6MultiSlot 1.6.13. Game packets over EOS's 1170 bytes go in parts (MultiSlot bigpacket.cpp: the eight-player mission start), and the game no longer ends in abort() at exit (GamepadWatch detached).");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
@@ -8122,7 +8121,10 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
     Log("VR HOOK ready=%d callSite=EDF.dll+%X inputRead=EDF.dll+%X aimAngles=+%zX moveInput=+%zX lookInput=+%zX. F11 VR toggle; F12 recenter.",
         g_vrReady,edf6vr::kInputCallSiteRva,edf6vr::kInputReadRva,
         edf6vr::kAimAngleOffset,edf6vr::kMoveInputOffset,edf6vr::kLookInputOffset);
-    if(g_logGamepad) g_padThread=std::thread(&GamepadWatch);
+    // Detached: nothing joins it, and a joinable std::thread still alive in a global
+    // when the game exits calls std::terminate -> abort() (c0000409 in this DLL at
+    // abort+0x35, four times at game exit 2026-11-07..10).
+    if(g_logGamepad) std::thread(&GamepadWatch).detach();
     if(g_captureDevice && !edf6vr::InstallDeviceCapture(g_image,&LogRender))
         Log("RENDER: device capture unavailable: %s",edf6vr::PresentCaptureStatus());
     if(g_captureFrames>=2) {

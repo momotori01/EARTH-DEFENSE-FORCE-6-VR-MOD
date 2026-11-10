@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.16'
+VERSION = '3.2.17'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.12.zip'
-MULTISLOT_SHA = 'A404E08586443FEF446590D4D9888266CB7F1E3AF0E13CB38B967383CFA25EA0'
-MULTISLOT_DLL_SHA = '7A68C8E13A3E16253DB6C84C56E13FE8004397C2400B87B0441A967EC7E4901D'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.13.zip'
+MULTISLOT_SHA = '1F431C878D27AB7670FBFC7366CD20910AEAA15519837B31D6474A5217F6484E'
+MULTISLOT_DLL_SHA = '198B001734871096703CC3586FB3106BC6168461032A90E5CF669515149111FF'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -142,6 +142,10 @@ MULTISLOT_DLL_SHA = '7A68C8E13A3E16253DB6C84C56E13FE8004397C2400B87B0441A967EC7E
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.17 (the user: "それじゃあ８人直したのをアップして"; +0.0.1): EDF6MultiSlot 1.6.13 sends a game packet over EOS's
+# 1170 bytes in parts (bigpacket.cpp; an eight-player mission start of 1163 bytes was refused and every guest dropped
+# 27 s later), and the game no longer ends in abort() at exit (plugin.cpp GamepadWatch detached; openxr_session.cpp's
+# TrackingOnly thread detached at exit). Neither run in an eight-player room yet.
 # 3.2.16 (the user: "このままアップして / 確認は不要"; +0.0.1): the reload button leaves Ranger dual wield and reloads
 # (ranger_dual.h), the compact HUD's left-temple stick-down gesture removed (its place stays a menu choice), the game's
 # screen MSAA 8 -> 4 ([Render] GameMsaa, resolution_lock.h InstallGameMsaa at EDF.dll+7006BE; run on this PC: samples=4,
@@ -210,9 +214,9 @@ MULTISLOT_DLL_SHA = '7A68C8E13A3E16253DB6C84C56E13FE8004397C2400B87B0441A967EC7E
 # its rows on a row's own background, and [VR] ShotBuzz 1 as the default ("射撃振動１を規定にして"); "修正したらこちらへの
 # 確認無しでアップして".
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
-# VERIFIED_* below: the 3.2.16 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
-VERIFIED_VR_SHA = '8980B50C462C0CD1D7DDE953778FC9948177A927F1E17A3B1E08C4B04748C0CB'
-VERIFIED_SETTINGS_SHA = '93CA6B1BCF39A0A942BCD7A938E06E771CF268695E3A155D1404EDA6BEA561C8'
+# VERIFIED_* below: the 3.2.17 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
+VERIFIED_VR_SHA = '4666FAAC7CBF219D806FD1AA08B8520AA3D9D8817C64E110DD8967F8481920B7'
+VERIFIED_SETTINGS_SHA = '2D20C5F9E5A61D5897D700845D2FE4EE990E18D21F9D73BF291901E75B5E988B'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()
