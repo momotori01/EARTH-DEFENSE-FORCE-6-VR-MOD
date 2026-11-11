@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.19'
+VERSION = '3.2.20'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.15.zip'
-MULTISLOT_SHA = '0397032E55464CD77A68BEE0D5B6AA4468AAD85B5D2F49633273DADF6219168B'
-MULTISLOT_DLL_SHA = '6D17FC3CE4DE8F7AFD769B5F66A0945B139323E2C14537639FAB814D7AD7ADAE'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.16.zip'
+MULTISLOT_SHA = '4366CE30A6592B3EBAA4F38B275B65CBC9666BD5EF270A0A4ED29C3E72045ACD'
+MULTISLOT_DLL_SHA = 'CAB38C04D83AB6E1B7F13D2DEF0AFFCE018492214D98430BEF53F8E9EBF0B78A'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -142,6 +142,9 @@ MULTISLOT_DLL_SHA = '6D17FC3CE4DE8F7AFD769B5F66A0945B139323E2C14537639FAB814D7AD
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.20 (the user: "アップして"; +0.0.1): EDF6MultiSlot 1.6.16 spaces a raised flying route group so its line keeps the
+# mission's length (the game lays the group along the route and turns back at a node whose first link is the one it came
+# from: M130C's 24 extra dragons were laid on the leg back up to the 1000 m start). EDF6VR unchanged but for its version.
 # 3.2.19 (+0.0.1): EDF6MultiSlot 1.6.15 writes a flying route group's raised count into the slot the game's loop reloads
 # (1AF6F0: rbp+0x178, reloaded at 1AFB00 when the object list grows; a group of 2 raised to 4 never ended -> the 8-player
 # dragon freeze of 2026-11-11), and openxr_session.cpp falls back to the HKLM ActiveRuntime when XR_RUNTIME_JSON's runtime
@@ -221,9 +224,9 @@ MULTISLOT_DLL_SHA = '6D17FC3CE4DE8F7AFD769B5F66A0945B139323E2C14537639FAB814D7AD
 # its rows on a row's own background, and [VR] ShotBuzz 1 as the default ("射撃振動１を規定にして"); "修正したらこちらへの
 # 確認無しでアップして".
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
-# VERIFIED_* below: the 3.2.19 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
-VERIFIED_VR_SHA = '61C4C2E95DCDA9D91379F2E57732602A7586D22DE9E361938B908CF20C9B99E5'
-VERIFIED_SETTINGS_SHA = 'C045175EDC193E38BBC5B5A3EAD2E2E0ACCD83C0E82C739E75212A30A82E70C5'
+# VERIFIED_* below: the 3.2.20 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
+VERIFIED_VR_SHA = '2879165DF60EA3D24E7E5A5EC13779D483C5E28B14951C12DAECE87DBA16EEEF'
+VERIFIED_SETTINGS_SHA = '1C66E76D1C2374ED1CA303F05F6C41EB46B90ABD1A432DA84BD9096166D498C0'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

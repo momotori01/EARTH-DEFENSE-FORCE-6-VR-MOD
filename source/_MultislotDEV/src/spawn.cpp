@@ -138,6 +138,59 @@ void AreaGroupHandler(CpuContext* context) { GroupCreatedHandler(context, "enemy
 // (2026-11-11, 8 players: DragonSmall x2 -> x4, game loop 99%, drawing stopped). Larger groups fell back to their
 // old count at the third object. The home slot gets the new count too.
 constexpr std::uint32_t kFlyingRouteCountHome = 0x178;
+
+// The group is laid along the route from the named node: each pass the route walk (1B4C70) puts the object where
+// its cursor stands, then moves the cursor on by the step in xmm2 (copied from the interval in xmm6 at 1AF91D).
+// At a node the walk takes the node's first link that is not the node itself, even when that link leads back
+// where the line came from, so a line longer than the mission made it folds back up the route. The missions
+// size their lines to the leg they mean: M130C 飛行カエル1 is 30 x 21 m on a 646 m first leg from 1000 m up to
+// 500 m. Raised to 54 (8 players, 2026-11-11) the line ran 1113 m and its 24 extra dragons were placed on the leg
+// back, heading up to the 1000 m start. A raised group therefore keeps the line's length: the step becomes
+// interval * (count - 1) / (scaled - 1), and the last object stands where the game's last one does.
+struct RouteSpacing {
+    std::uint64_t frame = 0;  // rbp of the CreateFlyingEnemyGroup_OnRoute call it belongs to
+    float interval = 0.0f;
+    float step = 0.0f;
+    bool spaced = false;
+};
+thread_local RouteSpacing routeSpacing;
+constexpr std::uint32_t kRouteCursorTravelled = 0x1C;  // the cursor at rbp-0x40, +0x24: distance along its leg
+
+float XmmFloat(const CpuContext* context, int index) {
+    float value = 0.0f;
+    std::memcpy(&value, context->xmm[index], sizeof(value));
+    return value;
+}
+
+void SetXmmFloat(CpuContext* context, int index, float value) { std::memcpy(context->xmm[index], &value, sizeof(value)); }
+
+// 1AF920: after `movaps xmm2, xmm6`, before each pass's route walk. Pass 0 walks with the mission's interval
+// (the count is decided after its object exists); the later passes of a raised group get the new step.
+void FlyingRouteStepHandler(CpuContext* context) {
+    if (static_cast<std::uint32_t>(context->rdi) == 0) {
+        routeSpacing = RouteSpacing{context->rbp, XmmFloat(context, 2), 0.0f, false};
+        return;
+    }
+    if (routeSpacing.spaced && routeSpacing.frame == context->rbp) SetXmmFloat(context, 2, routeSpacing.step);
+}
+
+// After pass 0 the first object stands on the named node and the cursor one interval on (unless the first leg
+// is shorter than that, when the walk has already turned at a node: then only the later steps change).
+void SpaceRouteGroup(CpuContext* context, int count, int scaled) {
+    if (routeSpacing.frame != context->rbp || count <= 0 || scaled <= count) return;
+    const float interval = routeSpacing.interval;
+    const float step = count > 1 ? interval * static_cast<float>(count - 1) / static_cast<float>(scaled - 1) : 0.0f;
+    routeSpacing.step = step;
+    routeSpacing.spaced = true;
+    const std::uint64_t travelled = context->rbp - kRouteCursorTravelled;
+    float distance = 0.0f;
+    std::memcpy(&distance, At(travelled), sizeof(distance));
+    if (distance == interval) std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(travelled)), &step, sizeof(step));
+    if (DetailLog() && spawnLines.fetch_add(1) < kSpawnLogLimit)
+        Log("SPAWN flying enemy group on route: x%d -> x%d placed %.2f m apart instead of %.2f m (the line keeps the "
+            "mission's length)%s", count, scaled, step, interval, distance == interval ? "" : ", from the second step on");
+}
+
 void FlyingRouteHandler(CpuContext* context) {
     if (static_cast<std::uint32_t>(context->rdi) != 0) return;
     std::uint64_t object = 0;
@@ -147,6 +200,7 @@ void FlyingRouteHandler(CpuContext* context) {
     if (scaled == count) return;
     context->rsi = static_cast<std::uint32_t>(scaled);
     SetInt32At(context->rbp + kFlyingRouteCountHome, scaled);
+    SpaceRouteGroup(context, count, scaled);
 }
 
 // Natives whose count arrives in r9d (before `mov reg32, r9d`).
@@ -220,6 +274,7 @@ MidHandler SpawnHookHandler(std::uint32_t rva) {
         case 0x1D8E5F: return &PointGroupHandler;
         case 0x1D7A4B: return &AreaGroupHandler;
         case 0x1AF968: return &FlyingRouteHandler;
+        case 0x1AF920: return &FlyingRouteStepHandler;
         case 0x1C2F97: return &EnemyGeneratorHandler;
         case 0x1C3235: return &InstantGeneratorHandler;
         case 0x1CAF52: return &PodCrewHandler;

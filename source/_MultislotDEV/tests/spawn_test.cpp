@@ -242,6 +242,97 @@ int main() {
         Check(made(20, 8) == 36 && made(6, 8) > 6 && made(14, 6) > 14, "groups whose count meets a growth step");
         Check(made(2, 4) == 2 && made(30, 4) == 30, "four players: as the game has it");
     }
+    // The same loop with its route walk (1B4C70) and both hooks, on a leg of `leg` metres from the named node whose
+    // far node's first link leads back (M130C 飛行カエル1: 646.5 m from 1000 m up to 500 m, links [0, 1]). Each pass:
+    // xmm2 = the interval (`movaps xmm2, xmm6`), the step hook (1AF920), the walk on the cursor at rbp-0x40 (+0x20 leg
+    // length, +0x24 travelled: put the object where the cursor stands, move on; at the node turn back along the leg,
+    // the object then standing on the node), the count hook (1AF968), the list growth. Returns each object's distance
+    // along the route from the named node; past `leg` it is on the leg back.
+    {
+        const auto putF = [](std::uint8_t* at, float value) { std::memcpy(at, &value, sizeof(value)); };
+        const auto getF = [](const std::uint8_t* at) {
+            float value = 0.0f;
+            std::memcpy(&value, at, sizeof(value));
+            return value;
+        };
+        const auto line = [&](std::uint32_t count, float interval, float leg, int players, bool stepHook) {
+            Frame frame;
+            std::vector<std::uint8_t> stack(0x400, 0);
+            std::uint8_t* rbp = stack.data() + 0x100;
+            Put32(rbp + 0x98, 1);
+            Put32(rbp + 0x178, count);
+            putF(rbp - 0x20, leg);
+            putF(rbp - 0x1C, 0.0f);
+            Put64(frame.rsp() + 0x60, antObject);
+            frame.context()->rbp = Address(rbp);
+            setPlayers(players);
+            std::vector<float> placed;
+            std::uint32_t edi = 0, esi = Get32(rbp + 0x178), size = 0, capacity = 0;
+            int turns = 0;
+            do {
+                frame.context()->rdi = edi;
+                frame.context()->rsi = esi;
+                std::memcpy(frame.context()->xmm[2], &interval, sizeof(interval));
+                if (stepHook) SpawnHookHandler(0x1AF920)(frame.context());
+                float step = 0.0f;
+                std::memcpy(&step, frame.context()->xmm[2], sizeof(step));
+                float t = getF(rbp - 0x1C), at = t;
+                if (t + step > leg) {
+                    float rest = step;
+                    do {
+                        rest -= leg - t;
+                        t = 0.0f;
+                        ++turns;
+                    } while (t + rest > leg);
+                    at = 0.0f;
+                    t = rest;
+                } else {
+                    t += step;
+                }
+                putF(rbp - 0x1C, t);
+                placed.push_back(static_cast<float>(turns) * leg + at);
+                SpawnHookHandler(0x1AF968)(frame.context());
+                esi = static_cast<std::uint32_t>(frame.context()->rsi);
+                if (size == capacity) {
+                    const bool held = size > 0;
+                    capacity = capacity * 2 + 2;
+                    if (held) esi = Get32(rbp + 0x178);
+                }
+                ++size;
+                ++edi;
+            } while (edi != esi && placed.size() < 1000);
+            return placed;
+        };
+        const auto evenUpTo = [](const std::vector<float>& placed, float last) {
+            if (placed.size() < 2) return false;
+            const float step = last / static_cast<float>(placed.size() - 1);
+            for (std::size_t i = 0; i < placed.size(); ++i)
+                if (placed[i] < static_cast<float>(i) * step - 0.01f || placed[i] > static_cast<float>(i) * step + 0.01f) return false;
+            return true;
+        };
+        const auto beyond = [](const std::vector<float>& placed, float leg) {
+            int n = 0;
+            for (const float at : placed) n += at >= leg ? 1 : 0;  // on the far node, turned back, or past it
+            return n;
+        };
+        const auto folded = line(30, 21.0f, 646.5f, 8, false);
+        const auto shortVanilla = line(10, 21.0f, 15.0f, 8, false);  // before any step hook ran (no state left)
+        Check(folded.size() == 54 && beyond(folded, 646.5f) == 24, "1.6.15's placement: 24 of 54 dragons on the leg back");
+        const auto spaced = line(30, 21.0f, 646.5f, 8, true);
+        Check(spaced.size() == 54 && beyond(spaced, 646.5f) == 0 && evenUpTo(spaced, 609.0f),
+              "54 dragons spaced evenly over the 609 m the mission's 30 take");
+        const auto four = line(30, 21.0f, 646.5f, 4, true);
+        Check(four.size() == 30 && evenUpTo(four, 609.0f) && four[1] == 21.0f, "four players: 30 at 21 m, after a raised group");
+        const auto pair = line(2, 40.0f, 646.5f, 8, true);
+        Check(pair.size() == 4 && evenUpTo(pair, 40.0f), "2 at 40 m become 4 over the same 40 m");
+        const auto queen = line(1, 0.0f, 646.5f, 8, true);
+        Check(queen.size() == 2 && queen[0] == 0.0f && queen[1] == 0.0f, "one on the node stays on the node");
+        const auto ufos = line(40, 40.0f, 1600.0f, 8, true);
+        Check(ufos.size() == 72 && beyond(ufos, 1600.0f) == 0 && evenUpTo(ufos, 1560.0f), "DLC2 M23 blue spinners: 72 over 1560 m");
+        const auto shortLeg = line(10, 21.0f, 15.0f, 8, true);
+        Check(shortLeg.size() == 18 && shortVanilla.size() == 18 && shortLeg.back() < shortVanilla.back(),
+              "a first leg shorter than the interval (the walk turned in pass 0): later steps still shrink");
+    }
 
     // Pod crews (1CAF52): count in r12d, pod at [rsp+0x40] with its seat count at +0x1098 and seats taken at +0x107C.
     {

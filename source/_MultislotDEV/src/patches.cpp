@@ -309,6 +309,9 @@ std::vector<MidSite> SpawnHooks() {
         {"enemy group count (CreateAreaObject)", 0x1D7A4B, {0x4C, 0x8B, 0xC0, 0x48, 0x85, 0xC0}, 0, 6},
         // CreateFlyingEnemyGroup_OnRoute after its first CreateObject, before `cmp qword [rsp+0x60], 0`.
         {"flying enemy group on route count", 0x1AF968, {0x48, 0x83, 0x7C, 0x24, 0x60, 0x00}, 0, 6},
+        // Its route walk's step: after `movaps xmm2, xmm6`, `lea rdx, [rbp-0x80]; lea rcx, [rbp-0x40]` before
+        // `call 1B4C70` (the loop comes back at 1AF8D1, so nothing jumps between these).
+        {"flying enemy group on route spacing", 0x1AF920, {0x48, 0x8D, 0x55, 0x80, 0x48, 0x8D, 0x4D, 0xC0}, 0, 8},
         // Generators keep a per-wave count: `mov reg32, r9d; mov reg, r8` copies it at entry.
         {"Object.SetEnemyGenerator count", 0x1C2F97, {0x45, 0x8B, 0xF1, 0x49, 0x8B, 0xD8}, 0, 6},
         {"Object.SetInstantEnemyGenerator count", 0x1C3235, {0x45, 0x8B, 0xF9, 0x49, 0x8B, 0xD8}, 0, 6},

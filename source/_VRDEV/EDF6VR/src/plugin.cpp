@@ -7683,7 +7683,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.19 cockpit loading, with EDF6MultiSlot 1.6.15. Flying route groups keep their raised count (MultiSlot spawn.cpp, the 8-player dragon freeze); an unusable XR_RUNTIME_JSON runtime falls back to the PC's registered one (openxr_session.cpp).");
+    Log("EDF6VR 3.2.20 cockpit loading, with EDF6MultiSlot 1.6.16. A raised flying route group keeps the mission's line length (MultiSlot spawn.cpp); this plugin is unchanged since 3.2.19.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');

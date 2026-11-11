@@ -402,7 +402,7 @@ int main(int argc, char** argv) {
     Check(RipTarget(0x1D6295, 7) == 0x1D6C50 && RipTarget(0x1D6ED5, 7) == 0x1D6C50, "constructor and destructor use the weak_ptr destructor", 0x1D6ED5);
 
     const auto spawnHooks = SpawnHooks();
-    Check(spawnHooks.size() == 8, "spawn hook table size");
+    Check(spawnHooks.size() == 9, "spawn hook table size");
     for (const auto& hook : spawnHooks) {
         const Patch verify{hook.name, hook.rva, hook.original, hook.original};
         Check(Matches(image.At(hook.rva, hook.original.size()), verify), hook.name, hook.rva);
@@ -415,6 +415,20 @@ int main(int argc, char** argv) {
     const std::uint8_t areaLoop[] = {0x45, 0x3B, 0x65, 0x50};   // 1D879A cmp r12d, [r13+0x50]
     Check(std::memcmp(image.At(0x1D932B, 4), pointLoop, 4) == 0, "CreateObjectGroup loop compares with params+0x68", 0x1D932B);
     Check(std::memcmp(image.At(0x1D879A, 4), areaLoop, 4) == 0, "CreateAreaObject loop compares with params+0x50", 0x1D879A);
+    // The route spacing (spawn.cpp): CreateFlyingEnemyGroup_OnRoute starts its cursor's distance at rbp-0x1C, hands
+    // the walk its step in xmm2 from xmm6 right before the hooked leas, calls the walk 1B4C70, and loops back to
+    // 1AF8D1 (before the hooked site); the walk adds xmm2 to the distance (xmm7 = xmm2, `addss xmm7, [rsi+0x24]`).
+    const std::uint8_t cursorStart[] = {0xC7, 0x45, 0xE4, 0x00, 0x00, 0x00, 0x00};  // mov dword [rbp-0x1C], 0
+    const std::uint8_t stepFromXmm6[] = {0x0F, 0x28, 0xD6};                        // movaps xmm2, xmm6
+    const std::uint8_t loopBack[] = {0x3B, 0xFE, 0x0F, 0x85};                      // cmp edi, esi; jne 1AF8D1
+    const std::uint8_t walkStep[] = {0x0F, 0x28, 0xFA};                            // 1B4CB0 movaps xmm7, xmm2
+    const std::uint8_t walkAdvance[] = {0xF3, 0x0F, 0x58, 0x7E, 0x24, 0xF3, 0x0F, 0x11, 0x7E, 0x24};
+    Check(std::memcmp(image.At(0x1AF8A3, 7), cursorStart, 7) == 0 && std::memcmp(image.At(0x1AF91D, 3), stepFromXmm6, 3) == 0 &&
+              RipTarget(0x1AF928, 5) == 0x1B4C70 && std::memcmp(image.At(0x1AFC46, 4), loopBack, 4) == 0 &&
+              RipTarget(0x1AFC48, 6) == 0x1AF8D1,
+          "route group: cursor distance at rbp-0x1C, step in xmm2, walk 1B4C70, loop back before the hook", 0x1AF920);
+    Check(std::memcmp(image.At(0x1B4CB0, 3), walkStep, 3) == 0 && std::memcmp(image.At(0x1B4EA7, 10), walkAdvance, 10) == 0,
+          "route walk steps by xmm2 and keeps the distance at cursor+0x24", 0x1B4C70);
     // "copy armor" (armor.cpp): the reads of the armor pickup count that are raised, and the four writes of
     // it that must stay clear of them, or a raised count would reach the save. The read the room is shown
     // (D7BFA, inside D7BD0) is deliberately not raised, so nobody ever copies a copied number.
