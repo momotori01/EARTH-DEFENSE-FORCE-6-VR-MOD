@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EDF6VR VERSION 3.2.17 LANGUAGES CXX)
+project(EDF6VR VERSION 3.2.18 LANGUAGES CXX)
 if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Requires MSVC and Windows x64")
 endif()

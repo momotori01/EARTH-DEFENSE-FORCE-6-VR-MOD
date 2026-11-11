@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.17'
+VERSION = '3.2.18'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.13.zip'
-MULTISLOT_SHA = '1F431C878D27AB7670FBFC7366CD20910AEAA15519837B31D6474A5217F6484E'
-MULTISLOT_DLL_SHA = '198B001734871096703CC3586FB3106BC6168461032A90E5CF669515149111FF'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.14.zip'
+MULTISLOT_SHA = '97766A0215C58E112D028B2437C97F5F45CD8A29C01BD6122E289CEEB9F6DE49'
+MULTISLOT_DLL_SHA = 'F2DF22521F453E45F8F2FFD8720D9FF2144F909164A33A672D4663CE4B1714FD'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -142,6 +142,9 @@ MULTISLOT_DLL_SHA = '198B001734871096703CC3586FB3106BC6168461032A90E5CF669515149
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.18 (the user: "じゃあアップして / 確認は不要"; +0.0.1): EDF6MultiSlot 1.6.14 wraps TerminateProcess / ExitProcess in every
+# non-Windows module but EDF.dll, itself and EDF6VR.dll, and names the caller in the SHUTDOWN line (two friends' games
+# vanished on the way back to the lobby with no SHUTDOWN, no crash line and no Windows error report). EDF6VR unchanged.
 # 3.2.17 (the user: "それじゃあ８人直したのをアップして"; +0.0.1): EDF6MultiSlot 1.6.13 sends a game packet over EOS's
 # 1170 bytes in parts (bigpacket.cpp; an eight-player mission start of 1163 bytes was refused and every guest dropped
 # 27 s later), and the game no longer ends in abort() at exit (plugin.cpp GamepadWatch detached; openxr_session.cpp's
@@ -214,9 +217,9 @@ MULTISLOT_DLL_SHA = '198B001734871096703CC3586FB3106BC6168461032A90E5CF669515149
 # its rows on a row's own background, and [VR] ShotBuzz 1 as the default ("射撃振動１を規定にして"); "修正したらこちらへの
 # 確認無しでアップして".
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
-# VERIFIED_* below: the 3.2.17 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
-VERIFIED_VR_SHA = '4666FAAC7CBF219D806FD1AA08B8520AA3D9D8817C64E110DD8967F8481920B7'
-VERIFIED_SETTINGS_SHA = '2D20C5F9E5A61D5897D700845D2FE4EE990E18D21F9D73BF291901E75B5E988B'
+# VERIFIED_* below: the 3.2.18 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
+VERIFIED_VR_SHA = '1D093DB17D379709FDD5EB3C53CCFD00F3C75E5EFDF1966C9507463299E7A6F1'
+VERIFIED_SETTINGS_SHA = '02A3F1C70D649CEB2986D428C0CAB9E03FD16B250CE4B73C301A69D2FB80F77A'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

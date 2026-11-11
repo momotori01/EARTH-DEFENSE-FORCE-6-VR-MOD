@@ -1,5 +1,14 @@
-﻿EDF6VR 3.2.17
+﻿EDF6VR 3.2.18
 =============================
+
+CHANGES IN 3.2.18
+Online:
+- When the game closes on its own without an error (for example on the
+  way back to the lobby) and Windows records nothing, the last SHUTDOWN
+  line of EDF6MultiSlot.log now names the part of the game that closed it
+  and what called it. Nothing else changes. If it happens, please send
+  the logs (EDF6 VR setting.exe, problem report).
+- Now bundles EDF6MultiSlot 1.6.14 (plays together with 1.6.12 and 1.6.13).
 
 CHANGES IN 3.2.17
 Fixes:

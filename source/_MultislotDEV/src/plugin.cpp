@@ -39,11 +39,12 @@
 #include "ridelog.h"
 #include "versionmsg.h"
 #include "downsync.h"
+#include "exitwatch.h"
 
 namespace multislot {
 namespace {
 
-constexpr const char* kVersion = "1.6.13";
+constexpr const char* kVersion = "1.6.14";
 HMODULE self = nullptr;
 
 // out: MAX_PATH characters. Refuses paths too long to also hold the rotated log name (log.cpp), instead of
@@ -819,6 +820,9 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
         Log("Exit marker: a normal quit now writes SHUTDOWN, so PREVIOUS RUN means the game really died");
     else
         Log("Exit marker: TerminateProcess could not be wrapped; PREVIOUS RUN cannot be trusted");
+    // Any other module that ends the game says so too (exitwatch.h): two friends' games vanished on the way
+    // back to the lobby with no SHUTDOWN line, no crash line and no Windows error report.
+    StartExitWatch();
     // The game folder is two levels above Mods\\Plugins, where this DLL sits.
     {
         wchar_t gameFolder[MAX_PATH]{};

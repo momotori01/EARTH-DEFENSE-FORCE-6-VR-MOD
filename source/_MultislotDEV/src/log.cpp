@@ -156,7 +156,7 @@ void LogShutdown(const char* why) {
     if (!logPath[0]) return;
     SYSTEMTIME now{};
     GetLocalTime(&now);
-    char line[256]{};
+    char line[768]{};  // room for exitwatch.cpp's module, code and callers
     const int length = _snprintf_s(line, sizeof(line), _TRUNCATE, "[%04u-%02u-%02u %02u:%02u:%02u.%03u] SHUTDOWN %s\r\n",
                                    now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
                                    now.wMilliseconds, why);

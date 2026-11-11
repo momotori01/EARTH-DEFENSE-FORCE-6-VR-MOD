@@ -7683,7 +7683,7 @@ extern "C" __declspec(dllexport) bool EDFMLAPI EML6_Load(PluginInfo* info) {
             g_iniReset.keptResolution?"; ForceWidth/ForceHeight carried over":"");
     else if(g_iniReset.failed)
         Log("INI could not be replaced with the new defaults (no backup possible?); the old file is kept and merged");
-    Log("EDF6VR 3.2.17 cockpit loading, with EDF6MultiSlot 1.6.13. Game packets over EOS's 1170 bytes go in parts (MultiSlot bigpacket.cpp: the eight-player mission start), and the game no longer ends in abort() at exit (GamepadWatch detached).");
+    Log("EDF6VR 3.2.18 cockpit loading, with EDF6MultiSlot 1.6.14. MultiSlot names whatever ends the game in its SHUTDOWN line (exitwatch.cpp); this plugin is unchanged since 3.2.17.");
     Log("CREWFIG figures %ls: %s",g_crewFolder.c_str(),GetFileAttributesW((g_crewFolder+L"\\version.txt").c_str())!=INVALID_FILE_ATTRIBUTES?"ready":"not generated (tools/edf6/crew_figures.py)");
     wchar_t host[MAX_PATH]{}; GetModuleFileNameW(nullptr,host,MAX_PATH);
     const auto slash=wcsrchr(host,L'\\');
