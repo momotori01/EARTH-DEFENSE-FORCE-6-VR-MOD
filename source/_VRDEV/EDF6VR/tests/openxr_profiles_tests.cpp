@@ -72,6 +72,11 @@ int main() {
     wchar_t old[MAX_PATH]{};const auto oldLength=GetEnvironmentVariableW(L"XR_RUNTIME_JSON",old,MAX_PATH);
     CHECK(SetEnvironmentVariableW(L"XR_RUNTIME_JSON",L"C:\\VR runtime\\test.json"));
     std::wstring manifest;CHECK(ActiveRuntimeManifest(manifest));CHECK(manifest==L"C:\\VR runtime\\test.json");
+    // The fallback: told it came from XR_RUNTIME_JSON, and the registry alone never returns that path.
+    bool fromEnv=false;
+    CHECK(ActiveRuntimeManifest(manifest,false,&fromEnv) && fromEnv);
+    const bool registered=ActiveRuntimeManifest(manifest,true,&fromEnv);
+    CHECK(!fromEnv && (!registered || manifest!=L"C:\\VR runtime\\test.json"));
     const std::wstring longPath(MAX_PATH+1,L'x');CHECK(SetEnvironmentVariableW(L"XR_RUNTIME_JSON",longPath.c_str()));
     CHECK(!ActiveRuntimeManifest(manifest));
     SetEnvironmentVariableW(L"XR_RUNTIME_JSON",oldLength && oldLength<MAX_PATH?old:nullptr);

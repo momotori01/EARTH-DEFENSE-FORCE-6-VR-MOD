@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.18'
+VERSION = '3.2.19'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
-MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.14.zip'
-MULTISLOT_SHA = '97766A0215C58E112D028B2437C97F5F45CD8A29C01BD6122E289CEEB9F6DE49'
-MULTISLOT_DLL_SHA = 'F2DF22521F453E45F8F2FFD8720D9FF2144F909164A33A672D4663CE4B1714FD'
+MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.15.zip'
+MULTISLOT_SHA = '0397032E55464CD77A68BEE0D5B6AA4468AAD85B5D2F49633273DADF6219168B'
+MULTISLOT_DLL_SHA = '6D17FC3CE4DE8F7AFD769B5F66A0945B139323E2C14537639FAB814D7AD7ADAE'
 # The build actually tested for this package. 1.7.4 and 1.7.9 were private
 # builds for playing with friends; 2.0.0 is the public release that follows.
 # 2.0.2: the six tanks drive on their hull again (VehicleStickOnHull), on
@@ -142,6 +142,10 @@ MULTISLOT_DLL_SHA = 'F2DF22521F453E45F8F2FFD8720D9FF2144F909164A33A672D4663CE4B1
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.19 (+0.0.1): EDF6MultiSlot 1.6.15 writes a flying route group's raised count into the slot the game's loop reloads
+# (1AF6F0: rbp+0x178, reloaded at 1AFB00 when the object list grows; a group of 2 raised to 4 never ended -> the 8-player
+# dragon freeze of 2026-11-11), and openxr_session.cpp falls back to the HKLM ActiveRuntime when XR_RUNTIME_JSON's runtime
+# cannot be used (Steam started by another project's test carried a mock runtime).
 # 3.2.18 (the user: "じゃあアップして / 確認は不要"; +0.0.1): EDF6MultiSlot 1.6.14 wraps TerminateProcess / ExitProcess in every
 # non-Windows module but EDF.dll, itself and EDF6VR.dll, and names the caller in the SHUTDOWN line (two friends' games
 # vanished on the way back to the lobby with no SHUTDOWN, no crash line and no Windows error report). EDF6VR unchanged.
@@ -217,9 +221,9 @@ MULTISLOT_DLL_SHA = 'F2DF22521F453E45F8F2FFD8720D9FF2144F909164A33A672D4663CE4B1
 # its rows on a row's own background, and [VR] ShotBuzz 1 as the default ("射撃振動１を規定にして"); "修正したらこちらへの
 # 確認無しでアップして".
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
-# VERIFIED_* below: the 3.2.18 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
-VERIFIED_VR_SHA = '1D093DB17D379709FDD5EB3C53CCFD00F3C75E5EFDF1966C9507463299E7A6F1'
-VERIFIED_SETTINGS_SHA = '02A3F1C70D649CEB2986D428C0CAB9E03FD16B250CE4B73C301A69D2FB80F77A'
+# VERIFIED_* below: the 3.2.19 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
+VERIFIED_VR_SHA = '61C4C2E95DCDA9D91379F2E57732602A7586D22DE9E361938B908CF20C9B99E5'
+VERIFIED_SETTINGS_SHA = 'C045175EDC193E38BBC5B5A3EAD2E2E0ACCD83C0E82C739E75212A30A82E70C5'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

@@ -188,19 +188,59 @@ int main() {
         Put32(locals + 0x98, 1);
         Put64(frame.rsp() + 0x60, antObject);
         frame.context()->rbp = Address(locals);
+        Put32(locals + 0x178, 20);
         frame.context()->rsi = 20;
         frame.context()->rdi = 0;
         setPlayers(8);
         SpawnHookHandler(0x1AF968)(frame.context());
         Check(frame.context()->rsi == 36, "flying route group of 20 with 8 players becomes 36");
+        Check(Get32(locals + 0x178) == 36, "and so does the count's home, which the loop reads again");
         frame.context()->rsi = 20;
         frame.context()->rdi = 1;
         SpawnHookHandler(0x1AF968)(frame.context());
         Check(frame.context()->rsi == 20, "later passes decide nothing");
         frame.context()->rdi = 0;
         Put32(locals + 0x98, 0);
+        Put32(locals + 0x178, 20);
         SpawnHookHandler(0x1AF968)(frame.context());
-        Check(frame.context()->rsi == 20, "friendly flyers keep their count");
+        Check(frame.context()->rsi == 20 && Get32(locals + 0x178) == 20, "friendly flyers keep their count");
+    }
+    // The game's loop (1AF8B9..1AFC48) with the hook at 1AF968 on every pass: esi from the home slot, the list grows
+    // at capacity (x2+2) and, when it held objects, esi is read again from the home slot (1AFB00); it ends on
+    // `cmp edi, esi; jne`. Returns the objects made, or -1 when it would never end (the 2026-11-11 freeze).
+    {
+        const auto made = [&](std::uint32_t count, int players) {
+            Frame frame;
+            std::uint8_t locals[0x200]{};
+            Put32(locals + 0x98, 1);
+            Put32(locals + 0x178, count);
+            Put64(frame.rsp() + 0x60, antObject);
+            frame.context()->rbp = Address(locals);
+            setPlayers(players);
+            std::uint32_t edi = 0, esi = Get32(locals + 0x178), size = 0, capacity = 0;
+            if (!esi) return 0;
+            int objects = 0;
+            do {
+                frame.context()->rdi = edi;
+                frame.context()->rsi = esi;
+                SpawnHookHandler(0x1AF968)(frame.context());
+                esi = static_cast<std::uint32_t>(frame.context()->rsi);
+                if (size == capacity) {
+                    const bool held = size > 0;
+                    capacity = capacity * 2 + 2;
+                    if (held) esi = Get32(locals + 0x178);
+                }
+                ++size;
+                ++objects;
+                ++edi;
+                if (objects > 1000) return -1;
+            } while (edi != esi);
+            return objects;
+        };
+        Check(made(2, 8) == 4, "the group of 2 that froze the game: 4 with 8 players, and the loop ends");
+        Check(made(30, 8) == 54, "a group of 30: 54 with 8 players (it used to fall back to 30)");
+        Check(made(20, 8) == 36 && made(6, 8) > 6 && made(14, 6) > 14, "groups whose count meets a growth step");
+        Check(made(2, 4) == 2 && made(30, 4) == 30, "four players: as the game has it");
     }
 
     // Pod crews (1CAF52): count in r12d, pod at [rsp+0x40] with its seat count at +0x1098 and seats taken at +0x107C.

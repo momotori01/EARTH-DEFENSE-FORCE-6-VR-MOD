@@ -131,13 +131,22 @@ void AreaGroupHandler(CpuContext* context) { GroupCreatedHandler(context, "enemy
 
 // CreateFlyingEnemyGroup_OnRoute (1AF6F0) creates one object per loop pass with CreateObject:
 // [rsp+0x60] = object, edi = pass, esi = count, CreateObject's parameters at rbp+0x10 (team +0x88).
+// The count's home is rbp+0x178 (its stack argument): 1AF8B9 loads esi from it, and so does 1AFB00 each time the
+// object list grows with objects in it (at 2, 6, 14, 30, 62 ...: capacity x2+2), and the loop ends on
+// `cmp edi, esi; jne` (1AFC46). Until 1.6.14 only esi was raised, so a reload at or past the old count left edi
+// beyond it for good: a group of 2 raised to 4 reloaded 2 at the third object and the game made dragons for ever
+// (2026-11-11, 8 players: DragonSmall x2 -> x4, game loop 99%, drawing stopped). Larger groups fell back to their
+// old count at the third object. The home slot gets the new count too.
+constexpr std::uint32_t kFlyingRouteCountHome = 0x178;
 void FlyingRouteHandler(CpuContext* context) {
     if (static_cast<std::uint32_t>(context->rdi) != 0) return;
     std::uint64_t object = 0;
     std::memcpy(&object, At(SiteRsp(context) + 0x60), sizeof(object));
     const auto count = static_cast<std::int32_t>(static_cast<std::uint32_t>(context->rsi));
     const int scaled = CountForObject("flying enemy group on route", object, Int32At(context->rbp + 0x98), count);
-    if (scaled != count) context->rsi = static_cast<std::uint32_t>(scaled);
+    if (scaled == count) return;
+    context->rsi = static_cast<std::uint32_t>(scaled);
+    SetInt32At(context->rbp + kFlyingRouteCountHome, scaled);
 }
 
 // Natives whose count arrives in r9d (before `mov reg32, r9d`).

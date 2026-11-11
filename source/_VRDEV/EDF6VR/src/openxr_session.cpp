@@ -98,6 +98,7 @@ struct Api {
 };
 
 HMODULE g_runtimeModule=nullptr;
+bool g_runtimeFromEnv=false;   // the runtime came from XR_RUNTIME_JSON, not the PC's registration
 Api g_api{};
 // The controllers. Nothing depends on these yet: they are read and reported so
 // that whether poses arrive at all through an instance negotiated straight
@@ -486,11 +487,15 @@ bool ReadLibraryPath(const std::wstring& manifest,std::wstring& library) noexcep
     return false;
 }
 
-bool ActiveRuntimeManifest(std::wstring& path) noexcept {
-    wchar_t fromEnv[MAX_PATH]{};
-    const DWORD length=GetEnvironmentVariableW(L"XR_RUNTIME_JSON",fromEnv,MAX_PATH);
-    if(length>=MAX_PATH) return false;
-    if(length) { path=fromEnv; return true; }
+// XR_RUNTIME_JSON first, as the OpenXR loader does, unless registryOnly; *fromEnv says which was used.
+bool ActiveRuntimeManifest(std::wstring& path,bool registryOnly=false,bool* fromEnv=nullptr) noexcept {
+    if(fromEnv) *fromEnv=false;
+    wchar_t buffer[MAX_PATH]{};
+    if(!registryOnly) {
+        const DWORD length=GetEnvironmentVariableW(L"XR_RUNTIME_JSON",buffer,MAX_PATH);
+        if(length>=MAX_PATH) return false;
+        if(length) { path=buffer; if(fromEnv) *fromEnv=true; return true; }
+    }
     HKEY key=nullptr;
     if(RegOpenKeyExW(HKEY_LOCAL_MACHINE,L"SOFTWARE\\Khronos\\OpenXR\\1",0,KEY_READ|KEY_WOW64_64KEY,&key)) return false;
     wchar_t value[MAX_PATH]{};
@@ -500,16 +505,16 @@ bool ActiveRuntimeManifest(std::wstring& path) noexcept {
     if(status || (type!=REG_SZ && type!=REG_EXPAND_SZ) || !value[0]) return false;
     if(size>sizeof(value) || size<sizeof(wchar_t) || value[size/sizeof(wchar_t)-1]!=0) return false;
     if(type==REG_EXPAND_SZ) {
-        const DWORD expanded=ExpandEnvironmentStringsW(value,fromEnv,MAX_PATH);
+        const DWORD expanded=ExpandEnvironmentStringsW(value,buffer,MAX_PATH);
         if(!expanded || expanded>MAX_PATH) return false;
-        path=fromEnv;
+        path=buffer;
     } else path=value;
     return true;
 }
 
-bool NegotiateRuntime() noexcept {
+bool NegotiateRuntime(bool registryOnly=false) noexcept {
     std::wstring manifest, library;
-    if(!ActiveRuntimeManifest(manifest)) { SetStatus("no OpenXR ActiveRuntime registered"); return false; }
+    if(!ActiveRuntimeManifest(manifest,registryOnly,&g_runtimeFromEnv)) { SetStatus("no OpenXR ActiveRuntime registered"); return false; }
     if(!ReadLibraryPath(manifest,library)) { SetStatus("OpenXR manifest has no library_path"); return false; }
     g_runtimeModule=LoadLibraryExW(library.c_str(),nullptr,LOAD_WITH_ALTERED_SEARCH_PATH);
     if(!g_runtimeModule) { SetStatusf("LoadLibrary failed for the OpenXR runtime (error %lu)",GetLastError()); return false; }
@@ -3119,7 +3124,15 @@ bool OpenXrRuntime::Start(VrLogger log,XrMode mode,void* gameDevice,void* gameCo
     g_ownDevice=(mode!=XrMode::HeadsetDisplay);
     g_device=g_ownDevice?nullptr:static_cast<ID3D11Device*>(gameDevice);
     g_context=g_ownDevice?nullptr:static_cast<ID3D11DeviceContext*>(gameContext);
-    const bool ok=NegotiateRuntime() && CreateInstance() && CreateSession();
+    bool ok=NegotiateRuntime() && CreateInstance() && CreateSession();
+    if(!ok && g_runtimeFromEnv) {
+        // XR_RUNTIME_JSON overrides the PC's runtime for everything started from that environment. On
+        // 2026-11-11 Steam had been started by another project's test with it naming a mock runtime without
+        // D3D11, so every game Steam started inherited it and VR would not start. Use the PC's own runtime.
+        Teardown();
+        SetStatus("the runtime named by XR_RUNTIME_JSON cannot be used; trying the PC's registered OpenXR runtime");
+        ok=NegotiateRuntime(true) && CreateInstance() && CreateSession();
+    }
     if(!ok) Teardown();
     ReleaseSRWLockExclusive(&g_frameLock);
     if(!ok) return false;
