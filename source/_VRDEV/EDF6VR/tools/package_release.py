@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stage_hdtexture
 GAME = ROOT.parent.parent
-VERSION = '3.2.20'
+VERSION = '3.2.21'
 # The online co-op mod built in _MultislotDEV, taken from its own release ZIP
 # unchanged (its own package.ps1 pins the same loader hash).
 MULTISLOT_ZIP = GAME/'_MultislotDEV/release/EDF6MultiSlot-1.6.16.zip'
@@ -142,6 +142,9 @@ MULTISLOT_DLL_SHA = 'CAB38C04D83AB6E1B7F13D2DEF0AFFCE018492214D98430BEF53F8E9EBF
 # ようにできる？ ... まとめるのは上のメニューの件を対応してからにして ... 言語選択で日本語とそれ以外（英語）で表示言語別けてね"):
 # "VR setting" in the Start menu (src/vr_menu.h, vr_menu_items.h, menu_assets.rc; layouts made by tools/make_vr_menu.py
 # from Root.cpk into assets/ui, never published; [VR] PauseMenuVrSetting).
+# 3.2.21 (the user: "アップして"; +0.0.1): a Nix-type arm gun's mesh muzzle flash takes the arm's turn (nix_arm_aim.h
+# NixArmFlash): the Eiren's laser flash (MuzzleFlash01, size 8, every frame) stood on the game's own barrel 15-20 degrees
+# under the beams and read as a second beam. EDF6MultiSlot unchanged (1.6.16).
 # 3.2.20 (the user: "アップして"; +0.0.1): EDF6MultiSlot 1.6.16 spaces a raised flying route group so its line keeps the
 # mission's length (the game lays the group along the route and turns back at a node whose first link is the one it came
 # from: M130C's 24 extra dragons were laid on the leg back up to the 1000 m start). EDF6VR unchanged but for its version.
@@ -224,9 +227,9 @@ MULTISLOT_DLL_SHA = 'CAB38C04D83AB6E1B7F13D2DEF0AFFCE018492214D98430BEF53F8E9EBF
 # its rows on a row's own background, and [VR] ShotBuzz 1 as the default ("射撃振動１を規定にして"); "修正したらこちらへの
 # 確認無しでアップして".
 # EDF6MultiSlot 1.6.9 as in 3.1.10.
-# VERIFIED_* below: the 3.2.20 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
-VERIFIED_VR_SHA = '2879165DF60EA3D24E7E5A5EC13779D483C5E28B14951C12DAECE87DBA16EEEF'
-VERIFIED_SETTINGS_SHA = '1C66E76D1C2374ED1CA303F05F6C41EB46B90ABD1A432DA84BD9096166D498C0'
+# VERIFIED_* below: the 3.2.21 build (VS2019 + SDK 10.0.19041.0, 65/65 tests; deployed in the game folder).
+VERIFIED_VR_SHA = 'AD7DE91C1EC5F7F3121D930EF921DD3242A42F48CF629C9C03C3D4F5BE9FAEA3'
+VERIFIED_SETTINGS_SHA = 'FA4A6D8736E3A04314CE67C526986901242DD3451378390D6C575C4077AA22E7'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest().upper()

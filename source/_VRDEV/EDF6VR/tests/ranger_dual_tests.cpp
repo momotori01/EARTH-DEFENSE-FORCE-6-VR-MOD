@@ -697,11 +697,33 @@ static void CheckNixArmSend() {
     CHECK(NixArmFire(gun,1,nullptr,nullptr,true));
     CHECK(g_nixFires==1 && near3(g_nixFiredDir,g_sentDir) && near3(g_nixFiredAt,g_sentAt));
     CHECK(!std::memcmp(before,entries,sizeof before));
+    // Its muzzle flash, prepared once the entry is the game's again, takes the same turn (NixArmFlash, 2026-11-20:
+    // the Eiren's laser flash stood on the game's barrel as a second beam), through the flash hook's own gate: a
+    // MuzzleFlash01 (or 02) whose parent is the gun; not an EFS flash, not one already on the turned barrel.
+    const auto* gameBarrel=reinterpret_cast<const edf6vr::Matrix*>(entries+0xF0+0x50);
+    {
+        alignas(16) edf6vr::Matrix flash{},viaHook{};
+        CHECK(NixArmFlash(gun,gameBarrel,flash) && near3(flash.m[2],g_sentDir) && near3(flash.m[3],g_sentAt));
+        CHECK(!std::memcmp(before,entries,sizeof before));   // the entry itself is left alone
+        alignas(16) static unsigned char effect[0x200]{};
+        *reinterpret_cast<void**>(effect)=g_image.base+0x17A6478;*reinterpret_cast<void**>(effect+0x38)=gun;
+        CHECK(PrepareNixFlash(effect+0x130,gameBarrel,viaHook) && !std::memcmp(&viaHook,&flash,sizeof flash));
+        *reinterpret_cast<void**>(effect)=g_image.base+0x17A6578;
+        CHECK(PrepareNixFlash(effect+0x130,gameBarrel,viaHook) && !std::memcmp(&viaHook,&flash,sizeof flash));
+        *reinterpret_cast<void**>(effect)=g_image.base+0x17A6068;
+        CHECK(!PrepareNixFlash(effect+0x130,gameBarrel,viaHook));
+        CHECK(!PrepareNixFlash(effect+0x20,gameBarrel,viaHook) && !PrepareNixFlash(effect+0x130,nullptr,viaHook));
+        AcquireSRWLockExclusive(&g_nixArmMemoLock);g_nixArmMemo[0].have=true;g_nixArmMemo[0].written[1]=flash;ReleaseSRWLockExclusive(&g_nixArmMemoLock);
+        CHECK(!NixArmFlash(gun,&flash,viaHook));
+        AcquireSRWLockExclusive(&g_nixArmMemoLock);g_nixArmMemo[0].have=false;ReleaseSRWLockExclusive(&g_nixArmMemoLock);
+        CHECK(!NixArmFlash(other,gameBarrel,viaHook));
+    }
     // Sent as the game has it: a stale turn, a weapon of no machine, HandAimSync=0, NixArmAim=0.
     const float plainDir[3]={0,0,1};
     memo(GetTickCount64()-1000);
     g_sends=0;HookShotSend(gun,1,0,0);
     CHECK(g_sends==1 && near3(g_sentDir,plainDir) && near3(g_sentAt,at));
+    { alignas(16) edf6vr::Matrix flash{}; CHECK(!NixArmFlash(gun,gameBarrel,flash)); }   // a stale turn: the game's flash
     memo(GetTickCount64());
     g_sends=0;HookShotSend(other,0,0,0);
     CHECK(g_sends==1 && near3(g_sentDir,plainDir));
@@ -709,6 +731,7 @@ static void CheckNixArmSend() {
     CHECK(g_sends==1 && near3(g_sentDir,plainDir));
     g_handAimSync=true;g_nixArmAimOn=false;g_sends=0;HookShotSend(gun,1,0,0);
     CHECK(g_sends==1 && near3(g_sentDir,plainDir) && !NixArmFire(gun,1,nullptr,nullptr,true));
+    { alignas(16) edf6vr::Matrix flash{}; CHECK(!NixArmFlash(gun,gameBarrel,flash)); }   // NixArmAim=0
     CHECK(g_handAimNixSends.load()==sendsBefore+1 && !std::memcmp(before,entries,sizeof before));
     // Put back.
     g_nixArmAimOn=armOn;g_handAimSync=sync;g_shotSendOriginal=sendWas;g_dualFire=fireWas;g_dualTick=tickWas;

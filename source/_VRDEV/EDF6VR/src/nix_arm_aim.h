@@ -587,6 +587,44 @@ bool NixArmFire(void* weapon,unsigned index,void* alternate,void* counter,bool c
     }
     return true;
 }
+// The muzzle flash. MuzzleFlash01/02 take the firing entry's matrix when they
+// are prepared (muzzle_flash.h, HookFlashBounds), after NixArmFire has put the
+// entry back the game's way, so every flash of the machine's guns stood on the
+// game's own barrel. On most guns that is a blink. The Eiren's Electromagnetic
+// Laser Cannons (V_612_A_LASERRIFLE_L/R) fire every frame and carry the largest
+// flash of any vehicle gun (MuzzleFlash01, size 8), so theirs stood there all the
+// time, 15-20 degrees off the beam (NIXARM last turn), and read as a second beam
+// (the user, 2026-11-20: from each arm a "<", one straight and one down, even
+// aimed straight). The flash takes the shot's turn about the same pivot, unless
+// it already stands on the tick's turned barrel.
+std::atomic<unsigned long long> g_nixArmFlashTurns{0};
+bool NixArmFlash(void* weapon,const edf6vr::Matrix* source,edf6vr::Matrix& wanted) noexcept {
+    if(!g_nixArmAimOn || !weapon || !source) return false;
+    NixArmShared s{};
+    AcquireSRWLockShared(&g_nixArmLock); s=g_nixArmShared; ReleaseSRWLockShared(&g_nixArmLock);
+    const ULONGLONG now=GetTickCount64();
+    int at=-1;
+    for(unsigned i=0;i<s.weaponCount;++i) if(s.weapons[i]==weapon) at=static_cast<int>(i);
+    if(at<0 || now-s.at>250) return false;
+    const unsigned part=s.part[at];
+    float pivot[3]{};
+    if(part>=kVehicleRecoilParts || !s.nodes || s.pivot[part]>=s.nodeCount || !VehicleRecoilNodeAt(s.nodes,s.pivot[part],pivot)) return false;
+    __try { wanted=*source; } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    float M[3][3]{};
+    bool fresh=false,onTurned=false;
+    AcquireSRWLockExclusive(&g_nixArmMemoLock);
+    for(const auto& m:g_nixArmMemo) {
+        if(m.weapon!=weapon) continue;
+        if(m.have && (!std::memcmp(&wanted,&m.written[0],sizeof(wanted)) || !std::memcmp(&wanted,&m.written[1],sizeof(wanted)))) onTurned=true;
+        if(!fresh && m.turnValid && now-m.turnAt<250) { std::memcpy(M,m.turn,sizeof(M)); fresh=true; }
+    }
+    ReleaseSRWLockExclusive(&g_nixArmMemoLock);
+    if(!fresh || onTurned) return false;
+    NixArmTurnMatrix(wanted,M,pivot);
+    for(int i=0;i<4;++i) for(int j=0;j<4;++j) if(!std::isfinite(wanted.m[i][j])) return false;
+    g_nixArmFlashTurns.fetch_add(1,std::memory_order_relaxed);
+    return true;
+}
 // For the hand aim's hum (plugin.cpp): with the arms on the aim, the body's
 // turn needs no hum ("この仕様であればもう不要").
 bool NixArmAimActive() noexcept { return g_nixArmAimOn; }
@@ -608,9 +646,9 @@ void NixArmAimReport() noexcept {
     const unsigned long long shiftSum=g_nixArmPivotShiftSum.exchange(0),shiftCount=g_nixArmPivotShiftCount.exchange(0);
     const unsigned shiftMax=g_nixArmPivotShiftMax.exchange(0),turnMax=g_nixArmPivotTurnMax.exchange(0);
     const unsigned bodyMax=g_nixArmBodyRateMax.exchange(0),bodyHeld=g_nixArmBodySustainedMax.exchange(0);
-    Log("NIXARM on=%d weapons=%u (parts %s) target=%d ticks=%llu turned=%llu clamped=%llu redone=%llu released=%llu lineTurns=%llu shotTurns=%llu drawn=%llu last turn by part=%.1f/%.1f/%.1f/%.1f deg (max %.0f, parallel) body turn max %u deg/s, held 0.2 s %u deg/s (since boarding %u/%u) machine %s arms x%.2f pivots palette/node=%llu/%llu palette off the node array avg/max=%.1f/%.1f cm turn max=%.2f deg",
+    Log("NIXARM on=%d weapons=%u (parts %s) target=%d ticks=%llu turned=%llu clamped=%llu redone=%llu released=%llu lineTurns=%llu shotTurns=%llu flashTurns=%llu drawn=%llu last turn by part=%.1f/%.1f/%.1f/%.1f deg (max %.0f, parallel) body turn max %u deg/s, held 0.2 s %u deg/s (since boarding %u/%u) machine %s arms x%.2f pivots palette/node=%llu/%llu palette off the node array avg/max=%.1f/%.1f cm turn max=%.2f deg",
         g_nixArmAimOn?1:0,s.weaponCount,parts,target.valid?1:0,g_nixArmTicks.load(),g_nixArmTurned.load(),g_nixArmClamped.load(),g_nixArmRedone.load(),
-        g_nixArmReleased.load(),g_nixArmLineTurns.load(),g_nixArmShotTurns.load(),g_nixArmDrawn.load(),g_nixArmLastAngle[0].load(),g_nixArmLastAngle[1].load(),
+        g_nixArmReleased.load(),g_nixArmLineTurns.load(),g_nixArmShotTurns.load(),g_nixArmFlashTurns.load(),g_nixArmDrawn.load(),g_nixArmLastAngle[0].load(),g_nixArmLastAngle[1].load(),
         g_nixArmLastAngle[2].load(),g_nixArmLastAngle[3].load(),g_nixArmAimDegrees,bodyMax,bodyHeld,g_nixArmBodySessionMax.load(),g_nixArmBodySessionSustained.load(),
         g_nixArmMachine.load()>=0?kNixVariants[g_nixArmMachine.load()].name:"not known",g_nixArmMachineScale.load(),g_nixArmPivotPalette.load(),g_nixArmPivotLive.load(),
         shiftCount?shiftSum/10.0/static_cast<double>(shiftCount):0.0,shiftMax/10.0,turnMax/100.0);

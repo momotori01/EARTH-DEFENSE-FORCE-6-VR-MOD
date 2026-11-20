@@ -60,6 +60,23 @@ constexpr unsigned kEfsFlashUpdateCalls[]={0x2BA9C0,0x2BAF60};
 constexpr unsigned kEfsFlashUpdateTarget=0x2BB020,kEfsFlashCreateCall=0x2BAD96,kEfsFlashCreateTarget=0x2EC5C0;
 std::atomic<unsigned long long> g_efsFlashUpdates{0},g_efsFlashLeftUpdates{0},g_efsFlashLeftCreates{0};
 
+// A Nix's or Eiren's gun (nix_arm_aim.h, included later): its mesh flash on the
+// arm's turned barrel. The effect is a MuzzleFlash01/02 whose parent is the gun.
+bool NixArmFlash(void* weapon,const edf6vr::Matrix* source,edf6vr::Matrix& wanted) noexcept;
+bool PrepareNixFlash(void* secondary,const edf6vr::Matrix* source,edf6vr::Matrix& wanted) noexcept {
+    if(!secondary || !source || g_nativeTactical) return false;
+    void* parent=nullptr;
+    __try {
+        const auto address=reinterpret_cast<std::uintptr_t>(secondary);
+        if(address<0x130) return false;
+        auto effect=reinterpret_cast<unsigned char*>(address-0x130);
+        if(!edf6vr::Readable(effect,0x128,true)) return false;
+        if(*reinterpret_cast<void**>(effect)!=g_image.base+0x17A6478 && *reinterpret_cast<void**>(effect)!=g_image.base+0x17A6578) return false;
+        parent=*reinterpret_cast<void**>(effect+0x38);
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return parent && NixArmFlash(parent,source,wanted);
+}
+
 bool PrepareLeftFlash(void* secondary,const edf6vr::Matrix* source,
                       edf6vr::Matrix& wanted,ULONGLONG now,bool efs=false) noexcept {
     // The Ranger's left gun, or either of the Fencer's weapons when they ride
@@ -226,6 +243,11 @@ void __fastcall HookFlashBounds(void* secondary,const edf6vr::Matrix* source) {
         ++g_flashLeftPrepared;
         // Same transformed pose for culling and both eyes' later mesh draws.
         // 11B30C0 consumes its matrix synchronously; native passes a stack copy.
+        g_originalFlashBounds(secondary,&wanted);
+    } else if(PrepareNixFlash(secondary,source,wanted)) {
+        // The same two places as the carry above: the draw matrix and the bounds.
+        auto effect=static_cast<unsigned char*>(secondary)-0x130;
+        std::memcpy(effect+0x60,&wanted,sizeof(wanted));
         g_originalFlashBounds(secondary,&wanted);
     } else {
         if(g_dualActive.load() || g_fencerActive.load(std::memory_order_relaxed)) ++g_flashLeftRejected;
